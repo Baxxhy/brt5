@@ -44,6 +44,11 @@ secret/
 openai*.json
 deepseek*.json
 
+# These tracked utilities contain no credentials; their names match the broad
+# secret-file guards above, so explicitly keep them in reproducible clones.
+!scripts/configure_api_keys.py
+!scripts/check_repository_secrets.py
+
 # API configuration belongs in the ignored files above or a secret manager.
 
 # =========================
