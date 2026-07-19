@@ -538,7 +538,9 @@ except ImportError:
     }
 check = subprocess.run(
     [sys.executable, "-m", "pip", "check"],
-    text=True,
+    # Python 3.6 templates do not support subprocess.run(text=...).
+    # Keep the injected manifest probe compatible with every SWT runtime.
+    universal_newlines=True,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
     check=False,

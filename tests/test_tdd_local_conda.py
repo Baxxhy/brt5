@@ -142,6 +142,16 @@ class TddLocalCondaContractTests(unittest.TestCase):
         self.assertIn("docker_harness_invoked=false", launcher)
         self.assertNotIn("tddbench.harness.run_evaluation", launcher)
 
+    def test_formal_runner_forwards_dataset_mode_to_direct_evaluator(self) -> None:
+        runner = (
+            PROJECT_ROOT / "scripts" / "run_formal_eval_after_generation.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"--dataset_mode", args.dataset_mode', runner)
+        self.assertIn(
+            "TDD-Bench final score requires the complete dataset denominator",
+            runner,
+        )
+
     def test_strict_scrub_script_detects_workspace_paths_inside_pth_code(self) -> None:
         completed = {
             "returncode": 0,

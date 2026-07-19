@@ -54,6 +54,19 @@ from ..runtime.conda_env_manager import (
 
 SWT_TRACE_PATH = Path(__file__).resolve().parent / "vendor" / "swt_trace.py"
 SWT_TRACE_SHA256 = "2d79a79444c267790ee3a0bf41ef018b6776a4b598f1629e57e0e47d4da8b561"
+SWT_NON_TEST_EXTENSIONS = (
+    ".json",
+    ".png",
+    "csv",
+    ".txt",
+    ".md",
+    ".jpg",
+    ".jpeg",
+    ".pkl",
+    ".yml",
+    ".yaml",
+    ".toml",
+)
 
 
 def repo_path(repo_root_base: str, issue: dict[str, Any]) -> str:
@@ -542,26 +555,116 @@ def first_test_selector(code: str) -> str:
     return ""
 
 
+def swt_test_framework(repo: str, version: str) -> str:
+    """Return the checked-in SWT-Bench test runner for a repository version."""
+
+    project = repo.split("/")[-1]
+    if project in {
+        "astropy",
+        "matplotlib",
+        "flask",
+        "xarray",
+        "pylint",
+        "scikit-learn",
+        "requests",
+    }:
+        return "pytest --no-header -rA --tb=no -p no:cacheprovider"
+    if project == "seaborn":
+        return "pytest --no-header -rA"
+    if project == "pytest":
+        return "pytest -rA"
+    if project == "django":
+        if str(version) == "1.9":
+            return "./tests/runtests.py --verbosity 2"
+        return "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1"
+    if project == "sphinx":
+        return "tox -epy39 -v --"
+    if project == "sympy":
+        return (
+            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' "
+            "bin/test -C --verbose"
+        )
+    raise ValueError(f"unsupported project: {repo} version={version}")
+
+
 def test_command(repo: str, version: str, rel_file: str, selector: str) -> str:
     project = repo.split("/")[-1]
     nodeid = rel_file if not selector else f"{rel_file}::{selector}"
-    if project in {"astropy", "matplotlib", "flask", "xarray", "pylint", "scikit-learn", "sphinx", "requests"}:
-        return f"python -m pytest --no-header --tb=short --show-capture=no --disable-warnings -p no:cacheprovider {nodeid}"
-    if project == "seaborn":
-        return f"pytest --no-header --show-capture=no --disable-warnings {nodeid}"
-    if project == "pytest":
-        return f"pytest --disable-warnings --show-capture=no {nodeid} -v"
+    framework = swt_test_framework(repo, version)
     if project == "django":
         label = nodeid.replace(".py", "").replace("/", ".").replace("::", ".")
         if label.startswith("tests."):
             label = label[len("tests.") :]
-        return f"./tests/runtests.py --settings=test_sqlite {label}"
+        return f"{framework} {shlex.quote(label)}"
     if project == "sympy":
         test_name = selector.split("::")[-1] if selector else ""
         if test_name:
-            return f"PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C {rel_file} -k {test_name}"
-        return f"PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C {rel_file}"
-    raise ValueError(f"unsupported project: {repo} version={version}")
+            return (
+                f"{framework} {shlex.quote(rel_file)} "
+                f"-k {shlex.quote(test_name)}"
+            )
+        return f"{framework} {shlex.quote(rel_file)}"
+    return f"{framework} {shlex.quote(nodeid)}"
+
+
+def tdd_test_command(
+    repo: str,
+    version: str,
+    rel_file: str,
+    selector: str,
+    *,
+    with_coverage: bool,
+) -> str:
+    """Return the TDD-Bench runner for one generated test file.
+
+    TDD-Bench uses coverage.py around the prediction on the buggy and fixed
+    code states.  This is deliberately separate from ``test_command`` above,
+    which is the checked-in SWT-Bench runner contract.
+    """
+
+    project = repo.split("/")[-1]
+    nodeid = rel_file if not selector else f"{rel_file}::{selector}"
+    coverage_prefix = "python -m coverage run " if with_coverage else ""
+    if project == "django":
+        framework = (
+            "./tests/runtests.py --verbosity 2"
+            if str(version) == "1.9"
+            else "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1"
+        )
+        label = nodeid.replace(".py", "").replace("/", ".").replace("::", ".")
+        if label.startswith("tests."):
+            label = label[len("tests.") :]
+        return f"{coverage_prefix}{framework} {shlex.quote(label)}"
+    if project == "sphinx":
+        return f"tox --current-env -epy39 -v -- {shlex.quote(nodeid)}"
+    if project == "sympy":
+        test_name = selector.split("::")[-1] if selector else ""
+        suffix = (
+            f" {shlex.quote(rel_file)} -k {shlex.quote(test_name)}"
+            if test_name
+            else f" {shlex.quote(rel_file)}"
+        )
+        return (
+            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' "
+            f"./bin/test -C --verbose{suffix}"
+        )
+    if project == "astropy" and str(version) in {
+        "0.1",
+        "0.2",
+        "0.3",
+        "0.4",
+        "1.1",
+        "1.2",
+        "1.3",
+    }:
+        pytest_args = "-m pytest -rA -vv -o console_output_style=classic --tb=no"
+    elif project == "seaborn":
+        pytest_args = "-m pytest --no-header -rA"
+    else:
+        pytest_args = "-m pytest -rA"
+    if with_coverage:
+        return f"{coverage_prefix}--branch {pytest_args} {shlex.quote(nodeid)}"
+    return f"python {pytest_args} {shlex.quote(nodeid)}"
 
 
 def trace_test_command(
@@ -578,7 +681,7 @@ def trace_test_command(
     ]
     include_pattern = "(?:" + "|".join(include_targets) + ")"
     trace_prefix = (
-        f"python {shlex.quote(str(SWT_TRACE_PATH))} --count "
+        f"python3 {shlex.quote(str(SWT_TRACE_PATH))} --count "
         f"-C {shlex.quote(coverage_output)} "
         f"--include-pattern {shlex.quote(include_pattern)}"
     )
@@ -587,6 +690,9 @@ def trace_test_command(
     parts = list(raw_parts)
     while parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", parts[0]):
         env_parts.append(parts.pop(0))
+    # SWT-Bench removes this option before wrapping pytest with trace so that
+    # the wrapper, rather than pytest's traceback suppression, owns execution.
+    parts = [part for part in parts if part != "--tb=no"]
     env_prefix = " ".join(shlex.quote(part) for part in env_parts)
     env_prefix = (env_prefix + " ") if env_prefix else ""
     if len(parts) >= 3 and parts[0] in {"python", "python3"} and parts[1] == "-m":
@@ -599,7 +705,14 @@ def trace_test_command(
     if parts and parts[0] == "unittest":
         args = " ".join(shlex.quote(part) for part in parts[1:])
         return f"{env_prefix}{trace_prefix} -m unittest {args}".strip()
-    return f"{env_prefix}{trace_prefix} {command}".strip()
+    if parts and parts[0] == "tox":
+        args = " ".join(shlex.quote(part) for part in parts[1:])
+        return f"{env_prefix}{trace_prefix} -m tox {args}".strip()
+    # Use the command after removing leading environment assignments.  Passing
+    # the original command here makes the tracer interpret e.g.
+    # ``PYTHONWARNINGS=...`` as the script name (the SymPy runner hits this).
+    traced_target = " ".join(shlex.quote(part) for part in parts)
+    return f"{env_prefix}{trace_prefix} {traced_target}".strip()
 
 
 def setup_command(repo: str, version: str) -> str:
@@ -817,6 +930,152 @@ def patch_target_lines(patch_text: str) -> dict[str, Any]:
     return {**normalized, "details": details}
 
 
+def tdd_changed_lines(patch_text: str) -> dict[str, dict[str, list[int]]]:
+    """Extract TDD-Bench's changed-line denominator from a golden code patch.
+
+    The upstream TDD-Bench metric counts nonblank, non-comment removed lines
+    before the golden patch and corresponding added lines after it.  Unlike
+    SWT-Bench, this denominator is not restricted to dynamically executable
+    Python lines and is not derived from gold/base reference tests.
+    """
+
+    targets: dict[str, dict[str, set[int]]] = {"before": {}, "after": {}}
+    # Keep the checked-in TDD-Bench parser's exact text semantics, including
+    # stripping before it tests the leading +/- marker.  This means a context
+    # source line whose code itself begins with '+' or '-' is treated as a
+    # changed line by the upstream metric.  It occurs in one of the 449 gold
+    # patches, so using a cleaner unified-diff parser would change the score.
+    for focus in patch_text.split("+++ b")[1:]:
+        filename = focus.split("\n", 1)[0].strip().lstrip("/")
+        pieces = focus.split("@@")
+        segment_count = int(len(pieces) / 2)
+        for index in range(segment_count):
+            header = pieces[2 * index + 1].strip().split()
+            if len(header) < 2:
+                continue
+            before_start = abs(int(header[0].split(",", 1)[0])) - 1
+            after_start = abs(int(header[1].split(",", 1)[0])) - 1
+            hunk_lines = pieces[2 * index + 2].split("\n")
+            for side, marker, opposite, start in (
+                ("before", "-", "+", before_start),
+                ("after", "+", "-", after_start),
+            ):
+                filtered = [
+                    line
+                    for line in hunk_lines
+                    if not line.strip().startswith(opposite)
+                ]
+                for offset, line in enumerate(filtered):
+                    stripped = line.strip()
+                    if stripped.startswith(marker * 3):
+                        continue
+                    if not stripped.startswith(marker):
+                        continue
+                    content = line.replace(marker, "").strip()
+                    if not content or content.startswith("#"):
+                        continue
+                    targets[side].setdefault(filename, set()).add(start + offset)
+    return {
+        side: {
+            path: sorted(lines)
+            for path, lines in side_targets.items()
+            if lines
+        }
+        for side, side_targets in targets.items()
+    }
+
+
+def parse_tdd_coverage_json(
+    coverage_output: Path,
+    changed_lines_by_file: dict[str, list[int]],
+    repo_dir: str,
+) -> dict[str, Any]:
+    """Map coverage.py missing statements/branches to TDD changed lines.
+
+    coverage.py's JSON ``missing_branches`` endpoints are included because the
+    upstream text parser treats ``N->M`` and ``N->exit`` entries as missing
+    changed lines too.  If a source file is absent from the report, upstream
+    TDD-Bench observes no listed missing lines for it; we preserve that quirk
+    and record it explicitly for auditability.
+    """
+
+    files: dict[str, Any] = {}
+    parse_error = ""
+    if coverage_output.is_file():
+        try:
+            payload = json.loads(coverage_output.read_text(encoding="utf-8"))
+            if isinstance(payload, dict) and isinstance(payload.get("files"), dict):
+                files = payload["files"]
+        except (OSError, json.JSONDecodeError) as exc:
+            parse_error = repr(exc)
+
+    root = Path(repo_dir).resolve()
+    by_relative_path: dict[str, dict[str, Any]] = {}
+    for raw_path, entry in files.items():
+        if not isinstance(entry, dict):
+            continue
+        path = Path(str(raw_path))
+        try:
+            absolute = path.resolve() if path.is_absolute() else (root / path).resolve()
+            relative = absolute.relative_to(root).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            relative = str(raw_path).lstrip("./")
+        by_relative_path[relative] = entry
+
+    missing_by_file: dict[str, list[int]] = {}
+    missed_changed_by_file: dict[str, list[int]] = {}
+    absent_from_report: list[str] = []
+    for path, changed in changed_lines_by_file.items():
+        entry = by_relative_path.get(path)
+        missing: set[int] = set()
+        if entry is None:
+            absent_from_report.append(path)
+        else:
+            for value in entry.get("missing_lines") or []:
+                try:
+                    missing.add(int(value))
+                except (TypeError, ValueError):
+                    continue
+            for branch in entry.get("missing_branches") or []:
+                if not isinstance(branch, (list, tuple)):
+                    continue
+                for value in branch:
+                    try:
+                        line_number = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if line_number > 0:
+                        missing.add(line_number)
+        missing_by_file[path] = sorted(missing)
+        missed_changed_by_file[path] = sorted(set(changed) & missing)
+
+    total_changed = sum(len(lines) for lines in changed_lines_by_file.values())
+    total_missed = sum(len(lines) for lines in missed_changed_by_file.values())
+    return {
+        "status": (
+            "OK"
+            if coverage_output.is_file() and not parse_error
+            else "COVERAGE_JSON_PARSE_ERROR"
+            if parse_error
+            else "NO_COVERAGE_DATA"
+        ),
+        "changed_lines_by_file": changed_lines_by_file,
+        "missing_lines_by_file": missing_by_file,
+        "missed_changed_lines_by_file": missed_changed_by_file,
+        "files_absent_from_coverage_report": sorted(absent_from_report),
+        "coverage_files_found": len(by_relative_path),
+        "total_changed": total_changed,
+        "total_missed": total_missed,
+        "covered_changed": total_changed - total_missed,
+        "coverage": (
+            (total_changed - total_missed) / total_changed
+            if total_changed
+            else 0.0
+        ),
+        "parse_error": parse_error,
+    }
+
+
 def parse_patch_coverage(
     coverage_output: Path,
     target_lines: dict[str, list[int]],
@@ -948,59 +1207,300 @@ def collect_patch_side_coverage(
     coverage["instrumentation"] = "vendored_swt_bench_subprocess_aware_trace"
     coverage["trace_source"] = "logic-star-ai/swt-bench src/auxillary_src/trace.py"
     coverage["trace_sha256"] = SWT_TRACE_SHA256
-    if run.get("timeout"):
-        coverage["status"] = "TIMEOUT"
+    coverage["execution_status"] = (
+        "TIMEOUT"
+        if run.get("timeout")
+        else "PASS"
+        if run.get("returncode") == 0
+        else "ERROR"
+    )
+    coverage["execution_returncode"] = run.get("returncode")
+    coverage["execution_timeout"] = bool(run.get("timeout"))
+    if coverage["status"] == "MISSING_COVERAGE_OUTPUT":
+        # SWT-Bench's get_coverage_eval() returns {} whenever no coverage dump
+        # is present.  That is an observed empty set for every one of the six
+        # views, including tests that fail before reaching production code.
+        coverage["status"] = "NO_COVERAGE_FILES"
+        coverage["swt_empty_coverage"] = True
+        coverage["swt_empty_coverage_reason"] = coverage["execution_status"]
     elif coverage["status"] == "OK" and not coverage.get("coverage_files_found"):
         coverage["status"] = "NO_COVERAGE_FILES"
+        coverage["swt_empty_coverage"] = True
+        coverage["swt_empty_coverage_reason"] = "NO_TARGET_FILE_RECORD"
     return coverage
 
 
+def ensure_tdd_coverage_tools(
+    repo: str,
+    env_name: str,
+    repo_dir: str,
+    timeout: int,
+) -> dict[str, Any]:
+    """Install TDD-Bench coverage tooling only in the disposable eval env."""
+
+    project = repo.split("/")[-1]
+    if project == "sympy":
+        return {
+            "returncode": 0,
+            "status": "SYMPY_COVERAGE_EXEMPT",
+            "installed": False,
+        }
+    modules = ["coverage"] + (["pytest_cov"] if project == "sphinx" else [])
+    packages = ["coverage"] + (["pytest-cov"] if project == "sphinx" else [])
+    imports = "; ".join(f"import {module}" for module in modules)
+    check = run_shell(
+        f"{conda_activate_cmd(env_name)} && python -c {shlex.quote(imports)}",
+        repo_dir,
+        min(timeout, 180),
+    )
+    if check.get("returncode") == 0:
+        return {
+            "returncode": 0,
+            "status": "AVAILABLE",
+            "installed": False,
+            "check": check,
+        }
+    install = run_shell(
+        f"{conda_activate_cmd(env_name)} && python -m pip install "
+        + " ".join(shlex.quote(package) for package in packages),
+        repo_dir,
+        min(timeout, 600),
+    )
+    return {
+        "returncode": int(install.get("returncode") or 0),
+        "status": "INSTALLED" if install.get("returncode") == 0 else "INSTALL_FAILED",
+        "installed": install.get("returncode") == 0,
+        "check": check,
+        "install": install,
+    }
+
+
+def collect_tdd_side_coverage(
+    instance_id: str,
+    side: str,
+    changed_lines_by_file: dict[str, list[int]],
+    command: str,
+    repo_dir: str,
+    env_name: str,
+    pythonpath: str,
+    timeout: int,
+    *,
+    repo: str,
+) -> dict[str, Any]:
+    """Run one TDD-Bench pre/post test view and read coverage.py JSON."""
+
+    if repo.split("/")[-1] == "sympy":
+        full_command = (
+            f"{conda_activate_cmd(env_name)} && "
+            f"export PYTHONPATH={shlex.quote(pythonpath)}:$PYTHONPATH && {command}"
+        )
+        run = run_shell(full_command, repo_dir, timeout)
+        return {
+            "status": "SYMPY_COVERAGE_EXEMPT",
+            "side": side,
+            "command": command,
+            "run": run,
+            "changed_lines_by_file": changed_lines_by_file,
+            "missed_changed_lines_by_file": {},
+            "total_changed": sum(map(len, changed_lines_by_file.values())),
+            "total_missed": 0,
+            "covered_changed": 0,
+            "coverage": None,
+            "instrumentation": "none_sympy_tdd_bench_exemption",
+        }
+
+    coverage_dir = Path(repo_dir) / ".brt_tdd_coverage" / (
+        sanitize_instance_id(instance_id) + "_" + side
+    )
+    if coverage_dir.exists():
+        shutil.rmtree(coverage_dir)
+    coverage_dir.mkdir(parents=True, exist_ok=True)
+    data_file = coverage_dir / ".coverage"
+    json_file = coverage_dir / "coverage.json"
+    sphinx_env = (
+        "export PYTEST_ADDOPTS='--cov=sphinx --cov-report=term-missing' && "
+        if repo.split("/")[-1] == "sphinx"
+        else ""
+    )
+    # Preserve the test command's exit status after exporting coverage data.
+    # A failing buggy-side test is an expected and useful outcome.
+    full_command = (
+        f"{conda_activate_cmd(env_name)} && "
+        f"export PYTHONPATH={shlex.quote(pythonpath)}:$PYTHONPATH && "
+        f"export COVERAGE_FILE={shlex.quote(str(data_file))} && "
+        f"{sphinx_env}rm -f {shlex.quote(str(data_file))} "
+        f"{shlex.quote(str(json_file))} && "
+        f"{command}; test_rc=$?; "
+        f"python -m coverage json -o {shlex.quote(str(json_file))}; "
+        "coverage_rc=$?; "
+        "echo BRT_TDD_COVERAGE_REPORT_RC=$coverage_rc >&2; "
+        "exit $test_rc"
+    )
+    try:
+        run = run_shell(full_command, repo_dir, timeout)
+        coverage = parse_tdd_coverage_json(
+            json_file, changed_lines_by_file, repo_dir
+        )
+    finally:
+        shutil.rmtree(coverage_dir, ignore_errors=True)
+    coverage.update(
+        {
+            "side": side,
+            "command": command,
+            "run": run,
+            "instrumentation": "tdd_bench_coverage_py_changed_line_report",
+            "execution_status": (
+                "TIMEOUT"
+                if run.get("timeout")
+                else "PASS"
+                if run.get("returncode") == 0
+                else "ERROR"
+            ),
+            "execution_returncode": run.get("returncode"),
+            "execution_timeout": bool(run.get("timeout")),
+        }
+    )
+    return coverage
+
+
+def combine_tdd_coverage(
+    instance_id: str,
+    targets: dict[str, dict[str, list[int]]],
+    before: dict[str, Any],
+    after: dict[str, Any],
+    buggy: dict[str, Any],
+    fixed: dict[str, Any],
+) -> dict[str, Any]:
+    """Compute the per-instance score used by TDD-Bench."""
+
+    total_changed = int(before.get("total_changed") or 0) + int(
+        after.get("total_changed") or 0
+    )
+    total_missed = int(before.get("total_missed") or 0) + int(
+        after.get("total_missed") or 0
+    )
+    cov_score = (
+        (total_changed - total_missed) / total_changed if total_changed else 0.0
+    )
+    fail_before = int(bool(buggy.get("failed")))
+    pass_after = int(not bool(fixed.get("failed")))
+    sympy_exempt = "sympy" in instance_id.lower()
+    final_score = (
+        float(fail_before * pass_after)
+        if sympy_exempt
+        else cov_score * fail_before * pass_after
+    )
+    return {
+        "status": (
+            "SYMPY_COVERAGE_EXEMPT"
+            if sympy_exempt
+            else "NO_CHANGED_LINES"
+            if not total_changed
+            else "OK"
+        ),
+        "metric_family": "tdd_bench_changed_line_coverage",
+        "coverage_schema_version": 1,
+        "denominator_source": (
+            "nonblank_noncomment_removed_lines_before_plus_added_lines_after"
+        ),
+        "targets": targets,
+        "before": before,
+        "after": after,
+        "total_changed": total_changed,
+        "total_missed": total_missed,
+        "covered_changed": total_changed - total_missed,
+        "cov_score": cov_score,
+        "fail_before": fail_before,
+        "pass_after": pass_after,
+        "f2p_gate": fail_before * pass_after,
+        "f2p_gate_source": "brt_formal_buggy_fixed_test_classification",
+        "sympy_coverage_exempt": sympy_exempt,
+        "final_score": final_score,
+        "resolved": final_score > 0,
+    }
+
+
+def aggregate_tdd_bench_score(
+    results: dict[str, dict[str, Any]],
+    *,
+    coverage_enabled: bool,
+) -> dict[str, Any]:
+    """Average TDD final_score over the complete requested dataset."""
+
+    denominator = len(results)
+    per_instance: dict[str, float] = {}
+    zeroed: dict[str, str] = {}
+    resolved: list[str] = []
+    for instance_id, result in results.items():
+        coverage = (
+            result.get("tdd_coverage")
+            if isinstance(result.get("tdd_coverage"), dict)
+            else {}
+        )
+        if coverage_enabled and "final_score" in coverage:
+            value = float(coverage.get("final_score") or 0.0)
+        else:
+            value = 0.0
+            zeroed[instance_id] = str(
+                result.get("status") or "MISSING_TDD_COVERAGE"
+            )
+        per_instance[instance_id] = value
+        if value > 0:
+            resolved.append(instance_id)
+    numerator = sum(per_instance.values())
+    value = numerator / denominator if denominator else 0.0
+    return {
+        "valid": bool(coverage_enabled and denominator),
+        "value": value if coverage_enabled else None,
+        "percent": value * 100 if coverage_enabled else None,
+        "numerator": numerator,
+        "denominator": denominator,
+        "resolved_instances": len(resolved),
+        "resolved_ids": sorted(resolved),
+        "zeroed_instances": dict(sorted(zeroed.items())),
+        "per_instance": dict(sorted(per_instance.items())),
+        "invalid_reason": "" if coverage_enabled else "coverage was disabled",
+    }
+
+
+def patch_paths_from_patch(test_patch: str) -> list[str]:
+    """Return every target path so untracked fixtures can be cleaned safely."""
+
+    paths: list[str] = []
+    for path in re.findall(r"diff --git a/.* b/(.*)", test_patch):
+        path = path.strip()
+        if path and path not in paths:
+            paths.append(path)
+    return paths
+
+
 def test_directives_from_patch(test_patch: str) -> list[str]:
-    directives: list[str] = []
-    for line in test_patch.splitlines():
-        match = re.match(r"diff --git a/(.+?) b/(.+)$", line)
-        if not match:
-            continue
-        path = match.group(2).strip()
-        if Path(path).suffix.lower() in {
-            ".md", ".rst", ".txt", ".json", ".yml", ".yaml", ".toml",
-            ".ini", ".cfg", ".csv", ".png", ".jpg", ".jpeg", ".svg",
-        }:
-            continue
-        if path not in directives:
-            directives.append(path)
-    return directives
+    # Keep the same suffix filter (including its historical ``csv`` spelling)
+    # as SWT-Bench's get_test_directives().  Cleanup deliberately uses the
+    # unfiltered patch path list instead.
+    return [
+        path
+        for path in patch_paths_from_patch(test_patch)
+        if not any(path.endswith(ext) for ext in SWT_NON_TEST_EXTENSIONS)
+    ]
 
 
 def test_command_for_directives(repo: str, version: str, directives: list[str]) -> str:
     if not directives:
         raise ValueError("golden test patch contains no executable test directives")
     project = repo.split("/")[-1]
-    quoted = " ".join(shlex.quote(path) for path in directives)
-    if project in {
-        "astropy", "matplotlib", "flask", "xarray", "pylint", "scikit-learn",
-        "sphinx", "requests",
-    }:
-        return (
-            "python -m pytest --no-header --tb=short --show-capture=no "
-            f"--disable-warnings -p no:cacheprovider {quoted}"
-        )
-    if project == "seaborn":
-        return f"pytest --no-header --show-capture=no --disable-warnings {quoted}"
-    if project == "pytest":
-        return f"pytest --disable-warnings --show-capture=no {quoted} -v"
+    framework = swt_test_framework(repo, version)
     if project == "django":
         labels = []
         for path in directives:
             label = path[:-3] if path.endswith(".py") else path
             label = label[len("tests/"):] if label.startswith("tests/") else label
             labels.append(label.replace("/", "."))
-        return "./tests/runtests.py --settings=test_sqlite " + " ".join(
+        return framework + " " + " ".join(
             shlex.quote(label) for label in labels
         )
-    if project == "sympy":
-        return f"PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C {quoted}"
-    raise ValueError(f"unsupported project: {repo} version={version}")
+    quoted = " ".join(shlex.quote(path) for path in directives)
+    return f"{framework} {quoted}"
 
 
 def _line_set(mapping: Any, path: str) -> set[int]:
@@ -1099,6 +1599,22 @@ def combine_patch_coverage(
             line for line in lines
             if pred_added_counts[path][str(line)] - base_added_counts[path][str(line)] > 0
         ]
+    official_delta_gold_removed: dict[str, list[int]] = {}
+    official_delta_gold_added: dict[str, list[int]] = {}
+    for path, lines in executable_removed.items():
+        official_delta_gold_removed[path] = [
+            line for line in lines
+            if gold_removed_counts[path][str(line)]
+            - base_removed_counts[path][str(line)]
+            > 0
+        ]
+    for path, lines in executable_added.items():
+        official_delta_gold_added[path] = [
+            line for line in lines
+            if gold_added_counts[path][str(line)]
+            - base_added_counts[path][str(line)]
+            > 0
+        ]
 
     # Reconstruct the independent gold prediction run used as SWT-Bench's
     # paper-level macro denominator.  Its baseline directives come from the
@@ -1121,17 +1637,17 @@ def combine_patch_coverage(
     _, gold_base_added_counts = _coverage_for_lines(
         gold_executable_added, gold_base_post
     )
-    delta_gold_removed: dict[str, list[int]] = {}
-    delta_gold_added: dict[str, list[int]] = {}
+    gold_reference_delta_removed: dict[str, list[int]] = {}
+    gold_reference_delta_added: dict[str, list[int]] = {}
     for path, lines in gold_executable_removed.items():
-        delta_gold_removed[path] = [
+        gold_reference_delta_removed[path] = [
             line for line in lines
             if gold_reference_removed_counts[path][str(line)]
             - gold_base_removed_counts[path][str(line)]
             > 0
         ]
     for path, lines in gold_executable_added.items():
-        delta_gold_added[path] = [
+        gold_reference_delta_added[path] = [
             line for line in lines
             if gold_reference_added_counts[path][str(line)]
             - gold_base_added_counts[path][str(line)]
@@ -1145,14 +1661,23 @@ def combine_patch_coverage(
     gold_count = sum(map(len, gold_removed.values())) + sum(map(len, gold_added.values()))
     base_count = sum(map(len, base_removed.values())) + sum(map(len, base_added.values()))
     delta_pred_count = sum(map(len, delta_removed.values())) + sum(map(len, delta_added.values()))
+    official_delta_gold_count = sum(
+        map(len, official_delta_gold_removed.values())
+    ) + sum(map(len, official_delta_gold_added.values()))
     gold_executable_count = sum(map(len, gold_executable_removed.values())) + sum(
         map(len, gold_executable_added.values())
     )
-    delta_gold_count = sum(map(len, delta_gold_removed.values())) + sum(
-        map(len, delta_gold_added.values())
+    gold_reference_delta_count = sum(
+        map(len, gold_reference_delta_removed.values())
+    ) + sum(
+        map(len, gold_reference_delta_added.values())
     )
     model_input_statuses = {
-        name: str(value.get("status") or "UNKNOWN")
+        name: (
+            "TIMEOUT"
+            if value.get("execution_timeout")
+            else str(value.get("status") or "UNKNOWN")
+        )
         for name, value in {
             "pred_pre": pred_pre,
             "pred_post": pred_post,
@@ -1163,7 +1688,11 @@ def combine_patch_coverage(
         }.items()
     }
     gold_reference_input_statuses = {
-        name: str(value.get("status") or "UNKNOWN")
+        name: (
+            "TIMEOUT"
+            if value.get("execution_timeout")
+            else str(value.get("status") or "UNKNOWN")
+        )
         for name, value in {
             "gold_pre": gold_pre,
             "gold_post": gold_post,
@@ -1197,7 +1726,7 @@ def combine_patch_coverage(
     gold_applicable = gold_reference_status == "OK" and gold_executable_count > 0
     paper_metric_eligible = status == "OK" and gold_applicable
     return {
-        "coverage_schema_version": 2,
+        "coverage_schema_version": 3,
         "status": status,
         "definition": (
             "SWT-Bench official six-view Patch Coverage: executable removed lines are "
@@ -1210,6 +1739,7 @@ def combine_patch_coverage(
         "coverage_instrumentation_sha256": SWT_TRACE_SHA256,
         "prediction_coverage_scope": "complete_final_test_file",
         "gold_denominator_source": "independent_gold_test_and_gold_baseline_views",
+        "coverage_delta_gold_source": "official_model_six_view_denominator",
         "removed_line_baseline_view": "base_post",
         "added_line_baseline_view": "base_post",
         "paper_metric_eligible": paper_metric_eligible,
@@ -1254,14 +1784,27 @@ def combine_patch_coverage(
         "coverage_base": base_count / executable_count if executable_count else None,
         "coverage_delta_pred": delta_pred_count / executable_count if executable_count else None,
         "coverage_delta_gold": (
-            delta_gold_count / gold_executable_count
+            official_delta_gold_count / executable_count
+            if executable_count and not invalid_inputs
+            else None
+        ),
+        "gold_reference_coverage_delta": (
+            gold_reference_delta_count / gold_executable_count
             if gold_executable_count and not invalid_gold_reference_inputs
             else None
         ),
         "delta_covered_removed_lines": _flatten_line_map(delta_removed),
         "delta_covered_added_lines": _flatten_line_map(delta_added),
-        "delta_gold_removed_lines": _flatten_line_map(delta_gold_removed),
-        "delta_gold_added_lines": _flatten_line_map(delta_gold_added),
+        "delta_gold_removed_lines": _flatten_line_map(
+            official_delta_gold_removed
+        ),
+        "delta_gold_added_lines": _flatten_line_map(official_delta_gold_added),
+        "gold_reference_delta_removed_lines": _flatten_line_map(
+            gold_reference_delta_removed
+        ),
+        "gold_reference_delta_added_lines": _flatten_line_map(
+            gold_reference_delta_added
+        ),
     }
 
 
@@ -1272,20 +1815,18 @@ def aggregate_delta_change_coverage(
 ) -> dict[str, Any]:
     """Aggregate paper-facing SWT-Bench Delta Mean Change Coverage.
 
-    SWT-Bench reports a macro average over instances for which the gold
-    coverage denominator is defined.  Instances with no executable golden
-    patch lines are excluded.  A missing generation contributes zero only
-    when an independent gold run has already established that the instance is
-    denominator-eligible.  This evaluator currently establishes eligibility
-    from the six reference views collected with each generated test, so any
-    missing or incomplete reference makes the paper metric invalid instead of
-    silently changing its denominator.
+    SWT-Bench divides the sum of model ``coverage_delta_pred`` values by the
+    number of instances whose separate gold run has a defined
+    ``coverage_delta_gold``. Gold-unavailable instances are excluded; a model
+    run that is unavailable for a gold-applicable instance contributes zero.
+    Both decisions are returned explicitly for auditability.
     """
 
     eligible_values: list[float] = []
     eligible_ids: list[str] = []
     excluded_no_executable: list[str] = []
-    invalid: dict[str, str] = {}
+    excluded_gold_unavailable: dict[str, str] = {}
+    zeroed_model_instances: dict[str, str] = {}
     per_instance: dict[str, float] = {}
 
     if not coverage_enabled:
@@ -1297,6 +1838,8 @@ def aggregate_delta_change_coverage(
             "denominator": 0,
             "eligible_ids": [],
             "excluded_no_executable_ids": [],
+            "excluded_gold_unavailable": {},
+            "zeroed_model_instances": {},
             "invalid_instances": {},
             "per_instance": {},
             "invalid_reason": "patch coverage was disabled",
@@ -1318,33 +1861,34 @@ def aggregate_delta_change_coverage(
         ):
             excluded_no_executable.append(instance_id)
             continue
-        if not coverage.get("gold_applicable"):
-            invalid[instance_id] = gold_reference_status
-            continue
-        if not coverage.get("paper_metric_eligible") or status != "OK":
-            invalid[instance_id] = status
+        schema_version = int(coverage.get("coverage_schema_version") or 0)
+        gold_reference_delta = (
+            coverage.get("gold_reference_coverage_delta")
+            if schema_version >= 3
+            else coverage.get("coverage_delta_gold")
+        )
+        if not coverage.get("gold_applicable") or gold_reference_delta is None:
+            excluded_gold_unavailable[instance_id] = gold_reference_status
             continue
         delta = coverage.get("coverage_delta_pred")
-        gold_delta = coverage.get("coverage_delta_gold")
-        if delta is None or gold_delta is None:
-            invalid[instance_id] = "UNDEFINED_DELTA_COVERAGE"
-            continue
-        value = float(delta)
+        if (
+            not coverage.get("paper_metric_eligible")
+            or status != "OK"
+            or delta is None
+        ):
+            value = 0.0
+            zeroed_model_instances[instance_id] = status
+        else:
+            value = float(delta)
         eligible_ids.append(instance_id)
         eligible_values.append(value)
         per_instance[instance_id] = value
 
-    valid = not invalid
+    valid = bool(eligible_values)
     numerator = sum(eligible_values)
-    value = numerator / len(eligible_values) if eligible_values and valid else None
-    if valid and not eligible_values:
+    value = numerator / len(eligible_values) if valid else None
+    if not eligible_values:
         invalid_reason = "no gold-applicable instances with executable patch lines"
-        valid = False
-    elif invalid:
-        invalid_reason = (
-            "gold applicability or six-view coverage is unavailable for "
-            f"{len(invalid)} instance(s)"
-        )
     else:
         invalid_reason = ""
     return {
@@ -1355,7 +1899,11 @@ def aggregate_delta_change_coverage(
         "denominator": len(eligible_values),
         "eligible_ids": sorted(eligible_ids),
         "excluded_no_executable_ids": sorted(excluded_no_executable),
-        "invalid_instances": dict(sorted(invalid.items())),
+        "excluded_gold_unavailable": dict(
+            sorted(excluded_gold_unavailable.items())
+        ),
+        "zeroed_model_instances": dict(sorted(zeroed_model_instances.items())),
+        "invalid_instances": {},
         "per_instance": dict(sorted(per_instance.items())),
         "invalid_reason": invalid_reason,
     }
@@ -1426,6 +1974,7 @@ def collect_reference_patch_coverage(
             "gold": dict(missing),
             "audit": {},
         }
+    all_test_patch_paths = patch_paths_from_patch(test_patch)
     directives = test_directives_from_patch(test_patch)
     try:
         gold_command = test_command_for_directives(
@@ -1453,7 +2002,7 @@ def collect_reference_patch_coverage(
         reset = git_reset_to(repo_dir, str(issue["base_commit"]), clean=False)
         _remove_untracked_test_path(repo_dir, final_test_relpath)
         removed_reference_paths = _remove_untracked_patch_paths(
-            repo_dir, directives
+            repo_dir, all_test_patch_paths
         )
         patch_result: dict[str, Any] = {}
         if state == "post":
@@ -1471,6 +2020,7 @@ def collect_reference_patch_coverage(
 
     audit: dict[str, Any] = {
         "state": state,
+        "all_test_patch_paths": all_test_patch_paths,
         "directives": directives,
         "prediction_command": prediction_command,
         "gold_command": gold_command,
@@ -1549,7 +2099,7 @@ def collect_reference_patch_coverage(
             )
             _remove_untracked_test_path(repo_dir, final_test_relpath)
             audit["cleanup_removed_untracked_reference_paths"] = (
-                _remove_untracked_patch_paths(repo_dir, directives)
+                _remove_untracked_patch_paths(repo_dir, all_test_patch_paths)
             )
         except Exception as exc:  # noqa: BLE001
             audit["cleanup_error"] = repr(exc)
@@ -1567,16 +2117,39 @@ def evaluate_one(
     eval_clone_root: str = "",
     cleanup_isolated_worktree: bool = True,
     compute_patch_coverage: bool = False,
+    dataset_mode: str = "swt",
 ) -> dict[str, Any]:
     instance_id = issue["instance_id"]
     final_path = Path(generated_dir) / instance_id / "final_test.py"
     if not final_path.exists():
-        return {
+        missing_result: dict[str, Any] = {
             "instance_id": instance_id,
             "repo": str(issue.get("repo") or "UNKNOWN"),
+            "dataset_mode": dataset_mode,
             "status": "MISSING_GENERATION",
             "success": False,
-            "patch_coverage": {
+        }
+        if dataset_mode == "tdd":
+            missing_result["tdd_coverage"] = {
+                "status": "MISSING_GENERATION",
+                "metric_family": "tdd_bench_changed_line_coverage",
+                "total_changed": 0,
+                "total_missed": 0,
+                "cov_score": 0.0,
+                "fail_before": 0,
+                "pass_after": 0,
+                "final_score": 0.0,
+                "resolved": False,
+                "audit": {
+                    "final_test_present": False,
+                    "denominator_policy": (
+                        "missing generation contributes zero in the complete "
+                        "TDD dataset denominator"
+                    ),
+                },
+            }
+        else:
+            missing_result["patch_coverage"] = {
                 "status": "MISSING_GENERATION",
                 "patch_line_coverage": 0.0,
                 "coverage_delta_pred": 0.0,
@@ -1585,10 +2158,13 @@ def evaluate_one(
                 "audit": {
                     "final_test_present": False,
                     "six_views_executed": False,
-                    "denominator_policy": "missing generation counts as zero",
+                    "denominator_policy": (
+                        "missing generation counts as zero in the fixed 276-row "
+                        "F2P denominator; Delta C requires an independent gold run"
+                    ),
                 },
-            },
-        }
+            }
+        return missing_result
     generated_worktree = Path(generated_dir) / instance_id / "worktree"
     eval_worktree_metadata: dict[str, Any] = {}
     isolated_eval_worktree = False
@@ -1619,10 +2195,21 @@ def evaluate_one(
     code = final_path.read_text(encoding="utf-8")
     rel_file = direct_test_relpath(instance_id, generated_dir)
     selector = first_test_selector(code)
-    command = test_command(issue["repo"], issue["version"], rel_file, selector)
-    # Preserve the established single-test F2P command, but execute the entire
-    # generated file for paper-facing coverage so all generated tests count.
-    coverage_command = test_command(issue["repo"], issue["version"], rel_file, "")
+    # SWT-Bench evaluates every test in every file changed by the model patch.
+    # Our model output is one generated file, so F2P and coverage both execute
+    # that complete file; ``selector`` remains metadata only.
+    command = (
+        tdd_test_command(
+            issue["repo"],
+            issue["version"],
+            rel_file,
+            "",
+            with_coverage=compute_patch_coverage,
+        )
+        if dataset_mode == "tdd"
+        else test_command(issue["repo"], issue["version"], rel_file, "")
+    )
+    coverage_command = command
     runner_parity = runner_parity_info(
         instance_id, generated_dir, rel_file, selector, command
     )
@@ -1680,6 +2267,12 @@ def evaluate_one(
     full_command = f"{conda_activate_cmd(env_name)} && export PYTHONPATH={pythonpath}:$PYTHONPATH && {command}"
     result: dict[str, Any] = {
         "instance_id": instance_id,
+        "dataset_mode": dataset_mode,
+        "coverage_metric_family": (
+            "tdd_bench_changed_line_coverage"
+            if dataset_mode == "tdd"
+            else "swt_bench_delta_mean_change_coverage"
+        ),
         "repo": issue["repo"],
         "version": issue["version"],
         "env_name": env_name,
@@ -1769,6 +2362,15 @@ def evaluate_one(
         result["runtime_manifest_after_setup"] = environment_manifest(
             env_name, timeout=min(max(timeout, 120), 300), refresh=True
         )
+        if dataset_mode == "tdd" and compute_patch_coverage:
+            result["tdd_coverage_tools"] = ensure_tdd_coverage_tools(
+                str(issue.get("repo") or ""), env_name, repo_dir, timeout
+            )
+            if result["tdd_coverage_tools"].get("returncode") != 0:
+                result["success"] = False
+                result["status"] = "TDD_COVERAGE_TOOL_ERROR"
+                result["env_error_category"] = "INSTALL_FAILURE"
+                return result
         baseline_paths = _git_changed_paths(repo_dir)
         tracked_before = _git_changed_paths(repo_dir, include_untracked=False)
         result["workspace_audit"]["workspace_clean_before"] = not tracked_before
@@ -1788,8 +2390,27 @@ def evaluate_one(
             return result
 
         patch_targets = patch_target_lines(str(issue.get("patch") or ""))
+        tdd_targets = (
+            tdd_changed_lines(str(issue.get("patch") or ""))
+            if dataset_mode == "tdd"
+            else {"before": {}, "after": {}}
+        )
         buggy_patch_coverage: dict[str, Any] = {}
-        if compute_patch_coverage:
+        buggy_tdd_coverage: dict[str, Any] = {}
+        if compute_patch_coverage and dataset_mode == "tdd":
+            buggy_tdd_coverage = collect_tdd_side_coverage(
+                instance_id,
+                "before",
+                tdd_targets.get("before") or {},
+                coverage_command,
+                repo_dir,
+                env_name,
+                pythonpath,
+                timeout,
+                repo=str(issue.get("repo") or ""),
+            )
+            buggy_run = buggy_tdd_coverage["run"]
+        elif compute_patch_coverage:
             buggy_patch_coverage = collect_patch_side_coverage(
                 instance_id,
                 "buggy",
@@ -1800,11 +2421,13 @@ def evaluate_one(
                 pythonpath,
                 timeout,
             )
-        buggy_run = run_shell(full_command, repo_dir, timeout)
+            buggy_run = run_shell(full_command, repo_dir, timeout)
+        else:
+            buggy_run = run_shell(full_command, repo_dir, timeout)
         result["buggy_run"] = buggy_run
         result["buggy"] = classify_run(buggy_run)
         reference_pre: dict[str, Any] = {}
-        if compute_patch_coverage:
+        if compute_patch_coverage and dataset_mode == "swt":
             reference_pre = collect_reference_patch_coverage(
                 issue,
                 instance_id,
@@ -1877,14 +2500,29 @@ def evaluate_one(
                 result["status"] = "PATCH_REAPPLY_ERROR"
                 return result
             write_generated_test(repo_dir, rel_file, code)
-        fixed_run = run_shell(full_command, repo_dir, timeout)
+        fixed_tdd_coverage: dict[str, Any] = {}
+        if compute_patch_coverage and dataset_mode == "tdd":
+            fixed_tdd_coverage = collect_tdd_side_coverage(
+                instance_id,
+                "after",
+                tdd_targets.get("after") or {},
+                coverage_command,
+                repo_dir,
+                env_name,
+                pythonpath,
+                timeout,
+                repo=str(issue.get("repo") or ""),
+            )
+            fixed_run = fixed_tdd_coverage["run"]
+        else:
+            fixed_run = run_shell(full_command, repo_dir, timeout)
         result["fixed_run"] = fixed_run
         result["fixed"] = classify_run(fixed_run)
         result["runtime_manifest_after_evaluation"] = environment_manifest(
             env_name, timeout=min(max(timeout, 120), 300), refresh=True
         )
         fixed_patch_coverage: dict[str, Any] = {}
-        if compute_patch_coverage:
+        if compute_patch_coverage and dataset_mode == "swt":
             fixed_patch_coverage = collect_patch_side_coverage(
                 instance_id,
                 "fixed",
@@ -1901,7 +2539,7 @@ def evaluate_one(
             set((patch_targets.get("buggy") or {}))
             | set((patch_targets.get("fixed") or {}))
         )
-        if compute_patch_coverage:
+        if compute_patch_coverage and dataset_mode == "swt":
             reference_post = collect_reference_patch_coverage(
                 issue,
                 instance_id,
@@ -1931,6 +2569,20 @@ def evaluate_one(
                 reference_post.get("base") or {},
                 reference_pre.get("gold_base") or {},
                 reference_post.get("gold_base") or {},
+            )
+        elif compute_patch_coverage and dataset_mode == "tdd":
+            result["workspace_audit"]["tdd_coverage_views"] = [
+                "generated_test_before_golden_patch",
+                "generated_test_after_golden_patch",
+            ]
+            result["workspace_audit"]["swt_reference_views_executed"] = False
+            result["tdd_coverage"] = combine_tdd_coverage(
+                instance_id,
+                tdd_targets,
+                buggy_tdd_coverage,
+                fixed_tdd_coverage,
+                result["buggy"],
+                result["fixed"],
             )
         result["success"] = bool(result["buggy"]["failed"] and not result["fixed"]["failed"])
         if result["success"]:
@@ -2065,6 +2717,7 @@ def run_bucket(
                 args.eval_clone_root or str(Path(args.output_dir) / "eval_clones"),
                 not args.keep_eval_worktrees,
                 args.compute_patch_coverage,
+                args.dataset_mode,
             )
         results[iid] = res
         safe_json_dump(
@@ -2082,6 +2735,15 @@ def run_bucket(
                 str(
                     worker_dir
                     / "patch_coverage"
+                    / f"{sanitize_instance_id(iid)}.json"
+                ),
+            )
+        if isinstance(res.get("tdd_coverage"), dict):
+            safe_json_dump(
+                res["tdd_coverage"],
+                str(
+                    worker_dir
+                    / "tdd_coverage"
                     / f"{sanitize_instance_id(iid)}.json"
                 ),
             )
@@ -2109,6 +2771,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--max_workers", type=int, default=6)
     parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument(
+        "--dataset_mode",
+        choices=("swt", "tdd"),
+        default="swt",
+        help="Select the benchmark-specific coverage protocol.",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--no_setup", action="store_true", help="Skip editable install refresh before each side.")
     parser.add_argument("--env_failfast_min_count", type=int, default=20)
@@ -2145,8 +2813,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=parse_bool,
         default=False,
         help=(
-            "Run SWT-Bench six-view Patch Coverage: final test pre/post plus "
-            "gold/base reference tests pre/post. This does not change F2P status."
+            "Run benchmark-native coverage: SWT-Bench six/eight-view Delta C "
+            "for --dataset_mode swt, or TDD-Bench pre/post changed-line "
+            "coverage with F2P gating for --dataset_mode tdd."
         ),
     )
     return parser
@@ -2193,6 +2862,33 @@ def fill_patches_from_swebench_lite(issues: dict[str, dict[str, Any]]) -> None:
 def main() -> None:
     args = build_parser().parse_args()
     ensure_dir(args.output_dir)
+    output_root = Path(args.output_dir)
+    existing_metrics_path = output_root / "metrics.json"
+    if args.resume and existing_metrics_path.is_file():
+        existing_metrics = json.loads(
+            existing_metrics_path.read_text(encoding="utf-8")
+        )
+        existing_mode = str(existing_metrics.get("dataset_mode") or "")
+        if (
+            not existing_mode
+            and str(existing_metrics.get("patch_cov_algorithm") or "").startswith(
+                "swt_bench_"
+            )
+        ):
+            existing_mode = "swt"
+        if existing_mode != args.dataset_mode:
+            raise ValueError(
+                "refusing cross-benchmark resume: existing output mode is "
+                f"{existing_mode or 'unknown'}, requested {args.dataset_mode}"
+            )
+    if not args.resume:
+        stale_names = (
+            ("patch_coverage_results.json", "delta_change_coverage.json")
+            if args.dataset_mode == "tdd"
+            else ("tdd_coverage_results.json", "tdd_coverage.json")
+        )
+        for stale_name in stale_names:
+            (output_root / stale_name).unlink(missing_ok=True)
     tmp_root = os.environ.get("TMPDIR") or str(Path(args.output_dir) / "tmp")
     Path(tmp_root).mkdir(parents=True, exist_ok=True)
     os.environ["TMPDIR"] = tmp_root
@@ -2208,6 +2904,12 @@ def main() -> None:
     safe_json_dump(preflight, str(Path(args.output_dir) / "environment_preflight.json"))
     if not preflight.get("ok"):
         metrics = {
+            "dataset_mode": args.dataset_mode,
+            "coverage_metric_family": (
+                "tdd_bench_changed_line_coverage"
+                if args.dataset_mode == "tdd"
+                else "swt_bench_delta_mean_change_coverage"
+            ),
             "total_instances": 0,
             "f2p_success": 0,
             "f2p_fail": 0,
@@ -2226,6 +2928,10 @@ def main() -> None:
         raise SystemExit(3)
     issues = load_issue_data(args.instances_path)
     if args.use_swebench_lite:
+        if args.dataset_mode == "tdd":
+            raise ValueError(
+                "--use_swebench_lite is SWT-only; TDD must use its own 449-row patches"
+            )
         fill_patches_from_swebench_lite(issues)
     ids = [args.instance_id] if args.instance_id else list(issues)
     ids = [iid for iid in ids if iid in issues]
@@ -2256,20 +2962,35 @@ def main() -> None:
             merged.update(json.loads(Path(path).read_text(encoding="utf-8")))
     for iid in ids:
         if iid not in merged:
-            merged[iid] = {
+            missing_evaluation: dict[str, Any] = {
                 "instance_id": iid,
                 "repo": str(issues[iid].get("repo") or "UNKNOWN"),
+                "dataset_mode": args.dataset_mode,
                 "status": "ERROR",
                 "success": False,
                 "error": "evaluation was not completed after environment fail-fast",
-                "patch_coverage": {
+            }
+            if args.dataset_mode == "tdd":
+                missing_evaluation["tdd_coverage"] = {
+                    "status": "ERROR",
+                    "metric_family": "tdd_bench_changed_line_coverage",
+                    "total_changed": 0,
+                    "total_missed": 0,
+                    "cov_score": 0.0,
+                    "fail_before": 0,
+                    "pass_after": 0,
+                    "final_score": 0.0,
+                    "resolved": False,
+                }
+            else:
+                missing_evaluation["patch_coverage"] = {
                     "status": "ERROR",
                     "patch_line_coverage": 0.0,
                     "coverage_delta_pred": 0.0,
                     "target_line_count": 0,
                     "covered_line_count": 0,
-                },
-            }
+                }
+            merged[iid] = missing_evaluation
     total = len(merged)
     success = sum(1 for r in merged.values() if r.get("success"))
     by_status: dict[str, int] = {}
@@ -2284,6 +3005,10 @@ def main() -> None:
     patch_cov_fixed_covered_lines = 0
     patch_cov_ratios: list[float] = []
     patch_cov_by_status: dict[str, int] = {}
+    tdd_cov_by_status: dict[str, int] = {}
+    tdd_cov_total_changed = 0
+    tdd_cov_total_missed = 0
+    tdd_cov_scores: list[float] = []
     by_repo: dict[str, dict[str, int]] = {}
     environment_cache_hits = 0
     environment_cache_total = 0
@@ -2322,17 +3047,45 @@ def main() -> None:
                 patch_cov_ratios.append(
                     float(patch_cov.get("patch_line_coverage") or 0.0)
                 )
+        tdd_cov = (
+            r.get("tdd_coverage")
+            if isinstance(r.get("tdd_coverage"), dict)
+            else {}
+        )
+        if tdd_cov:
+            tdd_status = str(tdd_cov.get("status") or "UNKNOWN")
+            tdd_cov_by_status[tdd_status] = tdd_cov_by_status.get(tdd_status, 0) + 1
+            tdd_cov_total_changed += int(tdd_cov.get("total_changed") or 0)
+            tdd_cov_total_missed += int(tdd_cov.get("total_missed") or 0)
+            if "cov_score" in tdd_cov:
+                tdd_cov_scores.append(float(tdd_cov.get("cov_score") or 0.0))
         env_cache = r.get("environment_cache") if isinstance(r.get("environment_cache"), dict) else {}
         if env_cache:
             environment_cache_total += 1
             environment_cache_hits += int(bool(env_cache.get("cache_hit")))
     invalid_environment = bool(failfast_state.get("invalid_environment"))
     delta_c = aggregate_delta_change_coverage(
-        merged, coverage_enabled=args.compute_patch_coverage
+        merged,
+        coverage_enabled=(
+            args.compute_patch_coverage and args.dataset_mode == "swt"
+        ),
+    )
+    tdd_score = aggregate_tdd_bench_score(
+        merged,
+        coverage_enabled=(
+            args.compute_patch_coverage and args.dataset_mode == "tdd"
+        ),
     )
     if invalid_environment:
         delta_c = {
             **delta_c,
+            "valid": False,
+            "value": None,
+            "percent": None,
+            "invalid_reason": "environment error fail-fast threshold exceeded",
+        }
+        tdd_score = {
+            **tdd_score,
             "valid": False,
             "value": None,
             "percent": None,
@@ -2352,6 +3105,12 @@ def main() -> None:
         else None
     )
     metrics = {
+        "dataset_mode": args.dataset_mode,
+        "coverage_metric_family": (
+            "tdd_bench_changed_line_coverage"
+            if args.dataset_mode == "tdd"
+            else "swt_bench_delta_mean_change_coverage"
+        ),
         "total_instances": total,
         "f2p_success": success,
         "f2p_fail": total - success,
@@ -2398,6 +3157,12 @@ def main() -> None:
         "delta_c_excluded_no_executable_ids": delta_c[
             "excluded_no_executable_ids"
         ],
+        "delta_c_excluded_gold_unavailable": delta_c[
+            "excluded_gold_unavailable"
+        ],
+        "delta_c_zeroed_model_instances": delta_c[
+            "zeroed_model_instances"
+        ],
         "delta_c_invalid_instances": delta_c["invalid_instances"],
         "delta_c_per_instance": delta_c["per_instance"],
         "delta_c_definition": (
@@ -2407,10 +3172,11 @@ def main() -> None:
             "increases its execution count over the no-generated-test baseline."
         ),
         "delta_c_denominator_policy": (
-            "gold-applicable instances only; no-executable-gold-patch instances are "
-            "excluded; missing or incomplete gold applicability invalidates the metric"
+            "SWT-Bench paper policy: instances with a defined independent-gold "
+            "coverage delta form the denominator; unavailable gold runs are excluded; "
+            "unavailable model runs contribute zero when gold is applicable"
         ),
-        "delta_c_schema_version": 1,
+        "delta_c_schema_version": 2,
         "delta_c_coverage_instrumentation": (
             "vendored_swt_bench_subprocess_aware_trace"
         ),
@@ -2457,35 +3223,165 @@ def main() -> None:
         ),
         "generated_dir": args.generated_dir,
     }
+    metrics.update(
+        {
+            "coverage_enabled": args.compute_patch_coverage,
+            "tdd_score": tdd_score["value"] if args.dataset_mode == "tdd" else None,
+            "tdd_score_percent": (
+                tdd_score["percent"] if args.dataset_mode == "tdd" else None
+            ),
+            "tdd_score_valid": (
+                bool(tdd_score["valid"]) if args.dataset_mode == "tdd" else False
+            ),
+            "tdd_score_numerator": (
+                tdd_score["numerator"] if args.dataset_mode == "tdd" else None
+            ),
+            "tdd_score_denominator": (
+                tdd_score["denominator"] if args.dataset_mode == "tdd" else None
+            ),
+            "tdd_resolved_instances": (
+                tdd_score["resolved_instances"]
+                if args.dataset_mode == "tdd"
+                else None
+            ),
+            "tdd_zeroed_instances": (
+                tdd_score["zeroed_instances"] if args.dataset_mode == "tdd" else {}
+            ),
+            "tdd_per_instance_score": (
+                tdd_score["per_instance"] if args.dataset_mode == "tdd" else {}
+            ),
+            "tdd_raw_coverage_macro": (
+                statistics.fmean(tdd_cov_scores)
+                if args.dataset_mode == "tdd" and tdd_cov_scores
+                else None
+            ),
+            "tdd_total_changed": (
+                tdd_cov_total_changed if args.dataset_mode == "tdd" else None
+            ),
+            "tdd_total_missed": (
+                tdd_cov_total_missed if args.dataset_mode == "tdd" else None
+            ),
+            "tdd_coverage_by_status": (
+                tdd_cov_by_status if args.dataset_mode == "tdd" else {}
+            ),
+            "tdd_definition": (
+                "TDD-Bench final score: changed-line coverage over nonblank, "
+                "non-comment removed lines before and added lines after the golden "
+                "code patch, multiplied by fail-before and pass-after; SymPy uses "
+                "only the fail-before/pass-after gate. The run score is averaged "
+                "over the complete requested dataset, so missing/error instances are zero."
+                if args.dataset_mode == "tdd"
+                else ""
+            ),
+            "tdd_algorithm": (
+                "tdd_bench_pre_post_coverage_py_changed_lines_f2p_gated"
+                if args.dataset_mode == "tdd"
+                else ""
+            ),
+        }
+    )
+    if args.dataset_mode == "tdd":
+        # SWT-only names are explicitly non-applicable in TDD mode.  Keeping
+        # them null avoids downstream scripts silently treating TDD coverage as
+        # SWT Delta C while retaining a stable metrics schema.
+        metrics.update(
+            {
+                "patch_cov_enabled": False,
+                "patch_cov_applicable": None,
+                "patch_cov_success": None,
+                "patch_cov_nonzero_instances": None,
+                "patch_cov_nonzero_rate": None,
+                "patch_cov_at_1": None,
+                "patch_cov_at_1_percent": None,
+                "patch_cov_definition": "",
+                "patch_cov_algorithm": "",
+                "patch_cov_delta_at_1": None,
+                "patch_cov_delta_at_1_percent": None,
+                "delta_mean_change_coverage": None,
+                "delta_mean_change_coverage_percent": None,
+                "delta_c_valid": False,
+                "delta_c_invalid_reason": "not applicable to TDD-Bench",
+                "delta_c_numerator": None,
+                "delta_c_denominator": None,
+                "delta_c_eligible_ids": [],
+                "delta_c_excluded_no_executable_ids": [],
+                "delta_c_excluded_gold_unavailable": {},
+                "delta_c_zeroed_model_instances": {},
+                "delta_c_invalid_instances": {},
+                "delta_c_per_instance": {},
+                "delta_c_definition": "",
+                "delta_c_denominator_policy": "",
+                "delta_c_coverage_instrumentation": "",
+                "delta_c_coverage_instrumentation_sha256": "",
+                "delta_c_prediction_scope": "",
+                "delta_c_gold_denominator_source": "",
+                "patch_cov_median": None,
+                "patch_cov_median_percent": None,
+                "patch_cov_delta_median": None,
+                "patch_cov_delta_median_percent": None,
+                "patch_cov_target_lines": None,
+                "patch_cov_covered_lines": None,
+                "patch_cov_buggy_target_lines": None,
+                "patch_cov_buggy_covered_lines": None,
+                "patch_cov_fixed_target_lines": None,
+                "patch_cov_fixed_covered_lines": None,
+                "patch_line_coverage": None,
+                "patch_line_coverage_percent": None,
+                "patch_cov_by_status": {},
+            }
+        )
     safe_json_dump(merged, str(Path(args.output_dir) / "merged_results.json"))
-    safe_json_dump(
-        {
-            instance_id: result.get("patch_coverage")
-            for instance_id, result in merged.items()
-            if isinstance(result.get("patch_coverage"), dict)
-        },
-        str(Path(args.output_dir) / "patch_coverage_results.json"),
-    )
-    safe_json_dump(
-        {
-            "schema_version": 1,
-            "metric_name": "Delta Mean Change Coverage",
-            "symbol": "Delta C",
-            "algorithm": (
-                "swt_bench_six_view_with_independent_gold_denominator"
-            ),
-            "coverage_instrumentation": (
-                "vendored_swt_bench_subprocess_aware_trace"
-            ),
-            "coverage_instrumentation_sha256": SWT_TRACE_SHA256,
-            "prediction_scope": "complete_final_test_file",
-            "gold_denominator_source": (
-                "independent_gold_test_and_gold_baseline_views"
-            ),
-            **delta_c,
-        },
-        str(Path(args.output_dir) / "delta_change_coverage.json"),
-    )
+    if args.dataset_mode == "swt":
+        safe_json_dump(
+            {
+                instance_id: result.get("patch_coverage")
+                for instance_id, result in merged.items()
+                if isinstance(result.get("patch_coverage"), dict)
+            },
+            str(Path(args.output_dir) / "patch_coverage_results.json"),
+        )
+        safe_json_dump(
+            {
+                "schema_version": 2,
+                "metric_name": "Delta Mean Change Coverage",
+                "symbol": "Delta C",
+                "algorithm": (
+                    "swt_bench_six_view_with_independent_gold_denominator"
+                ),
+                "coverage_instrumentation": (
+                    "vendored_swt_bench_subprocess_aware_trace"
+                ),
+                "coverage_instrumentation_sha256": SWT_TRACE_SHA256,
+                "prediction_scope": "complete_final_test_file",
+                "gold_denominator_source": (
+                    "independent_gold_test_and_gold_baseline_views"
+                ),
+                **delta_c,
+            },
+            str(Path(args.output_dir) / "delta_change_coverage.json"),
+        )
+    else:
+        safe_json_dump(
+            {
+                instance_id: result.get("tdd_coverage")
+                for instance_id, result in merged.items()
+                if isinstance(result.get("tdd_coverage"), dict)
+            },
+            str(Path(args.output_dir) / "tdd_coverage_results.json"),
+        )
+        safe_json_dump(
+            {
+                "schema_version": 1,
+                "metric_name": "TDD-Bench final score",
+                "algorithm": (
+                    "tdd_bench_pre_post_coverage_py_changed_lines_f2p_gated"
+                ),
+                "coverage_instrumentation": "coverage.py",
+                "prediction_scope": "complete_final_test_file",
+                **tdd_score,
+            },
+            str(Path(args.output_dir) / "tdd_coverage.json"),
+        )
     safe_json_dump(metrics, str(Path(args.output_dir) / "metrics.json"))
     print(json.dumps(metrics, ensure_ascii=False, indent=2), flush=True)
 

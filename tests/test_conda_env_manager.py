@@ -114,6 +114,26 @@ class CondaEnvManagerTests(unittest.TestCase):
         )
         self.assertEqual(records[0]["environment_role"], "dependency_template")
 
+    def test_environment_manifest_probe_supports_python36_templates(self) -> None:
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                '{"python":"3.6.15","executable":"/env/bin/python",'
+                '"prefix":"/env","packages":{},"pip_check_returncode":0,'
+                '"pip_check_stdout":"","pip_check_stderr":""}\n'
+            ),
+            stderr="",
+        )
+        with mock.patch.object(
+            envm, "conda_env_inventory", return_value={"legacy": "/env"}
+        ), mock.patch.object(envm.subprocess, "run", return_value=completed) as run:
+            manifest = envm.environment_manifest("legacy", refresh=True)
+
+        injected_script = run.call_args.args[0][-1]
+        self.assertNotIn("text=True", injected_script)
+        self.assertIn("universal_newlines=True", injected_script)
+        self.assertTrue(manifest["ok"])
+
     def test_missing_metadata_uses_legacy_exact_fallback(self) -> None:
         iid = "django__django-12184"
         write_instance(self.root, iid, {})

@@ -7,13 +7,20 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from brt5.evaluation.direct_eval import (
     SWT_TRACE_PATH,
+    _remove_untracked_patch_paths,
     aggregate_delta_change_coverage,
+    collect_patch_side_coverage,
     combine_patch_coverage,
+    patch_paths_from_patch,
+    patch_target_lines,
     parse_patch_coverage,
-    test_command,
+    test_command as build_test_command,
+    test_command_for_directives as build_test_command_for_directives,
+    test_directives_from_patch as extract_test_directives_from_patch,
     trace_test_command,
 )
 
@@ -93,6 +100,7 @@ class PaperChangeCoverageTests(unittest.TestCase):
         self.assertEqual(result["coverage_pred"], 0.75)
         self.assertEqual(result["coverage_delta_pred"], 0.5)
         self.assertEqual(result["coverage_delta_gold"], 0.5)
+        self.assertEqual(result["gold_reference_coverage_delta"], 0.5)
         self.assertEqual(
             result["delta_covered_removed_lines"],
             [{"path": "pkg/module.py", "line": 10}],
@@ -154,14 +162,17 @@ class PaperChangeCoverageTests(unittest.TestCase):
         )
 
         self.assertEqual(result["coverage_delta_pred"], 0.0)
-        self.assertEqual(result["coverage_delta_gold"], 0.5)
+        # SWT-Bench's per-prediction field uses the model run's base_post.
+        self.assertEqual(result["coverage_delta_gold"], 0.0)
+        # The separate gold run is retained only for paper macro eligibility.
+        self.assertEqual(result["gold_reference_coverage_delta"], 0.5)
         self.assertTrue(result["gold_applicable"])
         self.assertEqual(
             result["gold_denominator_source"],
             "independent_gold_test_and_gold_baseline_views",
         )
 
-    def test_missing_gold_applicability_invalidates_paper_metric(self) -> None:
+    def test_missing_gold_applicability_is_excluded_like_swt_bench(self) -> None:
         aggregate = aggregate_delta_change_coverage(
             {
                 "instance-a": {"patch_coverage": self._combined()},
@@ -175,18 +186,42 @@ class PaperChangeCoverageTests(unittest.TestCase):
             coverage_enabled=True,
         )
 
-        self.assertFalse(aggregate["valid"])
-        self.assertIsNone(aggregate["value"])
+        self.assertTrue(aggregate["valid"])
+        self.assertEqual(aggregate["value"], 0.5)
+        self.assertEqual(aggregate["denominator"], 1)
         self.assertEqual(
-            aggregate["invalid_instances"],
+            aggregate["excluded_gold_unavailable"],
             {"instance-missing": "MISSING_GOLD_REFERENCE"},
         )
 
+    def test_missing_model_view_contributes_zero_when_gold_is_applicable(self) -> None:
+        model_missing = self._combined()
+        model_missing["status"] = "INCOMPLETE_REFERENCE_COVERAGE"
+        model_missing["paper_metric_eligible"] = False
+        model_missing["coverage_delta_pred"] = None
+
+        aggregate = aggregate_delta_change_coverage(
+            {
+                "instance-a": {"patch_coverage": self._combined()},
+                "instance-model-missing": {"patch_coverage": model_missing},
+            },
+            coverage_enabled=True,
+        )
+
+        self.assertTrue(aggregate["valid"])
+        self.assertEqual(aggregate["denominator"], 2)
+        self.assertEqual(aggregate["numerator"], 0.5)
+        self.assertEqual(aggregate["value"], 0.25)
+        self.assertEqual(
+            aggregate["zeroed_model_instances"],
+            {"instance-model-missing": "INCOMPLETE_REFERENCE_COVERAGE"},
+        )
+
     def test_coverage_command_can_run_the_complete_generated_file(self) -> None:
-        complete_file = test_command(
+        complete_file = build_test_command(
             "astropy/astropy", "5.0", "tests/test_generated.py", ""
         )
-        selected_test = test_command(
+        selected_test = build_test_command(
             "astropy/astropy",
             "5.0",
             "tests/test_generated.py",
@@ -198,6 +233,139 @@ class PaperChangeCoverageTests(unittest.TestCase):
         self.assertIn(
             "tests/test_generated.py::GeneratedTests::test_one", selected_test
         )
+
+    def test_test_commands_match_checked_in_swt_bench_runners(self) -> None:
+        self.assertEqual(
+            build_test_command(
+                "django/django", "3.2", "tests/migrations/test_brt.py", ""
+            ),
+            "./tests/runtests.py --verbosity 2 --settings=test_sqlite "
+            "--parallel 1 migrations.test_brt",
+        )
+        self.assertEqual(
+            build_test_command(
+                "astropy/astropy", "5.1", "astropy/tests/test_brt.py", ""
+            ),
+            "pytest --no-header -rA --tb=no -p no:cacheprovider "
+            "astropy/tests/test_brt.py",
+        )
+        self.assertEqual(
+            build_test_command(
+                "sphinx-doc/sphinx", "5.1", "tests/test_brt.py", ""
+            ),
+            "tox -epy39 -v -- tests/test_brt.py",
+        )
+        self.assertEqual(
+            build_test_command(
+                "sympy/sympy", "1.11", "sympy/tests/test_brt.py", ""
+            ),
+            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' "
+            "bin/test -C --verbose sympy/tests/test_brt.py",
+        )
+        self.assertEqual(
+            build_test_command(
+                "pytest-dev/pytest", "7.0", "testing/test_brt.py", ""
+            ),
+            "pytest -rA testing/test_brt.py",
+        )
+        self.assertEqual(
+            build_test_command(
+                "mwaskom/seaborn", "0.13", "tests/test_brt.py", ""
+            ),
+            "pytest --no-header -rA tests/test_brt.py",
+        )
+
+    def test_gold_directives_and_fixture_cleanup_have_separate_scopes(self) -> None:
+        patch = (
+            "diff --git a/tests/test_feature.py b/tests/test_feature.py\n"
+            "--- a/tests/test_feature.py\n"
+            "+++ b/tests/test_feature.py\n"
+            "diff --git a/tests/static/config.toml b/tests/static/config.toml\n"
+            "--- /dev/null\n"
+            "+++ b/tests/static/config.toml\n"
+            "diff --git a/tests/roots/example/index.rst "
+            "b/tests/roots/example/index.rst\n"
+            "--- /dev/null\n"
+            "+++ b/tests/roots/example/index.rst\n"
+        )
+
+        self.assertEqual(
+            patch_paths_from_patch(patch),
+            [
+                "tests/test_feature.py",
+                "tests/static/config.toml",
+                "tests/roots/example/index.rst",
+            ],
+        )
+        # SWT-Bench filters TOML but historically leaves RST as a directive.
+        self.assertEqual(
+            extract_test_directives_from_patch(patch),
+            ["tests/test_feature.py", "tests/roots/example/index.rst"],
+        )
+        self.assertEqual(
+            build_test_command_for_directives(
+                "sphinx-doc/sphinx",
+                "5.1",
+                extract_test_directives_from_patch(patch),
+            ),
+            "tox -epy39 -v -- tests/test_feature.py "
+            "tests/roots/example/index.rst",
+        )
+
+    def test_reference_cleanup_removes_fixtures_but_preserves_tracked_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "coverage@example.invalid"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Coverage Test"],
+                cwd=root,
+                check=True,
+            )
+            tracked = root / "tests" / "test_feature.py"
+            tracked.parent.mkdir(parents=True)
+            tracked.write_text("def test_existing():\n    pass\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            fixture = root / "tests" / "static" / "config.toml"
+            fixture.parent.mkdir(parents=True)
+            fixture.write_text("enabled = true\n", encoding="utf-8")
+
+            removed = _remove_untracked_patch_paths(
+                str(root),
+                ["tests/test_feature.py", "tests/static/config.toml"],
+            )
+
+            self.assertTrue(tracked.is_file())
+            self.assertFalse(fixture.exists())
+            self.assertEqual(removed, ["tests/static/config.toml"])
+
+    def test_changed_line_parser_matches_unified_diff_sides(self) -> None:
+        patch = (
+            "diff --git a/pkg/module.py b/pkg/module.py\n"
+            "--- a/pkg/module.py\n"
+            "+++ b/pkg/module.py\n"
+            "@@ -10,3 +10,3 @@\n"
+            " context\n"
+            "-old_value = 1\n"
+            "+new_value = 2\n"
+            " context\n"
+            "diff --git a/docs/note.txt b/docs/note.txt\n"
+            "--- a/docs/note.txt\n"
+            "+++ b/docs/note.txt\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+
+        targets = patch_target_lines(patch)
+
+        self.assertEqual(targets["buggy"], {"pkg/module.py": [11]})
+        self.assertEqual(targets["fixed"], {"pkg/module.py": [11]})
 
     def test_vendored_swt_tracer_captures_python_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -261,6 +429,94 @@ class PaperChangeCoverageTests(unittest.TestCase):
             self.assertGreater(
                 parsed["hit_counts_by_file"]["child_module.py"]["2"], 0
             )
+
+    def test_trace_command_preserves_leading_environment_assignment(self) -> None:
+        command = trace_test_command(
+            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' "
+            "bin/test -C sympy/printing/tests/test_ccode.py",
+            "/tmp/coverage.cover",
+            "/tmp/repo",
+            {"sympy/printing/ccode.py": [1]},
+        )
+
+        self.assertTrue(command.startswith("PYTHONWARNINGS="))
+        self.assertEqual(command.count("PYTHONWARNINGS="), 1)
+        self.assertIn("swt_trace.py", command)
+        self.assertIn("bin/test -C sympy/printing/tests/test_ccode.py", command)
+
+    def test_trace_command_matches_swt_pytest_and_tox_wrapping(self) -> None:
+        pytest_command = trace_test_command(
+            "pytest --no-header -rA --tb=no -p no:cacheprovider tests/test_a.py",
+            "/tmp/coverage.cover",
+            "/tmp/repo",
+            {"pkg/module.py": [1]},
+        )
+        tox_command = trace_test_command(
+            "tox -epy39 -v -- tests/test_a.py",
+            "/tmp/coverage.cover",
+            "/tmp/repo",
+            {"pkg/module.py": [1]},
+        )
+
+        self.assertIn("-m pytest", pytest_command)
+        self.assertNotIn("--tb=no", pytest_command)
+        self.assertIn("-m tox -epy39 -v -- tests/test_a.py", tox_command)
+
+    def test_missing_trace_is_empty_for_every_swt_view(self) -> None:
+        run = {"returncode": 0, "stdout": "", "stderr": "", "timeout": False}
+        with tempfile.TemporaryDirectory() as temporary_dir, mock.patch(
+            "brt5.evaluation.direct_eval.run_shell", return_value=run
+        ):
+            base = collect_patch_side_coverage(
+                "demo__demo-1",
+                "base_pre",
+                {"pkg/module.py": [1]},
+                "python missing_test.py",
+                temporary_dir,
+                "demo-env",
+                temporary_dir,
+                30,
+            )
+            prediction = collect_patch_side_coverage(
+                "demo__demo-1",
+                "pred_pre",
+                {"pkg/module.py": [1]},
+                "python missing_test.py",
+                temporary_dir,
+                "demo-env",
+                temporary_dir,
+                30,
+            )
+
+        self.assertEqual(base["status"], "NO_COVERAGE_FILES")
+        self.assertTrue(base["swt_empty_coverage"])
+        self.assertEqual(prediction["status"], "NO_COVERAGE_FILES")
+        self.assertTrue(prediction["swt_empty_coverage"])
+
+    def test_timeout_is_diagnostic_but_missing_swt_trace_is_empty_coverage(self) -> None:
+        run = {
+            "returncode": 124,
+            "stdout": "",
+            "stderr": "",
+            "timeout": True,
+        }
+        with tempfile.TemporaryDirectory() as temporary_dir, mock.patch(
+            "brt5.evaluation.direct_eval.run_shell", return_value=run
+        ):
+            result = collect_patch_side_coverage(
+                "demo__demo-1",
+                "gold_post",
+                {"pkg/module.py": [1]},
+                "python missing_test.py",
+                temporary_dir,
+                "demo-env",
+                temporary_dir,
+                30,
+            )
+
+        self.assertEqual(result["status"], "NO_COVERAGE_FILES")
+        self.assertEqual(result["execution_status"], "TIMEOUT")
+        self.assertTrue(result["execution_timeout"])
 
 
 if __name__ == "__main__":

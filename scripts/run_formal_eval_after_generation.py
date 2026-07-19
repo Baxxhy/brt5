@@ -112,7 +112,16 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
-    outputs = Path(args.outputs_dir)
+    if args.dataset_mode == "tdd" and args.eval_completed_only:
+        parser.error(
+            "TDD-Bench final score requires the complete dataset denominator; "
+            "do not use --eval_completed_only true"
+        )
+    # The child evaluator runs from the repository parent (``ROOT``).  Resolve
+    # user-provided paths before that cwd change so commands launched from the
+    # brt5 checkout do not turn a valid generation directory into a false
+    # preflight failure.
+    outputs = Path(args.outputs_dir).resolve()
     rows = load_rows(Path(args.dataset_file))
     completed = [row for row in rows if (outputs / str(row.get("instance_id")) / "final_test.py").is_file()]
     missing = [str(row.get("instance_id")) for row in rows if row not in completed]
@@ -164,6 +173,7 @@ def main() -> int:
         "--max_workers", str(args.max_workers),
         "--timeout", str(args.timeout),
         "--eval_clone_root", str(eval_clone_root),
+        "--dataset_mode", args.dataset_mode,
     ]
     if args.eval_worktree_root:
         command.extend(["--eval_worktree_root", str(eval_worktree_root)])
@@ -222,6 +232,8 @@ def main() -> int:
             category = raw
         normalized[category] = normalized.get(category, 0) + 1
     summary = {
+        "dataset_mode": args.dataset_mode,
+        "coverage_metric_family": metrics.get("coverage_metric_family", ""),
         "returncode": returncode,
         "completed": len(completed),
         "total_instances": len(rows),
@@ -252,6 +264,12 @@ def main() -> int:
             "delta_c_eligible_ids": metrics.get("delta_c_eligible_ids", []),
             "delta_c_excluded_no_executable_ids": metrics.get(
                 "delta_c_excluded_no_executable_ids", []
+            ),
+            "delta_c_excluded_gold_unavailable": metrics.get(
+                "delta_c_excluded_gold_unavailable", {}
+            ),
+            "delta_c_zeroed_model_instances": metrics.get(
+                "delta_c_zeroed_model_instances", {}
             ),
             "delta_c_invalid_instances": metrics.get(
                 "delta_c_invalid_instances", {}
@@ -287,6 +305,24 @@ def main() -> int:
             "line_coverage": metrics.get("patch_line_coverage", 0),
             "line_coverage_percent": metrics.get("patch_line_coverage_percent", 0),
             "by_status": metrics.get("patch_cov_by_status", {}),
+        },
+        "tdd_coverage": {
+            "enabled": bool(
+                args.dataset_mode == "tdd" and metrics.get("coverage_enabled")
+            ),
+            "definition": metrics.get("tdd_definition", ""),
+            "algorithm": metrics.get("tdd_algorithm", ""),
+            "final_score": metrics.get("tdd_score"),
+            "final_score_percent": metrics.get("tdd_score_percent"),
+            "valid": metrics.get("tdd_score_valid", False),
+            "numerator": metrics.get("tdd_score_numerator"),
+            "denominator": metrics.get("tdd_score_denominator"),
+            "resolved_instances": metrics.get("tdd_resolved_instances"),
+            "raw_coverage_macro": metrics.get("tdd_raw_coverage_macro"),
+            "total_changed": metrics.get("tdd_total_changed"),
+            "total_missed": metrics.get("tdd_total_missed"),
+            "zeroed_instances": metrics.get("tdd_zeroed_instances", {}),
+            "by_status": metrics.get("tdd_coverage_by_status", {}),
         },
         "formal_categories": normalized,
         "log": str(log_path),
