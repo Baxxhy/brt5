@@ -2,7 +2,7 @@
 
 ## 1. Method contract
 
-- Branch: `codex/run-p0-simple-llm-selector`
+- Branch: `codex/reproducible-clean`.
 - Baseline source: frozen best tag `p0-136-f2p-49.28` at `a167ad6`.
 - Immediate measured comparator: 116/276 F2P from `run_setup_trigger_oracle_full276_20260717_035400`.
 - Primary objective: recover F2P while keeping the method exactly as agreed with the user.
@@ -111,3 +111,29 @@ The five-instance pilot must satisfy all of the following before launching 276:
 - Validate Xarray through NumPy/Pandas/Xarray imports, Scikit-learn through NumPy/Cython/sklearn imports, and Matplotlib through pyparsing/matplotlib/pyplot imports.
 - Pin legacy Matplotlib 3.1-3.4 to a setuptools release that does not emit the modern `pkg_resources` API deprecation during Matplotlib's warnings-as-errors test startup.
 - Acceptance gate: focused unit tests pass under `icore`; real Xarray, Scikit-learn, and Matplotlib template integrity probes complete without metadata, binary-import, or build-interface errors; no 276-row run is launched in this repair pass.
+
+## 12. Five isolated feedback and mutation ablations
+
+- Add mutually exclusive `on|off` controls for mutation, specialized feedback, environment feedback, trigger feedback, and assertion feedback alongside BehaviorTarget.
+- Exactly zero or one component may be disabled.  Full mode keeps Patch Coverage; every ablation runs formal F2P only.
+- Each result records one normalized ablation signature, method variant, effective feedback routes, mutation-plan call count, and repair-route counts. Resume is allowed only when the complete signature matches.
+- `w/o Mutation` shares the full BehaviorTarget cache but hides mutation hints from every downstream prompt and performs no mutation-planner call or mutation artifact write.
+- `Generic Iteration` uses one general repair prompt for at most three feedback repairs and does not invoke category-specific setup, trigger, or oracle helpers during those repairs.
+- The three feedback ablations disable only their named repair route; environment creation, strict verification, top-3 seed exploration, and final ranking stay fixed.
+- Validation uses the same three SWT instances for all five slices, runs IssueRewrite through formal F2P, fixes the denominator at three, and never computes Patch Coverage.
+- The implementation pass did not launch a full run. After canary acceptance,
+  the user separately authorized review, commit, and remote push.
+
+## 13. Ablation acceptance evidence
+
+- Canary root: `results/runs/ablation_canary3_batch_20260719_204557`.
+- All five variants generated 3/3 tests, evaluated a fixed denominator of 3,
+  recorded exactly one disabled component, and had zero environment failures.
+- F2P results were: `w/o Mutation` 2/3, `Generic Iteration` 2/3,
+  `w/o Environment Feedback` 0/3, `w/o Trigger Feedback` 1/3, and
+  `w/o Assertion Feedback` 1/3.
+- The disabled repair route had zero calls in each slice; `w/o Mutation` made
+  zero mutation-plan calls and emitted no mutation prompt or planner artifact.
+- F2P-only evaluation no longer writes SWT or TDD coverage placeholders.
+- Shell syntax, Python compilation, and all 141 unit tests pass under the
+  literal `icore` interpreter. No full 276-row ablation was launched.

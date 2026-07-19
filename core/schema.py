@@ -319,6 +319,9 @@ class FinalResult(JsonMixin):
     raw_issue_context: dict[str, Any] = field(default_factory=dict)
     behavior_target_enabled: bool = True
     method_variant: str = "full"
+    ablation_id: str = "full"
+    ablation_signature: str = ""
+    ablation_config: dict[str, Any] = field(default_factory=dict)
     host_context: dict[str, Any] = field(default_factory=dict)
     observation_report: dict[str, Any] = field(default_factory=dict)
     notes: str = ""
@@ -330,6 +333,8 @@ class FinalResult(JsonMixin):
     selected_seed_name: str = ""
     seed_fallback_used: bool = False
     mutation_ops: list[str] = field(default_factory=list)
+    mutation_plan_calls: int = 0
+    repair_route_counts: dict[str, int] = field(default_factory=dict)
     oracle_type: str = ""
     strict_verifier_decision: str = ""
     strict_failure_class: str = ""

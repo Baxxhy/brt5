@@ -70,8 +70,8 @@ Environment variables are also supported:
 
 ```bash
 export DEEPSEEK_API_KEYS='key1,key2,key3'
-export DEEPSEEK_BASE_URLS='https://api.deepseek.com'
-export DEEPSEEK_MODELS='deepseek-v3'
+export DEEPSEEK_BASE_URL='https://api.deepseek.com'
+export DEEPSEEK_MODEL='deepseek-v3'
 ```
 
 For a remote machine or cluster, pass these values through its secret manager,
@@ -88,7 +88,31 @@ bash scripts/run_p0_simple_llm_selector_full.sh \
 # w/o Behavior Target
 bash scripts/run_p0_simple_llm_selector_full.sh \
   --dataset swt --behavior-target off
+
+# w/o Mutation
+bash scripts/run_p0_simple_llm_selector_full.sh \
+  --dataset swt --mutation off
+
+# Generic Iteration (w/o specialized feedback)
+bash scripts/run_p0_simple_llm_selector_full.sh \
+  --dataset swt --specialized-feedback off
+
+# w/o Environment Feedback
+bash scripts/run_p0_simple_llm_selector_full.sh \
+  --dataset swt --environment-feedback off
+
+# w/o Trigger Feedback
+bash scripts/run_p0_simple_llm_selector_full.sh \
+  --dataset swt --trigger-feedback off
+
+# w/o Assertion Feedback
+bash scripts/run_p0_simple_llm_selector_full.sh \
+  --dataset swt --assertion-feedback off
 ```
+
+At most one component may be `off` in a command. Every ablation runs formal
+F2P only and keeps the complete dataset denominator; the all-on full method
+also runs the benchmark-specific coverage metric.
 
 The launcher uses the repository location dynamically. Generation runs in the
 `icore` framework environment; every benchmark project runs in its own

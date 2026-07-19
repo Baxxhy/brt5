@@ -2,10 +2,10 @@
 
 ## Identity
 
-- branch: `codex/run-p0-simple-llm-selector`
+- branch: `codex/reproducible-clean`
 - pilot run: `p0_simple_llm_selector_canary5_20260717`
 - full run: `p0_simple_llm_selector_full276_20260717`
-- stage: eight-instance minimal-environment canary complete
+- stage: five isolated ablations accepted; release submission authorized
 
 ## Code freeze
 
@@ -81,3 +81,16 @@
 - [x] real Xarray, Scikit-learn, and current Matplotlib template integrity probes pass
 - [x] contaminated legacy Matplotlib template is rejected; current hashed template passes after targeted repair
 - [x] diff reviewed and release commit prepared for the B-machine rerun
+
+## Five isolated ablations
+
+- [x] ablation definitions and mutual-exclusion contract frozen
+- [x] normalized AblationConfig and CLI controls implemented
+- [x] result metadata and resume signature implemented
+- [x] w/o Mutation removes all downstream mutation guidance and artifacts
+- [x] Generic Iteration uses only the general three-repair loop
+- [x] environment/trigger/assertion repair routes can each be disabled alone
+- [x] every ablation disables Patch Coverage while full mode preserves it
+- [x] focused and full regression tests pass under literal iCoRe (141/141)
+- [x] five independent three-instance IssueRewrite-generation-F2P canaries complete
+- [x] no full 276-row ablation launched; release commit/push separately authorized

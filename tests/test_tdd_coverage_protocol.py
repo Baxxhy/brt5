@@ -235,6 +235,66 @@ class TddCoverageProtocolTests(unittest.TestCase):
             self.assertFalse((output / "delta_change_coverage.json").exists())
             self.assertFalse((output / "patch_coverage_results.json").exists())
 
+    def test_f2p_only_output_emits_no_coverage_artifacts(self) -> None:
+        row = {
+            "instance_id": "django__django-1",
+            "repo": "django/django",
+            "version": "3.2",
+            "base_commit": "deadbeef",
+            "patch": "",
+        }
+        coverage_names = (
+            "patch_coverage_results.json",
+            "delta_change_coverage.json",
+            "tdd_coverage_results.json",
+            "tdd_coverage.json",
+        )
+        for dataset_mode in ("swt", "tdd"):
+            with self.subTest(dataset_mode=dataset_mode), tempfile.TemporaryDirectory() as temporary_dir:
+                root = Path(temporary_dir)
+                dataset = root / "dataset.json"
+                generated = root / "generated"
+                repos = root / "repos"
+                output = root / "evaluation"
+                dataset.write_text(json.dumps([row]), encoding="utf-8")
+                generated.mkdir()
+                repos.mkdir()
+                output.mkdir()
+                for name in coverage_names:
+                    (output / name).write_text("{}\n", encoding="utf-8")
+                environment = dict(os.environ)
+                environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "brt5.evaluation.formal_eval",
+                        "--instances_path",
+                        str(dataset),
+                        "--generated_dir",
+                        str(generated),
+                        "--repo_root_base",
+                        str(repos),
+                        "--output_dir",
+                        str(output),
+                        "--dataset_mode",
+                        dataset_mode,
+                        "--compute_patch_coverage",
+                        "false",
+                    ],
+                    cwd=Path(__file__).resolve().parents[2],
+                    env=environment,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                metrics = json.loads((output / "metrics.json").read_text())
+                self.assertFalse(metrics["patch_cov_enabled"])
+                for name in coverage_names:
+                    self.assertFalse((output / name).exists(), name)
+
 
 if __name__ == "__main__":
     unittest.main()

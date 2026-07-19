@@ -32,6 +32,9 @@ REPAIR_TRIGGER_USER_PROMPT = load_prompt("repair_trigger", "user")
 REPAIR_ORACLE_SYSTEM_PROMPT = load_prompt("repair_oracle", "system")
 REPAIR_ORACLE_USER_PROMPT = load_prompt("repair_oracle", "user")
 
+REPAIR_GENERIC_SYSTEM_PROMPT = load_prompt("repair_generic", "system")
+REPAIR_GENERIC_USER_PROMPT = load_prompt("repair_generic", "user")
+
 SURROGATE_PATCH_SYSTEM_PROMPT = load_prompt("surrogate_patch", "system")
 SURROGATE_PATCH_USER_PROMPT = load_prompt("surrogate_patch", "user")
 

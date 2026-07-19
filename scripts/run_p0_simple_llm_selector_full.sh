@@ -14,15 +14,26 @@ fi
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/run_p0_simple_llm_selector_full.sh --dataset {swt|tdd} [--behavior-target {on|off}]
+Usage: bash scripts/run_p0_simple_llm_selector_full.sh --dataset {swt|tdd} [ablation switch]
 
 Options:
   --dataset {swt|tdd}  Select the experiment dataset (default: swt).
   --behavior-target {on|off}
                        Enable BehaviorTarget (default: on). Use off for the
-                       "w/o Behavior Target" ablation; IssueRewrite and Patch
-                       Coverage are skipped, so formal evaluation reports F2P only.
+                       "w/o Behavior Target" ablation; IssueRewrite is skipped.
+  --mutation {on|off}  Enable explicit mutation planning (default: on).
+  --specialized-feedback {on|off}
+                       Enable setup/trigger/assertion-specific feedback (default: on).
+  --environment-feedback {on|off}
+                       Enable candidate-level setup/dependency repair (default: on).
+  --trigger-feedback {on|off}
+                       Enable trigger repair feedback (default: on).
+  --assertion-feedback {on|off}
+                       Enable observation/assertion repair feedback (default: on).
   -h, --help           Show this help message.
+
+At most one component may be off. Any ablation runs F2P only; the all-on
+configuration keeps the full F2P + Patch Coverage evaluation.
 
 DATASET_MODE, INSTANCES_PATH, GOLD_DATASET, and RUN_DIR may still be
 overridden through environment variables.
@@ -31,6 +42,20 @@ EOF
 
 DATASET_MODE=${DATASET_MODE:-swt}
 ENABLE_BEHAVIOR_TARGET=${ENABLE_BEHAVIOR_TARGET:-true}
+ENABLE_MUTATION=${ENABLE_MUTATION:-true}
+ENABLE_SPECIALIZED_FEEDBACK=${ENABLE_SPECIALIZED_FEEDBACK:-true}
+ENABLE_ENVIRONMENT_FEEDBACK=${ENABLE_ENVIRONMENT_FEEDBACK:-true}
+ENABLE_TRIGGER_FEEDBACK=${ENABLE_TRIGGER_FEEDBACK:-true}
+ENABLE_ASSERTION_FEEDBACK=${ENABLE_ASSERTION_FEEDBACK:-true}
+
+normalize_switch() {
+  case "$1" in
+    on|true|1) printf 'true' ;;
+    off|false|0) printf 'false' ;;
+    *) return 1 ;;
+  esac
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dataset)
@@ -74,6 +99,41 @@ while [[ $# -gt 0 ]]; do
       esac
       shift
       ;;
+    --mutation|--specialized-feedback|--environment-feedback|--trigger-feedback|--assertion-feedback)
+      if [[ $# -lt 2 ]]; then
+        echo "$1 requires on or off" >&2
+        usage >&2
+        exit 2
+      fi
+      NORMALIZED=$(normalize_switch "$2") || {
+        echo "invalid $1 value '$2': expected on or off" >&2
+        exit 2
+      }
+      case "$1" in
+        --mutation) ENABLE_MUTATION=$NORMALIZED ;;
+        --specialized-feedback) ENABLE_SPECIALIZED_FEEDBACK=$NORMALIZED ;;
+        --environment-feedback) ENABLE_ENVIRONMENT_FEEDBACK=$NORMALIZED ;;
+        --trigger-feedback) ENABLE_TRIGGER_FEEDBACK=$NORMALIZED ;;
+        --assertion-feedback) ENABLE_ASSERTION_FEEDBACK=$NORMALIZED ;;
+      esac
+      shift 2
+      ;;
+    --mutation=*|--specialized-feedback=*|--environment-feedback=*|--trigger-feedback=*|--assertion-feedback=*)
+      OPTION_NAME=${1%%=*}
+      OPTION_VALUE=${1#*=}
+      NORMALIZED=$(normalize_switch "$OPTION_VALUE") || {
+        echo "invalid $OPTION_NAME value '$OPTION_VALUE': expected on or off" >&2
+        exit 2
+      }
+      case "$OPTION_NAME" in
+        --mutation) ENABLE_MUTATION=$NORMALIZED ;;
+        --specialized-feedback) ENABLE_SPECIALIZED_FEEDBACK=$NORMALIZED ;;
+        --environment-feedback) ENABLE_ENVIRONMENT_FEEDBACK=$NORMALIZED ;;
+        --trigger-feedback) ENABLE_TRIGGER_FEEDBACK=$NORMALIZED ;;
+        --assertion-feedback) ENABLE_ASSERTION_FEEDBACK=$NORMALIZED ;;
+      esac
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -86,14 +146,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-case "$ENABLE_BEHAVIOR_TARGET" in
-  true|1|on) ENABLE_BEHAVIOR_TARGET=true ;;
-  false|0|off) ENABLE_BEHAVIOR_TARGET=false ;;
-  *)
-    echo "invalid ENABLE_BEHAVIOR_TARGET='$ENABLE_BEHAVIOR_TARGET': expected true or false" >&2
+for SWITCH_NAME in \
+  ENABLE_BEHAVIOR_TARGET ENABLE_MUTATION ENABLE_SPECIALIZED_FEEDBACK \
+  ENABLE_ENVIRONMENT_FEEDBACK ENABLE_TRIGGER_FEEDBACK ENABLE_ASSERTION_FEEDBACK; do
+  SWITCH_VALUE=${!SWITCH_NAME}
+  NORMALIZED=$(normalize_switch "$SWITCH_VALUE") || {
+    echo "invalid $SWITCH_NAME='$SWITCH_VALUE': expected on or off" >&2
     exit 2
-    ;;
-esac
+  }
+  printf -v "$SWITCH_NAME" '%s' "$NORMALIZED"
+done
+
+OFF_COUNT=0
+for SWITCH_VALUE in \
+  "$ENABLE_BEHAVIOR_TARGET" "$ENABLE_MUTATION" "$ENABLE_SPECIALIZED_FEEDBACK" \
+  "$ENABLE_ENVIRONMENT_FEEDBACK" "$ENABLE_TRIGGER_FEEDBACK" "$ENABLE_ASSERTION_FEEDBACK"; do
+  if [[ "$SWITCH_VALUE" == "false" ]]; then
+    OFF_COUNT=$((OFF_COUNT + 1))
+  fi
+done
+if [[ "$OFF_COUNT" -gt 1 ]]; then
+  echo "ablation switches are mutually exclusive; at most one component may be off" >&2
+  exit 2
+fi
 
 CONDA_EXE=${CONDA_EXE:-}
 if [[ -z "$CONDA_EXE" ]] && command -v conda >/dev/null 2>&1; then
@@ -139,8 +214,34 @@ esac
 RUN_TIMESTAMP=${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}
 RUN_VARIANT_SUFFIX=""
 COMPUTE_PATCH_COVERAGE=true
+ABLATION_ID=full
+METHOD_VARIANT=full
 if [ "$ENABLE_BEHAVIOR_TARGET" = "false" ]; then
   RUN_VARIANT_SUFFIX="_wo_behavior_target"
+  ABLATION_ID=wo_behavior_target
+  METHOD_VARIANT="w/o Behavior Target"
+elif [ "$ENABLE_MUTATION" = "false" ]; then
+  RUN_VARIANT_SUFFIX="_wo_mutation"
+  ABLATION_ID=wo_mutation
+  METHOD_VARIANT="w/o Mutation"
+elif [ "$ENABLE_SPECIALIZED_FEEDBACK" = "false" ]; then
+  RUN_VARIANT_SUFFIX="_generic_iteration"
+  ABLATION_ID=generic_iteration
+  METHOD_VARIANT="Generic Iteration"
+elif [ "$ENABLE_ENVIRONMENT_FEEDBACK" = "false" ]; then
+  RUN_VARIANT_SUFFIX="_wo_environment_feedback"
+  ABLATION_ID=wo_environment_feedback
+  METHOD_VARIANT="w/o Environment Feedback"
+elif [ "$ENABLE_TRIGGER_FEEDBACK" = "false" ]; then
+  RUN_VARIANT_SUFFIX="_wo_trigger_feedback"
+  ABLATION_ID=wo_trigger_feedback
+  METHOD_VARIANT="w/o Trigger Feedback"
+elif [ "$ENABLE_ASSERTION_FEEDBACK" = "false" ]; then
+  RUN_VARIANT_SUFFIX="_wo_assertion_feedback"
+  ABLATION_ID=wo_assertion_feedback
+  METHOD_VARIANT="w/o Assertion Feedback"
+fi
+if [ "$ABLATION_ID" != "full" ]; then
   COMPUTE_PATCH_COVERAGE=false
 fi
 RUN_DIR=${RUN_DIR:-$PROJECT_ROOT/results/runs/p0_simple_llm_selector_${DATASET_MODE}${RUN_VARIANT_SUFFIX}_${RUN_TIMESTAMP}}
@@ -194,6 +295,37 @@ FORMAL_DIR=$RUN_DIR/evaluation/formal_f2p
 LOG_DIR=$RUN_DIR/logs
 mkdir -p "$ISSUE_DIR" "$GENERATION_DIR" "$FORMAL_DIR" "$LOG_DIR" "$RUN_DIR/tmp"
 
+"$PYTHON_BIN" - "$RUN_DIR/run_config.json" <<PY
+import json
+import sys
+from pathlib import Path
+
+config = {
+    "dataset_mode": "$DATASET_MODE",
+    "behavior_target": "$ENABLE_BEHAVIOR_TARGET" == "true",
+    "mutation": "$ENABLE_MUTATION" == "true",
+    "specialized_feedback": "$ENABLE_SPECIALIZED_FEEDBACK" == "true",
+    "environment_feedback": "$ENABLE_ENVIRONMENT_FEEDBACK" == "true",
+    "trigger_feedback": "$ENABLE_TRIGGER_FEEDBACK" == "true",
+    "assertion_feedback": "$ENABLE_ASSERTION_FEEDBACK" == "true",
+    "ablation_id": "$ABLATION_ID",
+    "method_variant": "$METHOD_VARIANT",
+    "run_suffix": "$RUN_VARIANT_SUFFIX",
+    "patch_cov_enabled": "$COMPUTE_PATCH_COVERAGE" == "true",
+}
+config["ablation_signature"] = ";".join(
+    f"{name}={int(config[name])}"
+    for name in (
+        "behavior_target", "mutation", "specialized_feedback",
+        "environment_feedback", "trigger_feedback", "assertion_feedback",
+    )
+)
+Path(sys.argv[1]).write_text(
+    json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+
 exec > >(tee -a "$LOG_DIR/full_pipeline.log") 2>&1
 
 TDD_PREFLIGHT_PATH=""
@@ -219,12 +351,14 @@ echo "dataset_mode=$DATASET_MODE"
 echo "instances_path=$INSTANCES_PATH"
 echo "dataset_size=$DATASET_SIZE"
 echo "behavior_target_enabled=$ENABLE_BEHAVIOR_TARGET"
+echo "mutation_enabled=$ENABLE_MUTATION"
+echo "specialized_feedback_enabled=$ENABLE_SPECIALIZED_FEEDBACK"
+echo "environment_feedback_enabled=$ENABLE_ENVIRONMENT_FEEDBACK"
+echo "trigger_feedback_enabled=$ENABLE_TRIGGER_FEEDBACK"
+echo "assertion_feedback_enabled=$ENABLE_ASSERTION_FEEDBACK"
 echo "patch_coverage_enabled=$COMPUTE_PATCH_COVERAGE"
-if [ "$ENABLE_BEHAVIOR_TARGET" = "true" ]; then
-  echo "method_variant=full"
-else
-  echo "method_variant=w/o Behavior Target"
-fi
+echo "ablation_id=$ABLATION_ID"
+echo "method_variant=$METHOD_VARIANT"
 echo "framework_python=$PYTHON_BIN"
 if [ "$DATASET_MODE" = "tdd" ]; then
   echo "runtime_backend=$RUNTIME_BACKEND"
@@ -318,6 +452,11 @@ GENERATION_COMMAND=(
   --temperature 0.1 \
   --max_tokens 4096 \
   --enable_behavior_target "$ENABLE_BEHAVIOR_TARGET" \
+  --enable_seed_mutation "$ENABLE_MUTATION" \
+  --enable_specialized_feedback "$ENABLE_SPECIALIZED_FEEDBACK" \
+  --enable_environment_feedback "$ENABLE_ENVIRONMENT_FEEDBACK" \
+  --enable_trigger_feedback "$ENABLE_TRIGGER_FEEDBACK" \
+  --enable_assertion_feedback "$ENABLE_ASSERTION_FEEDBACK" \
   "${GENERATION_RUNTIME_ARGS[@]}"
 )
 if [ "$ENABLE_BEHAVIOR_TARGET" = "true" ]; then
@@ -347,7 +486,7 @@ fi
 EVALUATION_RC=$?
 echo "__BRT_STAGE__ formal_f2p_end rc=$EVALUATION_RC $(date --iso-8601=seconds)"
 
-"$PYTHON_BIN" - "$RUN_DIR" "$INSTANCES_PATH" "$DATASET_MODE" "$ENABLE_BEHAVIOR_TARGET" "$ISSUE_RC" "$GENERATION_RC" "$EVALUATION_RC" <<'PY'
+"$PYTHON_BIN" - "$RUN_DIR" "$INSTANCES_PATH" "$ISSUE_RC" "$GENERATION_RC" "$EVALUATION_RC" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -355,22 +494,50 @@ from pathlib import Path
 
 run = Path(sys.argv[1])
 instances_path = Path(sys.argv[2])
-dataset_mode = sys.argv[3]
-behavior_target_enabled = sys.argv[4].lower() == 'true'
-issue_rc, generation_rc, evaluation_rc = map(int, sys.argv[5:])
+issue_rc, generation_rc, evaluation_rc = map(int, sys.argv[3:])
+run_config_path = run / 'run_config.json'
+run_config = json.loads(run_config_path.read_text(encoding='utf-8'))
 data = json.loads(instances_path.read_text(encoding="utf-8"))
 instances = data if isinstance(data, list) else list(data.values())
 generated = sum(
     (run / 'generation' / row['instance_id'] / 'final_test.py').is_file()
     for row in instances
 )
+instance_summaries = []
+for row in instances:
+    summary_path = run / 'generation' / row['instance_id'] / 'summary.json'
+    if not summary_path.is_file():
+        continue
+    try:
+        summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        continue
+    if isinstance(summary, dict):
+        instance_summaries.append(summary)
+repair_route_counts = {
+    route: sum(
+        int((summary.get('repair_route_counts') or {}).get(route) or 0)
+        for summary in instance_summaries
+    )
+    for route in (
+        'dependency_recovery', 'environment', 'trigger', 'assertion', 'generic'
+    )
+}
 metrics_path = run / 'evaluation' / 'formal_f2p' / 'metrics.json'
 metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else {}
 completion = {
     'finished_at': datetime.now(timezone.utc).astimezone().isoformat(),
-    'dataset_mode': dataset_mode,
-    'behavior_target_enabled': behavior_target_enabled,
-    'method_variant': 'full' if behavior_target_enabled else 'w/o Behavior Target',
+    'dataset_mode': run_config['dataset_mode'],
+    'behavior_target_enabled': run_config['behavior_target'],
+    'mutation_enabled': run_config['mutation'],
+    'specialized_feedback_enabled': run_config['specialized_feedback'],
+    'environment_feedback_enabled': run_config['environment_feedback'],
+    'trigger_feedback_enabled': run_config['trigger_feedback'],
+    'assertion_feedback_enabled': run_config['assertion_feedback'],
+    'method_variant': run_config['method_variant'],
+    'ablation_id': run_config['ablation_id'],
+    'ablation_signature': run_config['ablation_signature'],
+    'ablation_config': run_config,
     'instances_path': str(instances_path),
     'issue_rewrite_returncode': issue_rc,
     'generation_returncode': generation_rc,
@@ -378,13 +545,18 @@ completion = {
     'dataset_size': len(instances),
     'generated_tests': generated,
     'missing_generation': len(instances) - generated,
+    'mutation_plan_calls': sum(
+        int(summary.get('mutation_plan_calls') or 0)
+        for summary in instance_summaries
+    ),
+    'repair_route_counts': repair_route_counts,
     'formal_total_instances': metrics.get('total_instances'),
     'f2p_success': metrics.get('f2p_success'),
     'f2p_fail': metrics.get('f2p_fail'),
     'f2p_at_1_percent': metrics.get('f2p_at_1_percent'),
     'by_status': metrics.get('by_status', {}),
     'denominator_valid': metrics.get('total_instances') == len(instances),
-    'patch_cov_enabled': metrics.get('patch_cov_enabled'),
+    'patch_cov_enabled': run_config['patch_cov_enabled'],
     'patch_cov_at_1_percent': metrics.get('patch_cov_at_1_percent'),
     'patch_cov_delta_at_1_percent': metrics.get('patch_cov_delta_at_1_percent'),
     'patch_cov_definition': metrics.get('patch_cov_definition'),

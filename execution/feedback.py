@@ -42,9 +42,9 @@ from ..core.behavior_evidence import (
     BehaviorEvidence,
     behavior_target_payload,
     is_behavior_target,
-    method_variant,
     raw_issue_payload,
 )
+from ..core.ablation import AblationConfig
 from ..core.schema import (
     CandidateCheckpoint,
     DualVersionResult,
@@ -148,18 +148,42 @@ def _save_behavior_evidence(evidence: BehaviorEvidence, output_dir: str | Path) 
     evidence.save_json(str(Path(output_dir) / filename))
 
 
-def _evidence_result_fields(evidence: BehaviorEvidence) -> dict[str, Any]:
+def _method_version(config: AblationConfig) -> str:
+    if config.ablation_id == "full":
+        return "p0-lossless-llm-selector-v1"
+    if config.ablation_id == "wo_behavior_target":
+        return "p0-wo-behavior-target-v1"
+    return f"p0-{config.ablation_id.replace('_', '-')}-v1"
+
+
+def _empty_repair_route_counts() -> dict[str, int]:
+    return {
+        "dependency_recovery": 0,
+        "environment": 0,
+        "trigger": 0,
+        "assertion": 0,
+        "generic": 0,
+    }
+
+
+def _evidence_result_fields(
+    evidence: BehaviorEvidence,
+    ablation_config: AblationConfig | None = None,
+) -> dict[str, Any]:
     enabled = is_behavior_target(evidence)
+    config = (
+        ablation_config
+        or AblationConfig(behavior_target=enabled)
+    ).validate()
     return {
         "behavior_target": behavior_target_payload(evidence),
         "raw_issue_context": raw_issue_payload(evidence),
         "behavior_target_enabled": enabled,
-        "method_variant": method_variant(evidence),
-        "method_version": (
-            "p0-lossless-llm-selector-v1"
-            if enabled
-            else "p0-wo-behavior-target-v1"
-        ),
+        "method_variant": config.method_variant,
+        "method_version": _method_version(config),
+        "ablation_id": config.ablation_id,
+        "ablation_signature": config.signature,
+        "ablation_config": config.to_dict(),
         "behavior_schema_version": evidence.schema_version,
     }
 
@@ -659,6 +683,7 @@ def run_instance_pipeline(
     enable_observation_oracle: bool = True,
     enable_strict_semantic_verifier: bool = True,
     enable_behavior_target: bool = True,
+    ablation_config: AblationConfig | None = None,
     _adaptive_disabled: bool = False,
     _forced_seed_index: int | None = None,
     _prepared_repo_path: str = "",
@@ -669,6 +694,18 @@ def run_instance_pipeline(
     ensure_dir(Path(output_dir) / "responses")
     ensure_dir(Path(output_dir) / "logs")
     try:
+        config = (
+            ablation_config
+            or AblationConfig(
+                behavior_target=enable_behavior_target,
+                mutation=enable_seed_mutation,
+            )
+        ).validate()
+        enable_behavior_target = config.behavior_target
+        enable_seed_mutation = config.mutation
+        safe_json_dump(
+            config.to_dict(), str(Path(output_dir) / "ablation_manifest.json")
+        )
         if validation_mode != "buggy_only":
             raise ValueError(
                 "surrogate patch generation/validation is disabled; "
@@ -709,6 +746,7 @@ def run_instance_pipeline(
                     enable_observation_oracle,
                     enable_strict_semantic_verifier,
                     enable_behavior_target=enable_behavior_target,
+                    ablation_config=config,
                     _adaptive_disabled=True,
                     _forced_seed_index=None,
                 )
@@ -736,7 +774,7 @@ def run_instance_pipeline(
                         rounds_used=0,
                         buggy_execution=prepared_meta.get("setup_execution", {}),
                         dual_version_result={"mode": validation_mode, "status": "SKIPPED"},
-                        **_evidence_result_fields(behavior),
+                        **_evidence_result_fields(behavior, config),
                         host_context={},
                         observation_report={},
                         notes="repository worktree/setup failed before BRT generation",
@@ -744,6 +782,8 @@ def run_instance_pipeline(
                         seed_mutation_enabled=enable_seed_mutation,
                         observation_oracle_enabled=enable_observation_oracle,
                         strict_verifier_enabled=enable_strict_semantic_verifier,
+                        mutation_plan_calls=0,
+                        repair_route_counts=_empty_repair_route_counts(),
                         final_reason="repository worktree/setup failed before BRT generation",
                         seed_mode="adaptive_top3",
                     )
@@ -779,6 +819,7 @@ def run_instance_pipeline(
                     enable_observation_oracle,
                     enable_strict_semantic_verifier,
                     enable_behavior_target=enable_behavior_target,
+                    ablation_config=config,
                     _adaptive_disabled=True,
                     _forced_seed_index=seed_index,
                     _prepared_repo_path=prepared_repo_path,
@@ -844,9 +885,10 @@ def run_instance_pipeline(
                     "final_oracle_risk": {},
                     "final_surrogate_risk": {},
                     "behavior_target_enabled": enable_behavior_target,
-                    "method_variant": (
-                        "full" if enable_behavior_target else "w/o Behavior Target"
-                    ),
+                    "method_variant": config.method_variant,
+                    "ablation_id": config.ablation_id,
+                    "ablation_signature": config.signature,
+                    "ablation_config": config.to_dict(),
                 }
             )
             safe_json_dump(attempts, str(Path(output_dir) / "seed_attempts_summary.json"))
@@ -875,12 +917,11 @@ def run_instance_pipeline(
                     or raw_issue_payload(behavior)
                 ),
                 behavior_target_enabled=enable_behavior_target,
-                method_variant=method_variant(behavior),
-                method_version=(
-                    "p0-lossless-llm-selector-v1"
-                    if enable_behavior_target
-                    else "p0-wo-behavior-target-v1"
-                ),
+                method_variant=config.method_variant,
+                method_version=_method_version(config),
+                ablation_id=config.ablation_id,
+                ablation_signature=config.signature,
+                ablation_config=config.to_dict(),
                 behavior_schema_version=behavior.schema_version,
                 host_context=selected_summary.get("host_context") or {},
                 observation_report=selected_summary.get("observation_report") or {},
@@ -894,6 +935,10 @@ def run_instance_pipeline(
                 final_oracle_risk={},
                 final_surrogate_risk=selected_summary.get("final_surrogate_risk") or {},
                 final_reason=str(selected_summary.get("final_reason") or ""),
+                mutation_plan_calls=int(
+                    selected_summary.get("mutation_plan_calls") or 0
+                ),
+                repair_route_counts=selected_summary.get("repair_route_counts") or {},
                 surrogate_patch_calls=0,
             )
         if not generate_only:
@@ -925,14 +970,11 @@ def run_instance_pipeline(
                         else {}
                     ),
                     behavior_target_enabled=enable_behavior_target,
-                    method_variant=(
-                        "full" if enable_behavior_target else "w/o Behavior Target"
-                    ),
-                    method_version=(
-                        "p0-lossless-llm-selector-v1"
-                        if enable_behavior_target
-                        else "p0-wo-behavior-target-v1"
-                    ),
+                    method_variant=config.method_variant,
+                    method_version=_method_version(config),
+                    ablation_id=config.ablation_id,
+                    ablation_signature=config.signature,
+                    ablation_config=config.to_dict(),
                     behavior_schema_version=(
                         "behavior_target.lossless.v1"
                         if enable_behavior_target
@@ -945,6 +987,8 @@ def run_instance_pipeline(
                     seed_mutation_enabled=enable_seed_mutation,
                     observation_oracle_enabled=enable_observation_oracle,
                     strict_verifier_enabled=enable_strict_semantic_verifier,
+                    mutation_plan_calls=0,
+                    repair_route_counts=_empty_repair_route_counts(),
                     final_reason="repository worktree/setup failed before BRT generation",
                 )
                 result.save_json(str(Path(output_dir) / "summary.json"))
@@ -1004,7 +1048,12 @@ def run_instance_pipeline(
         if protocol is not None:
             try:
                 protocol = audit_recovered_protocol(
-                    protocol, behavior, related_test, llm_client, output_dir
+                    protocol,
+                    behavior,
+                    related_test,
+                    llm_client,
+                    output_dir,
+                    config,
                 )
             except Exception as exc:  # noqa: BLE001
                 protocol.protocol_risks.append(f"协议模型审计失败，保留 AST 恢复结果：{exc}")
@@ -1017,6 +1066,7 @@ def run_instance_pipeline(
         dual = None
         final_code = ""
         mutation_plans = []
+        repair_route_counts = _empty_repair_route_counts()
         strict_result = None
         oracle_type = ""
         oracle_rebound = False
@@ -1048,8 +1098,12 @@ def run_instance_pipeline(
             write_to_repo=not generate_only,
             protocol=protocol,
             mutation_plan=initial_plan,
+            ablation_config=config,
         )
-        write_text(str(Path(output_dir) / "mutation_round_0_test.py"), candidate.code)
+        if initial_plan is not None:
+            write_text(
+                str(Path(output_dir) / "mutation_round_0_test.py"), candidate.code
+            )
         _refresh_candidate_command(context, candidate)
         if generate_only:
             final_code = candidate.code
@@ -1062,7 +1116,7 @@ def run_instance_pipeline(
                 rounds_used=1,
                 buggy_execution=execution_stub,
                 dual_version_result={"mode": "buggy_only", "status": "SKIPPED"},
-                **_evidence_result_fields(behavior),
+                **_evidence_result_fields(behavior, config),
                 host_context=host.to_dict(),
                 observation_report={},
                 notes="generate_only: complete same-directory test file generated without execution",
@@ -1074,47 +1128,64 @@ def run_instance_pipeline(
                 selected_seed_name=related_test.name if related_test else "",
                 seed_fallback_used=seed_fallback_used,
                 mutation_ops=initial_plan.mutation_ops if initial_plan else [],
+                mutation_plan_calls=len(mutation_plans),
+                repair_route_counts=repair_route_counts,
                 final_reason="generate_only: generation completed without execution",
             )
             result.save_json(str(Path(output_dir) / "summary.json"))
             return result
 
         env_rounds_used = 0
-        for env_round in range(env_budget):
-            execution = run_command_in_conda(candidate.command, context.buggy_repo_path, conda_env, timeout, no_conda, behavior, context.instance_id)
-            safe_json_dump(execution.to_dict(), str(Path(output_dir) / f"env_execution_round_{env_round}.json"))
-            write_text(str(Path(output_dir) / "logs" / f"env_execution_round_{env_round}.log"), execution.stdout + "\n" + execution.stderr)
-            env_rounds_used = env_round + 1
-            if execution.status not in {"SETUP_ERROR", "SYNTAX_ERROR", "COLLECT_ERROR"}:
-                break
-            if execution.status == "SETUP_ERROR" and _recover_declared_dependency(
-                context,
-                execution,
-                conda_env,
-                timeout,
-                no_conda,
-                output_dir,
-                env_round,
-            ):
-                continue
-            if env_round == env_budget - 1:
-                break
-            candidate = repair_candidate(
-                context.instance_id,
-                behavior,
-                host,
-                candidate,
-                execution,
-                llm_client,
-                output_dir,
-                env_round + 1,
-                "setup",
-                context.retrieved_code,
-                buggy_repo=context.buggy_repo_path,
-                protocol=protocol,
-            )
-            _refresh_candidate_command(context, candidate)
-        if execution is not None and execution.status in {"SETUP_ERROR", "SYNTAX_ERROR", "COLLECT_ERROR"}:
+        # Generic Iteration owns all candidate-level repairs, so it goes directly
+        # to the common execute/verify/repair loop.  Infrastructure preparation
+        # above remains identical for every variant.
+        if config.specialized_feedback:
+            effective_env_budget = max(1, env_budget) if config.environment_feedback else 1
+            for env_round in range(effective_env_budget):
+                execution = run_command_in_conda(candidate.command, context.buggy_repo_path, conda_env, timeout, no_conda, behavior, context.instance_id)
+                safe_json_dump(execution.to_dict(), str(Path(output_dir) / f"env_execution_round_{env_round}.json"))
+                write_text(str(Path(output_dir) / "logs" / f"env_execution_round_{env_round}.log"), execution.stdout + "\n" + execution.stderr)
+                env_rounds_used = env_round + 1
+                if execution.status not in {"SETUP_ERROR", "SYNTAX_ERROR", "COLLECT_ERROR"}:
+                    break
+                if not config.environment_feedback:
+                    break
+                if execution.status == "SETUP_ERROR" and _recover_declared_dependency(
+                    context,
+                    execution,
+                    conda_env,
+                    timeout,
+                    no_conda,
+                    output_dir,
+                    env_round,
+                ):
+                    repair_route_counts["dependency_recovery"] += 1
+                    continue
+                if env_round == effective_env_budget - 1:
+                    break
+                candidate = repair_candidate(
+                    context.instance_id,
+                    behavior,
+                    host,
+                    candidate,
+                    execution,
+                    llm_client,
+                    output_dir,
+                    env_round + 1,
+                    "setup",
+                    context.retrieved_code,
+                    buggy_repo=context.buggy_repo_path,
+                    protocol=protocol,
+                    ablation_config=config,
+                    issue_text=context.issue_text,
+                )
+                repair_route_counts["environment"] += 1
+                _refresh_candidate_command(context, candidate)
+        if (
+            config.specialized_feedback
+            and execution is not None
+            and execution.status in {"SETUP_ERROR", "SYNTAX_ERROR", "COLLECT_ERROR"}
+        ):
             final_code = candidate.code
             write_text(str(Path(output_dir) / "final_test.py"), final_code)
             result = FinalResult(
@@ -1127,7 +1198,7 @@ def run_instance_pipeline(
                     "mode": validation_mode,
                     "status": "SKIPPED_ENV_UNRESOLVED",
                 },
-                **_evidence_result_fields(behavior),
+                **_evidence_result_fields(behavior, config),
                 host_context=host.to_dict(),
                 observation_report={},
                 notes=(
@@ -1142,6 +1213,8 @@ def run_instance_pipeline(
                 selected_seed_name=related_test.name if related_test else "",
                 seed_fallback_used=seed_fallback_used,
                 mutation_ops=[op for plan in mutation_plans for op in plan.mutation_ops],
+                mutation_plan_calls=len(mutation_plans),
+                repair_route_counts=repair_route_counts,
                 final_reason="environment qualification remained unresolved",
             )
             result.save_json(str(Path(output_dir) / "summary.json"))
@@ -1152,7 +1225,12 @@ def run_instance_pipeline(
             late_setup_repairs_used = 0
             # Round 0 is the initial BRT. Environment qualification already
             # has its own budget above and must not expand this checkpoint loop.
-            max_brt_attempts = 1 + max(0, brt_budget)
+            max_brt_attempts = 1 + max(
+                0,
+                max_feedback_rounds
+                if not config.specialized_feedback
+                else brt_budget,
+            )
             checkpoints: list[CandidateCheckpoint] = []
             best_score = -1
             best_rank_key: tuple[int, ...] | None = None
@@ -1176,11 +1254,13 @@ def run_instance_pipeline(
                         context.issue_text, behavior, protocol, candidate,
                         execution, effective_source, llm_client, output_dir,
                         brt_attempt,
+                        ablation_config=config,
                     )
                 else:
                     decision = verify_buggy_only(
                         context.issue_text, behavior, candidate, execution,
                         llm_client, host.to_dict(), effective_source,
+                        ablation_config=config,
                     )
                 safe_json_dump(decision.to_dict(), str(Path(output_dir) / f"verifier_round_{brt_attempt}.json"))
                 candidate_dual = None
@@ -1212,8 +1292,45 @@ def run_instance_pipeline(
                     # Accept ends repair for this seed only. The outer fixed
                     # top-3 loop still evaluates later iCoRe seeds before rank.
                     break
+                if not config.specialized_feedback:
+                    if semantic_repairs_used >= max(0, max_feedback_rounds):
+                        final_code = candidate.code
+                        write_text(str(Path(output_dir) / "final_test.py"), final_code)
+                        break
+                    next_round = env_rounds_used + brt_attempt + 1
+                    candidate = repair_candidate(
+                        context.instance_id,
+                        behavior,
+                        host,
+                        candidate,
+                        execution,
+                        llm_client,
+                        output_dir,
+                        next_round,
+                        "generic",
+                        context.retrieved_code,
+                        json.dumps(
+                            observation.to_dict() if observation else {},
+                            ensure_ascii=False,
+                        ),
+                        decision.to_dict(),
+                        context.buggy_repo_path,
+                        protocol,
+                        None,
+                        ablation_config=config,
+                        issue_text=context.issue_text,
+                    )
+                    repair_route_counts["generic"] += 1
+                    semantic_repairs_used += 1
+                    _refresh_candidate_command(context, candidate)
+                    brt_attempt += 1
+                    continue
                 focus = "trigger"
                 if decision.decision == "repair_setup":
+                    if not config.environment_feedback:
+                        final_code = candidate.code
+                        write_text(str(Path(output_dir) / "final_test.py"), final_code)
+                        break
                     if late_setup_repairs_used >= env_budget:
                         final_code = candidate.code
                         write_text(str(Path(output_dir) / "final_test.py"), final_code)
@@ -1221,6 +1338,10 @@ def run_instance_pipeline(
                     focus = "setup"
                     late_setup_repairs_used += 1
                 elif decision.decision == "repair_oracle":
+                    if not config.assertion_feedback:
+                        final_code = candidate.code
+                        write_text(str(Path(output_dir) / "final_test.py"), final_code)
+                        break
                     if semantic_repairs_used >= max(0, brt_budget):
                         final_code = candidate.code
                         write_text(str(Path(output_dir) / "final_test.py"), final_code)
@@ -1233,6 +1354,7 @@ def run_instance_pipeline(
                             llm_client, output_dir, context.buggy_repo_path,
                             conda_env, timeout, no_conda, context.repo,
                             str(context.metadata.get("version") or ""), next_round,
+                            ablation_config=config,
                         )
                         final_code = candidate.code
                         oracle_rebound = True
@@ -1241,23 +1363,30 @@ def run_instance_pipeline(
                             behavior, candidate, llm_client, output_dir,
                             context.buggy_repo_path, conda_env, timeout, no_conda,
                             context.repo, str(context.metadata.get("version") or ""),
+                            ablation_config=config,
                         )
                         final_code = synthesize_oracle(
                             behavior, candidate, observation,
                             execution.stdout + "\n" + execution.stderr,
                             llm_client, output_dir,
+                            ablation_config=config,
                         )
                         candidate.code = final_code
                     candidate.round_id = next_round
                     write_text(str(Path(output_dir) / f"candidate_round_{next_round}.py"), final_code)
                     _refresh_candidate_command(context, candidate)
                     semantic_repairs_used += 1
+                    repair_route_counts["assertion"] += 1
                     # Oracle synthesis already performs the oracle repair using
                     # runtime observations. Do not immediately rewrite it a
                     # second time with the stale pre-observation execution log.
                     brt_attempt += 1
                     continue
                 else:
+                    if not config.trigger_feedback:
+                        final_code = candidate.code
+                        write_text(str(Path(output_dir) / "final_test.py"), final_code)
+                        break
                     if semantic_repairs_used >= max(0, brt_budget):
                         final_code = candidate.code
                         write_text(str(Path(output_dir) / "final_test.py"), final_code)
@@ -1291,7 +1420,12 @@ def run_instance_pipeline(
                     context.buggy_repo_path,
                     protocol,
                     mutation_plan,
+                    ablation_config=config,
+                    issue_text=context.issue_text,
                 )
+                repair_route_counts[
+                    "environment" if focus == "setup" else "trigger"
+                ] += 1
                 if mutation_plan is not None:
                     write_text(str(Path(output_dir) / f"mutation_round_{mutation_plan.round_id}_test.py"), candidate.code)
                 _refresh_candidate_command(context, candidate)
@@ -1358,7 +1492,7 @@ def run_instance_pipeline(
             rounds_used=(candidate.round_id + 1),
             buggy_execution=execution.to_dict(),
             dual_version_result=dual.to_dict(),
-            **_evidence_result_fields(behavior),
+            **_evidence_result_fields(behavior, config),
             host_context=host.to_dict(),
             observation_report=observation.to_dict() if observation else {},
             notes=decision.reason if decision else "",
@@ -1370,6 +1504,8 @@ def run_instance_pipeline(
             selected_seed_name=related_test.name if related_test else "",
             seed_fallback_used=seed_fallback_used,
             mutation_ops=list(dict.fromkeys(op for plan in mutation_plans for op in plan.mutation_ops)),
+            mutation_plan_calls=len(mutation_plans),
+            repair_route_counts=repair_route_counts,
             oracle_type=oracle_type,
             strict_verifier_decision=strict_result.decision if strict_result else "",
             strict_failure_class=strict_result.failure_class if strict_result else "",
@@ -1393,6 +1529,13 @@ def run_instance_pipeline(
         result.save_json(str(Path(output_dir) / "summary.json"))
         return result
     except Exception as exc:  # noqa: BLE001
+        fallback_config = (
+            ablation_config
+            or AblationConfig(
+                behavior_target=enable_behavior_target,
+                mutation=enable_seed_mutation,
+            )
+        )
         safe_json_dump({
             "instance_id": context.instance_id,
             "status": "ERROR",
@@ -1403,13 +1546,16 @@ def run_instance_pipeline(
             "observation_oracle_enabled": enable_observation_oracle,
             "strict_verifier_enabled": enable_strict_semantic_verifier,
             "behavior_target_enabled": enable_behavior_target,
-            "method_variant": (
-                "full" if enable_behavior_target else "w/o Behavior Target"
-            ),
+            "method_variant": fallback_config.method_variant,
+            "ablation_id": fallback_config.ablation_id,
+            "ablation_signature": fallback_config.signature,
+            "ablation_config": fallback_config.to_dict(),
             "selected_seed_file": "",
             "selected_seed_name": "",
             "seed_fallback_used": False,
             "mutation_ops": [],
+            "mutation_plan_calls": 0,
+            "repair_route_counts": _empty_repair_route_counts(),
             "oracle_type": "",
             "strict_verifier_decision": "",
             "strict_failure_class": "",
@@ -1421,17 +1567,16 @@ def run_instance_pipeline(
             status="ERROR",
             notes=str(exc),
             behavior_target_enabled=enable_behavior_target,
-            method_variant=(
-                "full" if enable_behavior_target else "w/o Behavior Target"
-            ),
-            method_version=(
-                "p0-lossless-llm-selector-v1"
-                if enable_behavior_target
-                else "p0-wo-behavior-target-v1"
-            ),
+            method_variant=fallback_config.method_variant,
+            method_version=_method_version(fallback_config),
+            ablation_id=fallback_config.ablation_id,
+            ablation_signature=fallback_config.signature,
+            ablation_config=fallback_config.to_dict(),
             behavior_schema_version=(
                 "behavior_target.lossless.v1"
                 if enable_behavior_target
                 else "raw_issue_context.v1"
             ),
+            mutation_plan_calls=0,
+            repair_route_counts=_empty_repair_route_counts(),
         )

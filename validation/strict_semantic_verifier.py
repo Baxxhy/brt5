@@ -10,6 +10,11 @@ from ..core.prompts import (
     STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT,
     STRICT_SEMANTIC_VERIFIER_USER_PROMPT,
 )
+from ..core.ablation import (
+    AblationConfig,
+    behavior_prompt_payload,
+    render_ablation_prompt,
+)
 from ..core.behavior_evidence import BehaviorEvidence, render_evidence_prompt
 from ..core.schema import (
     CandidateTest,
@@ -80,13 +85,17 @@ def verify_strict_semantics(
     llm_client: Any,
     output_dir: str,
     round_id: int,
+    ablation_config: AblationConfig | None = None,
 ) -> tuple[VerifierDecision, StrictVerifierResult]:
     """Judge Issue alignment from the real buggy execution and full Issue text."""
+    config = (ablation_config or AblationConfig()).validate()
     result = _forced_result(candidate.instance_id, execution, execution.status)
     if result is None:
         prompt = STRICT_SEMANTIC_VERIFIER_USER_PROMPT.format(
             issue_text=issue_text,
-            behavior_json=json.dumps(behavior.to_dict(), ensure_ascii=False),
+            behavior_json=json.dumps(
+                behavior_prompt_payload(behavior, config), ensure_ascii=False
+            ),
             protocol_json=json.dumps(
                 protocol.to_dict() if protocol else {}, ensure_ascii=False
             ),
@@ -99,15 +108,21 @@ def verify_strict_semantics(
             source_context=truncate_text(source_context, 18000),
         )
         prompt = render_evidence_prompt(prompt, behavior)
+        prompt = render_ablation_prompt(prompt, config)
+        system_prompt = render_ablation_prompt(
+            STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT,
+            config,
+            include_banner=False,
+        )
         write_text(
             str(
                 Path(output_dir)
                 / "prompts"
                 / f"strict_verifier_round_{round_id}.txt"
             ),
-            STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT + "\n\n" + prompt,
+            system_prompt + "\n\n" + prompt,
         )
-        response = llm_client.chat(STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT, prompt)
+        response = llm_client.chat(system_prompt, prompt)
         write_text(
             str(
                 Path(output_dir)

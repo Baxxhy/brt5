@@ -11,6 +11,11 @@ from ..execution.executor import run_command_in_conda
 from ..retrieval.icore_runtime import first_test_selector, icore_test_command
 from ..core.prompts import ASSERT_SYNTHESIS_SYSTEM_PROMPT, ASSERT_SYNTHESIS_USER_PROMPT, OBSERVATION_PROBE_SYSTEM_PROMPT, OBSERVATION_PROBE_USER_PROMPT
 from ..core.behavior_evidence import BehaviorEvidence, render_evidence_prompt
+from ..core.ablation import (
+    AblationConfig,
+    behavior_prompt_payload,
+    render_ablation_prompt,
+)
 from ..core.schema import CandidateTest, ObservationReport
 from ..core.utils import clean_code_block, safe_json_dump, truncate_text, write_text
 
@@ -52,14 +57,22 @@ def run_observation_probe(
     no_conda: bool = False,
     repo: str = "",
     version: str = "",
+    ablation_config: AblationConfig | None = None,
 ) -> ObservationReport:
+    config = (ablation_config or AblationConfig()).validate()
     user_prompt = OBSERVATION_PROBE_USER_PROMPT.format(
-        behavior_json=json.dumps(behavior.to_dict(), ensure_ascii=False),
+        behavior_json=json.dumps(
+            behavior_prompt_payload(behavior, config), ensure_ascii=False
+        ),
         candidate_code=candidate.code,
     )
     user_prompt = render_evidence_prompt(user_prompt, behavior)
-    write_text(str(Path(output_dir) / "prompts" / "observation_probe.txt"), OBSERVATION_PROBE_SYSTEM_PROMPT + "\n\n" + user_prompt)
-    response = llm_client.chat(OBSERVATION_PROBE_SYSTEM_PROMPT, user_prompt)
+    user_prompt = render_ablation_prompt(user_prompt, config)
+    system_prompt = render_ablation_prompt(
+        OBSERVATION_PROBE_SYSTEM_PROMPT, config, include_banner=False
+    )
+    write_text(str(Path(output_dir) / "prompts" / "observation_probe.txt"), system_prompt + "\n\n" + user_prompt)
+    response = llm_client.chat(system_prompt, user_prompt)
     write_text(str(Path(output_dir) / "responses" / "observation_probe.txt"), response)
     probe_code = clean_code_block(response)
     probe_path = str(Path(candidate.candidate_file_path).with_name(Path(candidate.candidate_file_path).stem + "_probe.py"))
@@ -95,9 +108,13 @@ def synthesize_oracle(
     execution_log: str,
     llm_client: Any,
     output_dir: str,
+    ablation_config: AblationConfig | None = None,
 ) -> str:
+    config = (ablation_config or AblationConfig()).validate()
     user_prompt = ASSERT_SYNTHESIS_USER_PROMPT.format(
-        behavior_json=json.dumps(behavior.to_dict(), ensure_ascii=False),
+        behavior_json=json.dumps(
+            behavior_prompt_payload(behavior, config), ensure_ascii=False
+        ),
         candidate_code=candidate.code,
         observation_json=truncate_text(
             json.dumps(observation.to_dict() if observation else {}, ensure_ascii=False),
@@ -106,8 +123,12 @@ def synthesize_oracle(
         execution_log=truncate_text(execution_log, MAX_ORACLE_EXECUTION_LOG),
     )
     user_prompt = render_evidence_prompt(user_prompt, behavior)
-    write_text(str(Path(output_dir) / "prompts" / "assert_synthesis.txt"), ASSERT_SYNTHESIS_SYSTEM_PROMPT + "\n\n" + user_prompt)
-    response = llm_client.chat(ASSERT_SYNTHESIS_SYSTEM_PROMPT, user_prompt)
+    user_prompt = render_ablation_prompt(user_prompt, config)
+    system_prompt = render_ablation_prompt(
+        ASSERT_SYNTHESIS_SYSTEM_PROMPT, config, include_banner=False
+    )
+    write_text(str(Path(output_dir) / "prompts" / "assert_synthesis.txt"), system_prompt + "\n\n" + user_prompt)
+    response = llm_client.chat(system_prompt, user_prompt)
     write_text(str(Path(output_dir) / "responses" / "assert_synthesis.txt"), response)
     final_code = clean_code_block(response)
     write_text(str(Path(output_dir) / "final_test.py"), final_code)

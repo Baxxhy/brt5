@@ -12,6 +12,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from ..core.ablation import AblationConfig, ablation_signature_from_summary
 from ..core.config import (
     DEFAULT_MAX_FEEDBACK_ROUNDS,
     DEFAULT_MAX_TOKENS,
@@ -87,11 +88,47 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
     parser.add_argument("--max_tokens", type=int, default=DEFAULT_MAX_TOKENS)
     parser.add_argument("--enable_protocol_recovery", type=_parse_bool, default=True)
-    parser.add_argument("--enable_seed_mutation", type=_parse_bool, default=True)
+    parser.add_argument(
+        "--mutation",
+        "--enable_seed_mutation",
+        dest="enable_seed_mutation",
+        type=_parse_bool,
+        default=True,
+    )
+    parser.add_argument(
+        "--specialized-feedback",
+        "--enable_specialized_feedback",
+        dest="enable_specialized_feedback",
+        type=_parse_bool,
+        default=True,
+    )
+    parser.add_argument(
+        "--environment-feedback",
+        "--enable_environment_feedback",
+        dest="enable_environment_feedback",
+        type=_parse_bool,
+        default=True,
+    )
+    parser.add_argument(
+        "--trigger-feedback",
+        "--enable_trigger_feedback",
+        dest="enable_trigger_feedback",
+        type=_parse_bool,
+        default=True,
+    )
+    parser.add_argument(
+        "--assertion-feedback",
+        "--enable_assertion_feedback",
+        dest="enable_assertion_feedback",
+        type=_parse_bool,
+        default=True,
+    )
     parser.add_argument("--enable_observation_oracle", type=_parse_bool, default=True)
     parser.add_argument("--enable_strict_semantic_verifier", type=_parse_bool, default=True)
     parser.add_argument(
+        "--behavior-target",
         "--enable_behavior_target",
+        dest="enable_behavior_target",
         type=_parse_bool,
         default=True,
         help=(
@@ -100,6 +137,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     return parser
+
+
+def ablation_config_from_args(args: argparse.Namespace) -> AblationConfig:
+    """Build and validate the one-factor-at-a-time experiment signature."""
+
+    return AblationConfig(
+        behavior_target=args.enable_behavior_target,
+        mutation=args.enable_seed_mutation,
+        specialized_feedback=args.enable_specialized_feedback,
+        environment_feedback=args.enable_environment_feedback,
+        trigger_feedback=args.enable_trigger_feedback,
+        assertion_feedback=args.enable_assertion_feedback,
+    ).validate()
+
+
+def resume_matches_ablation(
+    summary: dict, ablation_config: AblationConfig
+) -> bool:
+    """Only reuse an instance produced under the exact same ablation signature."""
+
+    return ablation_signature_from_summary(summary) == ablation_config.signature
 
 
 def configure_runtime_contract(args: argparse.Namespace) -> dict:
@@ -205,20 +263,21 @@ def _resolve_conda_env(env_name: str) -> str:
 
 
 def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dict:
+    ablation_config = ablation_config_from_args(args)
     out_dir = Path(args.output_dir) / instance_id
     summary_path = out_dir / "summary.json"
     if args.resume and summary_path.exists():
         try:
             previous = json.loads(summary_path.read_text(encoding="utf-8"))
             previous_status = previous.get("status")
-            previous_behavior_target = previous.get(
-                "behavior_target_enabled", True
+            previous_signature_matches = resume_matches_ablation(
+                previous, ablation_config
             )
         except (OSError, ValueError, TypeError):
             previous_status = "ERROR"
-            previous_behavior_target = not args.enable_behavior_target
+            previous_signature_matches = False
         if (
-            previous_behavior_target == args.enable_behavior_target
+            previous_signature_matches
             and previous_status not in {"ERROR", "SETUP_ERROR", "ENV_UNRESOLVED"}
         ):
             return {"instance_id": instance_id, "status": "SKIP"}
@@ -273,6 +332,7 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
                 enable_observation_oracle=args.enable_observation_oracle,
                 enable_strict_semantic_verifier=args.enable_strict_semantic_verifier,
                 enable_behavior_target=args.enable_behavior_target,
+                ablation_config=ablation_config,
             )
         return {"instance_id": instance_id, "status": result.status, "summary": result.to_dict()}
     except Exception as exc:  # noqa: BLE001
@@ -287,13 +347,16 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
             "observation_oracle_enabled": args.enable_observation_oracle,
             "strict_verifier_enabled": args.enable_strict_semantic_verifier,
             "behavior_target_enabled": args.enable_behavior_target,
-            "method_variant": (
-                "full" if args.enable_behavior_target else "w/o Behavior Target"
-            ),
+            "method_variant": ablation_config.method_variant,
+            "ablation_id": ablation_config.ablation_id,
+            "ablation_signature": ablation_config.signature,
+            "ablation_config": ablation_config.to_dict(),
             "selected_seed_file": "",
             "selected_seed_name": "",
             "seed_fallback_used": False,
             "mutation_ops": [],
+            "mutation_plan_calls": 0,
+            "repair_route_counts": {},
             "oracle_type": "",
             "strict_verifier_decision": "",
             "strict_failure_class": "",
@@ -358,7 +421,19 @@ def _load_instance_summary(output_dir: Path, instance_id: str, fallback: dict | 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    try:
+        ablation_config = ablation_config_from_args(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     ensure_dir(args.output_dir)
+    safe_json_dump(
+        {
+            "dataset_mode": args.dataset_mode,
+            "patch_cov_enabled": ablation_config.compute_patch_coverage,
+            **ablation_config.to_dict(),
+        },
+        str(Path(args.output_dir) / "run_config.json"),
+    )
     try:
         runtime_contract = configure_runtime_contract(args)
     except ValueError as exc:
@@ -415,12 +490,18 @@ def main() -> None:
             "generate_only": False,
             "enable_protocol_recovery": args.enable_protocol_recovery,
             "enable_seed_mutation": args.enable_seed_mutation,
+            "enable_specialized_feedback": args.enable_specialized_feedback,
+            "enable_environment_feedback": args.enable_environment_feedback,
+            "enable_trigger_feedback": args.enable_trigger_feedback,
+            "enable_assertion_feedback": args.enable_assertion_feedback,
             "enable_observation_oracle": args.enable_observation_oracle,
             "enable_strict_semantic_verifier": args.enable_strict_semantic_verifier,
             "enable_behavior_target": args.enable_behavior_target,
-            "method_variant": (
-                "full" if args.enable_behavior_target else "w/o Behavior Target"
-            ),
+            "method_variant": ablation_config.method_variant,
+            "ablation_id": ablation_config.ablation_id,
+            "ablation_signature": ablation_config.signature,
+            "ablation_config": ablation_config.to_dict(),
+            "patch_cov_enabled": ablation_config.compute_patch_coverage,
         },
     }
     safe_json_dump(summary, str(Path(args.output_dir) / "summary.json"))

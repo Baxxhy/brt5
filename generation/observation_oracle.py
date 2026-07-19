@@ -15,6 +15,11 @@ from ..core.prompts import (
     OBSERVATION_ORACLE_SYSTEM_PROMPT,
 )
 from ..core.behavior_evidence import BehaviorEvidence, render_evidence_prompt
+from ..core.ablation import (
+    AblationConfig,
+    behavior_prompt_payload,
+    render_ablation_prompt,
+)
 from ..core.schema import CandidateTest, ObservationReport, ProtocolRecovery
 from ..validation.semantic_guard import audit_candidate
 from ..core.utils import clean_code_block, safe_json_dump, truncate_text, write_text
@@ -115,17 +120,25 @@ def rebind_observation_oracle(
     repo: str,
     version: str,
     round_id: int,
+    ablation_config: AblationConfig | None = None,
 ) -> tuple[CandidateTest, ObservationReport, str]:
+    config = (ablation_config or AblationConfig()).validate()
     protocol_json = json.dumps(protocol.to_dict() if protocol else {}, ensure_ascii=False)
-    behavior_json = json.dumps(behavior.to_dict(), ensure_ascii=False)
+    behavior_json = json.dumps(
+        behavior_prompt_payload(behavior, config), ensure_ascii=False
+    )
     probe_prompt = OBSERVATION_ORACLE_PROBE_PROMPT.format(
         behavior_json=behavior_json,
         protocol_json=protocol_json,
         candidate_code=candidate.code,
     )
     probe_prompt = render_evidence_prompt(probe_prompt, behavior)
-    write_text(str(Path(output_dir) / "prompts" / f"oracle_probe_round_{round_id}.txt"), OBSERVATION_ORACLE_SYSTEM_PROMPT + "\n\n" + probe_prompt)
-    probe_response = llm_client.chat(OBSERVATION_ORACLE_SYSTEM_PROMPT, probe_prompt)
+    probe_prompt = render_ablation_prompt(probe_prompt, config)
+    system_prompt = render_ablation_prompt(
+        OBSERVATION_ORACLE_SYSTEM_PROMPT, config, include_banner=False
+    )
+    write_text(str(Path(output_dir) / "prompts" / f"oracle_probe_round_{round_id}.txt"), system_prompt + "\n\n" + probe_prompt)
+    probe_response = llm_client.chat(system_prompt, probe_prompt)
     write_text(str(Path(output_dir) / "responses" / f"oracle_probe_round_{round_id}.txt"), probe_response)
     probe_code = clean_code_block(probe_response).strip() + "\n"
     probe_output_path = Path(output_dir) / f"oracle_round_{round_id}_probe.py"
@@ -157,14 +170,15 @@ def rebind_observation_oracle(
         execution_log=truncate_text(execution_log, MAX_ORACLE_EXECUTION_LOG),
     )
     rebind_prompt = render_evidence_prompt(rebind_prompt, behavior)
-    write_text(str(Path(output_dir) / "prompts" / f"oracle_rebind_round_{round_id}.txt"), OBSERVATION_ORACLE_SYSTEM_PROMPT + "\n\n" + rebind_prompt)
-    rebuilt_response = llm_client.chat(OBSERVATION_ORACLE_SYSTEM_PROMPT, rebind_prompt)
+    rebind_prompt = render_ablation_prompt(rebind_prompt, config)
+    write_text(str(Path(output_dir) / "prompts" / f"oracle_rebind_round_{round_id}.txt"), system_prompt + "\n\n" + rebind_prompt)
+    rebuilt_response = llm_client.chat(system_prompt, rebind_prompt)
     write_text(str(Path(output_dir) / "responses" / f"oracle_rebind_round_{round_id}.txt"), rebuilt_response)
     rebuilt = clean_code_block(rebuilt_response).strip() + "\n"
     problem = audit_candidate(behavior, rebuilt)
     if problem:
         retry = rebind_prompt + "\n\n返回代码未通过语义校验：" + problem + "\n请修复后仍只输出完整 Python 文件。"
-        rebuilt_response = llm_client.chat(OBSERVATION_ORACLE_SYSTEM_PROMPT, retry)
+        rebuilt_response = llm_client.chat(system_prompt, retry)
         rebuilt = clean_code_block(rebuilt_response).strip() + "\n"
         write_text(str(Path(output_dir) / "responses" / f"oracle_rebind_round_{round_id}_retry.txt"), rebuilt_response)
     write_text(str(Path(output_dir) / f"oracle_round_{round_id}_rebuilt_test.py"), rebuilt)

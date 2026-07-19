@@ -16,10 +16,17 @@ from ..core.prompts import (
     MUTATION_GENERATION_USER_PROMPT,
     REPAIR_ORACLE_SYSTEM_PROMPT,
     REPAIR_ORACLE_USER_PROMPT,
+    REPAIR_GENERIC_SYSTEM_PROMPT,
+    REPAIR_GENERIC_USER_PROMPT,
     REPAIR_SETUP_SYSTEM_PROMPT,
     REPAIR_SETUP_USER_PROMPT,
     REPAIR_TRIGGER_SYSTEM_PROMPT,
     REPAIR_TRIGGER_USER_PROMPT,
+)
+from ..core.ablation import (
+    AblationConfig,
+    behavior_prompt_payload,
+    render_ablation_prompt,
 )
 from ..core.behavior_evidence import (
     BehaviorEvidence,
@@ -329,15 +336,20 @@ def generate_candidate(
     write_to_repo: bool = True,
     protocol: ProtocolRecovery | None = None,
     mutation_plan: MutationPlan | None = None,
+    ablation_config: AblationConfig | None = None,
 ) -> CandidateTest:
     ensure_dir(Path(output_dir) / "prompts")
     ensure_dir(Path(output_dir) / "responses")
     safe_id = sanitize_instance_id(instance_id)
+    config = (ablation_config or AblationConfig()).validate()
+    behavior_json = json.dumps(
+        behavior_prompt_payload(behavior, config), ensure_ascii=False
+    )
     user_prompt = MUTATION_GENERATION_USER_PROMPT.format(
         instance_id=instance_id,
         safe_instance_id=safe_id,
         insert_strategy=host.insert_strategy,
-        behavior_json=json.dumps(behavior.to_dict(), ensure_ascii=False),
+        behavior_json=behavior_json,
         host_context_json=json.dumps(host.to_dict(), ensure_ascii=False),
         code_context=format_effective_source_context(
             behavior, related_source, buggy_repo
@@ -354,10 +366,14 @@ def generate_candidate(
             + json.dumps(mutation_plan.to_dict(), ensure_ascii=False)
             + "\n必须严格按 mutation plan 生成一个完整 Python 文件；不得自由扩大变异或重写无关 setup。"
         )
+    user_prompt = render_ablation_prompt(user_prompt, config)
+    system_prompt = render_ablation_prompt(
+        MUTATION_GENERATION_SYSTEM_PROMPT, config, include_banner=False
+    )
     prompt_path = str(Path(output_dir) / "prompts" / f"generation_round_{round_id}.txt")
     response_path = str(Path(output_dir) / "responses" / f"generation_round_{round_id}.txt")
-    write_text(prompt_path, MUTATION_GENERATION_SYSTEM_PROMPT + "\n\n" + user_prompt)
-    response = llm_client.chat(MUTATION_GENERATION_SYSTEM_PROMPT, user_prompt)
+    write_text(prompt_path, system_prompt + "\n\n" + user_prompt)
+    response = llm_client.chat(system_prompt, user_prompt)
     write_text(response_path, response)
     code = _wrap_if_needed(response, host, safe_id)
     rel_path, full_path = _candidate_paths(instance_id, buggy_repo, host)
@@ -395,16 +411,40 @@ def repair_candidate(
     buggy_repo: str = "",
     protocol: ProtocolRecovery | None = None,
     mutation_plan: MutationPlan | None = None,
+    ablation_config: AblationConfig | None = None,
+    issue_text: str = "",
 ) -> CandidateTest:
+    config = (ablation_config or AblationConfig()).validate()
     feedback_json = json.dumps(verifier_feedback or {}, ensure_ascii=False)
+    behavior_json = json.dumps(
+        behavior_prompt_payload(behavior, config), ensure_ascii=False
+    )
     source_context = format_effective_source_context(
         behavior, related_source or [], buggy_repo
     )
-    if focus == "setup":
+    if focus == "generic":
+        system = REPAIR_GENERIC_SYSTEM_PROMPT
+        template = REPAIR_GENERIC_USER_PROMPT
+        kwargs = {
+            "issue_text": issue_text,
+            "behavior_json": behavior_json,
+            "host_context_json": json.dumps(host.to_dict(), ensure_ascii=False),
+            "protocol_json": json.dumps(
+                protocol.to_dict() if protocol else {}, ensure_ascii=False
+            ),
+            "seed_test_code": host.seed_test_code,
+            "code_context": source_context,
+            "candidate_code": candidate.code,
+            "command": execution.command or candidate.command,
+            "execution_status": execution.status,
+            "execution_log": execution.stdout + "\n" + execution.stderr,
+            "verifier_feedback": feedback_json,
+        }
+    elif focus == "setup":
         system = REPAIR_SETUP_SYSTEM_PROMPT
         template = REPAIR_SETUP_USER_PROMPT
         kwargs = {
-            "behavior_json": json.dumps(behavior.to_dict(), ensure_ascii=False),
+            "behavior_json": behavior_json,
             "host_context_json": json.dumps(host.to_dict(), ensure_ascii=False),
             "candidate_code": candidate.code,
             "execution_log": execution.stdout + "\n" + execution.stderr,
@@ -414,7 +454,7 @@ def repair_candidate(
         system = REPAIR_ORACLE_SYSTEM_PROMPT
         template = REPAIR_ORACLE_USER_PROMPT
         kwargs = {
-            "behavior_json": json.dumps(behavior.to_dict(), ensure_ascii=False),
+            "behavior_json": behavior_json,
             "candidate_code": candidate.code,
             "execution_log": execution.stdout + "\n" + execution.stderr,
             "observation_json": observation_json,
@@ -424,7 +464,7 @@ def repair_candidate(
         system = REPAIR_TRIGGER_SYSTEM_PROMPT
         template = REPAIR_TRIGGER_USER_PROMPT
         kwargs = {
-            "behavior_json": json.dumps(behavior.to_dict(), ensure_ascii=False),
+            "behavior_json": behavior_json,
             "host_context_json": json.dumps(host.to_dict(), ensure_ascii=False),
             "seed_test_code": host.seed_test_code,
             "code_context": source_context,
@@ -438,6 +478,8 @@ def repair_candidate(
     if mutation_plan is not None:
         user_prompt += "\n\n本轮校验后的 mutation plan：" + json.dumps(mutation_plan.to_dict(), ensure_ascii=False)
         user_prompt += "\n只执行 plan 中的小变异，不能修改 oracle。"
+    user_prompt = render_ablation_prompt(user_prompt, config)
+    system = render_ablation_prompt(system, config, include_banner=False)
     prompt_path = str(Path(output_dir) / "prompts" / f"repair_prompt_round_{round_id}.txt")
     response_path = str(Path(output_dir) / "responses" / f"repair_response_round_{round_id}.txt")
     write_text(prompt_path, system + "\n\n" + user_prompt)

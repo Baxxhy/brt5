@@ -2882,14 +2882,24 @@ def main() -> None:
                 "refusing cross-benchmark resume: existing output mode is "
                 f"{existing_mode or 'unknown'}, requested {args.dataset_mode}"
             )
-    if not args.resume:
+    stale_names: tuple[str, ...] = ()
+    if not args.compute_patch_coverage:
+        # F2P-only ablations must not leave coverage placeholders behind,
+        # including when an output directory is explicitly reused.
+        stale_names = (
+            "patch_coverage_results.json",
+            "delta_change_coverage.json",
+            "tdd_coverage_results.json",
+            "tdd_coverage.json",
+        )
+    elif not args.resume:
         stale_names = (
             ("patch_coverage_results.json", "delta_change_coverage.json")
             if args.dataset_mode == "tdd"
             else ("tdd_coverage_results.json", "tdd_coverage.json")
         )
-        for stale_name in stale_names:
-            (output_root / stale_name).unlink(missing_ok=True)
+    for stale_name in stale_names:
+        (output_root / stale_name).unlink(missing_ok=True)
     tmp_root = os.environ.get("TMPDIR") or str(Path(args.output_dir) / "tmp")
     Path(tmp_root).mkdir(parents=True, exist_ok=True)
     os.environ["TMPDIR"] = tmp_root
@@ -3332,7 +3342,7 @@ def main() -> None:
             }
         )
     safe_json_dump(merged, str(Path(args.output_dir) / "merged_results.json"))
-    if args.dataset_mode == "swt":
+    if args.compute_patch_coverage and args.dataset_mode == "swt":
         safe_json_dump(
             {
                 instance_id: result.get("patch_coverage")
@@ -3361,7 +3371,7 @@ def main() -> None:
             },
             str(Path(args.output_dir) / "delta_change_coverage.json"),
         )
-    else:
+    elif args.compute_patch_coverage and args.dataset_mode == "tdd":
         safe_json_dump(
             {
                 instance_id: result.get("tdd_coverage")

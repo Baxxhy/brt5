@@ -7,6 +7,11 @@ import re
 from typing import Any
 
 from ..core.prompts import BUGGY_ONLY_VERIFIER_SYSTEM_PROMPT, BUGGY_ONLY_VERIFIER_USER_PROMPT
+from ..core.ablation import (
+    AblationConfig,
+    behavior_prompt_payload,
+    render_ablation_prompt,
+)
 from ..core.behavior_evidence import (
     BehaviorEvidence,
     issue_evidence_text,
@@ -64,18 +69,26 @@ def _ask_llm(
     default_decision: str,
     host_context: dict[str, Any] | None = None,
     source_context: str = "",
+    ablation_config: AblationConfig | None = None,
 ) -> VerifierDecision:
+    config = (ablation_config or AblationConfig()).validate()
     prompt = BUGGY_ONLY_VERIFIER_USER_PROMPT.format(
         issue_text=issue_text,
-        behavior_json=json.dumps(behavior.to_dict(), ensure_ascii=False),
+        behavior_json=json.dumps(
+            behavior_prompt_payload(behavior, config), ensure_ascii=False
+        ),
         host_context_json=json.dumps(host_context or {}, ensure_ascii=False),
         source_context=source_context,
         candidate_code=candidate.code,
         execution_json=json.dumps(execution.to_dict(), ensure_ascii=False),
     )
     prompt = render_evidence_prompt(prompt, behavior)
+    prompt = render_ablation_prompt(prompt, config)
+    system_prompt = render_ablation_prompt(
+        BUGGY_ONLY_VERIFIER_SYSTEM_PROMPT, config, include_banner=False
+    )
     data = extract_json_object(
-        llm_client.chat(BUGGY_ONLY_VERIFIER_SYSTEM_PROMPT, prompt)
+        llm_client.chat(system_prompt, prompt)
     )
     decision = str(data.get("decision") or default_decision)
     if decision not in {
@@ -132,6 +145,7 @@ def verify_buggy_only(
     llm_client: Any | None = None,
     host_context: dict[str, Any] | None = None,
     source_context: str = "",
+    ablation_config: AblationConfig | None = None,
 ) -> VerifierDecision:
     status = execution.status
     missing_check_target = _missing_check_target(behavior, source_context)
@@ -190,6 +204,7 @@ def verify_buggy_only(
                     "repair_trigger",
                     host_context,
                     source_context,
+                    ablation_config,
                 )
                 if decision.decision == "accept":
                     decision.decision = "repair_trigger"
@@ -250,6 +265,7 @@ def verify_buggy_only(
                     "repair_oracle" if status == "ASSERTION_FAIL" else "repair_trigger",
                     host_context,
                     source_context,
+                    ablation_config,
                 )
             except Exception:  # noqa: BLE001
                 pass
@@ -267,6 +283,7 @@ def verify_buggy_only(
                 "repair_trigger",
                 host_context,
                 source_context,
+                ablation_config,
             )
         except Exception:  # noqa: BLE001
             pass

@@ -9,6 +9,11 @@ from pathlib import Path
 
 from ..retrieval.icore_runtime import icore_test_command
 from ..core.prompts import PROTOCOL_RECOVERY_SYSTEM_PROMPT, PROTOCOL_RECOVERY_USER_PROMPT
+from ..core.ablation import (
+    AblationConfig,
+    behavior_prompt_payload,
+    render_ablation_prompt,
+)
 from ..core.behavior_evidence import BehaviorEvidence, render_evidence_prompt
 from ..core.schema import ProtocolRecovery, RetrievedCode, RetrievedTest
 from ..core.utils import extract_json_object, truncate_text, write_text
@@ -180,18 +185,26 @@ def audit_recovered_protocol(
     related_test: RetrievedTest,
     llm_client: object,
     output_dir: str,
+    ablation_config: AblationConfig | None = None,
 ) -> ProtocolRecovery:
     """Let the model identify risks without replacing factual AST extraction."""
+    config = (ablation_config or AblationConfig()).validate()
     prompt = PROTOCOL_RECOVERY_USER_PROMPT.format(
-        behavior_json=json.dumps(behavior.to_dict(), ensure_ascii=False),
+        behavior_json=json.dumps(
+            behavior_prompt_payload(behavior, config), ensure_ascii=False
+        ),
         seed_test=related_test.code_content,
         protocol_json=json.dumps(protocol.to_dict(), ensure_ascii=False),
     )
     prompt = render_evidence_prompt(prompt, behavior)
+    prompt = render_ablation_prompt(prompt, config)
+    system_prompt = render_ablation_prompt(
+        PROTOCOL_RECOVERY_SYSTEM_PROMPT, config, include_banner=False
+    )
     prompt_path = Path(output_dir) / "prompts" / "protocol_recovery_prompt.txt"
     response_path = Path(output_dir) / "responses" / "protocol_recovery_response.txt"
-    write_text(str(prompt_path), PROTOCOL_RECOVERY_SYSTEM_PROMPT + "\n\n" + prompt)
-    response = llm_client.chat(PROTOCOL_RECOVERY_SYSTEM_PROMPT, prompt)  # type: ignore[attr-defined]
+    write_text(str(prompt_path), system_prompt + "\n\n" + prompt)
+    response = llm_client.chat(system_prompt, prompt)  # type: ignore[attr-defined]
     write_text(str(response_path), response)
     data = extract_json_object(response)
     framework = str(data.get("test_framework") or protocol.test_framework)
