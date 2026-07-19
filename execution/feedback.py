@@ -527,6 +527,7 @@ def prepare_instance_worktree(
             timeout,
             "generation",
             spec.install,
+            project_distribution=context.repo.split("/")[-1],
         )
     )
     resolved_env = str(runtime_env_result.get("env_name") or template_env)

@@ -418,7 +418,10 @@ MAP_VERSION_TO_INSTALL_MATPLOTLIB.update(
                 "export CFLAGS=\"-I$CONDA_PREFIX/include -I$CONDA_PREFIX/include/freetype2 -fpermissive\" && "
                 "export CXXFLAGS=\"-I$CONDA_PREFIX/include -I$CONDA_PREFIX/include/freetype2 -fpermissive\""
             ],
-            "pip_packages": ["pytest", "ipython"],
+            # Matplotlib 3.1-3.4 still imports pkg_resources while pytest turns
+            # every deprecation warning into an error.  Setuptools 67.5+ emits
+            # "pkg_resources is deprecated as an API" during collection.
+            "pip_packages": ["pytest", "ipython", "setuptools==65.5.1"],
         }
         for k in ["3.1", "3.2", "3.3", "3.4"]
     }

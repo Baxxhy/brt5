@@ -66,6 +66,7 @@ The five-instance pilot must satisfy all of the following before launching 276:
 | 2026-07-18 | Replace mutable shared project environments with immutable dependency templates plus per-instance runtime clones; isolate generated requirement files and unify dependency pins | The three-instance recovery exposed a cross-process `$HOME/requirements.txt` race and deterministic Astropy/Pylint contract drift |
 | 2026-07-18 | Restore dependency pins after Conda clone and use the iCoRe project setup command in formal evaluation | Conda clone reintroduced setuptools 80.9 into Astropy runtimes, while the generic formal setup omitted Pylint runtime dependencies |
 | 2026-07-18 | Complete the eight-instance canary and denominator-stable result merge | Final canary is 6/8 with zero environment errors; merged result is 132/276 (47.8261%), +1 success over the frozen 131/276 result |
+| 2026-07-19 | Add dependency-template integrity validation before the B-machine rerun | The B-machine ablation exposed duplicate metadata, binary/import drift, stale project namespace files, and an incompatible legacy Matplotlib setuptools pin that version-only checks could not detect |
 
 ## 8. Missing-generation recovery contract
 
@@ -98,3 +99,15 @@ The five-instance pilot must satisfy all of the following before launching 276:
 - Final run: `p0_minimal_envfix_canary8_20260718_104530`.
 - Final canary: 6/8 F2P, 2 `FIXED_FAIL`, zero environment errors.
 - Final merged result: 132/276 F2P (47.8261%), with status counts 132 `F2P_SUCCESS`, 125 `FIXED_FAIL`, and 19 `BUGGY_PASS`.
+
+## 11. B-machine environment-integrity repair
+
+- Scope: environment preparation and validation only; generation, selection, F2P, and coverage definitions remain unchanged.
+- Detect multiple metadata installations for every dependency named by the iCoRe contract instead of collapsing them into one arbitrary version.
+- Import critical binary/build dependencies inside the target Conda environment and compare the imported version and module path with the declared requirement.
+- Treat duplicate metadata, import failure, and imported-version drift as repairable dependency-contract failures; uninstall every conflicting copy, purge orphan metadata, and force-reinstall the declared requirement without using the pip cache.
+- Repair NumPy/Pandas and NumPy/Cython as coherent pairs when either side fails integrity validation.
+- Remove stale metadata, egg-links, editable finders, and namespace `.pth` files for the benchmark project from each disposable clone before project setup.
+- Validate Xarray through NumPy/Pandas/Xarray imports, Scikit-learn through NumPy/Cython/sklearn imports, and Matplotlib through pyparsing/matplotlib/pyplot imports.
+- Pin legacy Matplotlib 3.1-3.4 to a setuptools release that does not emit the modern `pkg_resources` API deprecation during Matplotlib's warnings-as-errors test startup.
+- Acceptance gate: focused unit tests pass under `icore`; real Xarray, Scikit-learn, and Matplotlib template integrity probes complete without metadata, binary-import, or build-interface errors; no 276-row run is launched in this repair pass.

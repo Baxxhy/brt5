@@ -331,6 +331,7 @@ def verify_runtime_isolation_smoke(
             1800,
             "tdd_preflight",
             spec.install,
+            project_distribution=str(row.get("repo") or "").split("/")[-1],
         )
         runtime_env = str(runtime.get("env_name") or "")
         bindings = (

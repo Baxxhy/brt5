@@ -47,6 +47,23 @@ _HEALTH_CACHE: dict[str, dict[str, Any]] = {}
 _DEPENDENCY_COMPAT_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 _MANIFEST_CACHE: dict[str, dict[str, Any]] = {}
 
+# Importing these modules is part of the dependency contract.  Metadata alone
+# cannot detect a NumPy/Pandas ABI mismatch or a Cython/pyparsing installation
+# whose files and dist-info came from different versions.
+_DEPENDENCY_IMPORT_PROBES = {
+    "cython": "Cython",
+    "numpy": "numpy",
+    "pandas": "pandas",
+    "pyparsing": "pyparsing",
+    "setuptools": "setuptools",
+}
+
+_PROJECT_HEALTH_IMPORTS = {
+    "matplotlib": ["pyparsing", "matplotlib", "matplotlib.pyplot"],
+    "scikit-learn": ["numpy", "Cython", "sklearn"],
+    "xarray": ["numpy", "pandas", "xarray"],
+}
+
 
 def sanitize_env_component(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or ""))
@@ -361,9 +378,37 @@ def dependency_env_compatibility(
     expected_requirements = [
         str(value) for value in (install_spec.get("pip_packages") or []) if value
     ]
+    expected_names = {
+        name
+        for value in expected_requirements
+        if (name := _requirement_distribution_name(value))
+    }
+    probed_names: set[str] = set()
+    for requirement_text in expected_requirements:
+        try:
+            requirement = Requirement(requirement_text)
+        except InvalidRequirement:
+            continue
+        name = _normalized_distribution_name(requirement.name)
+        # Pandas is a comparatively expensive optional test dependency for
+        # several projects.  Its ABI is contractual only where the benchmark
+        # pins it (notably Xarray).
+        if name == "pandas" and not requirement.specifier:
+            continue
+        probed_names.add(name)
+    import_probes = {
+        name: module
+        for name, module in _DEPENDENCY_IMPORT_PROBES.items()
+        if name in probed_names
+    }
     expectation_key = hashlib.sha256(
         json.dumps(
-            {"python": expected_python, "requirements": expected_requirements},
+            {
+                "python": expected_python,
+                "requirements": expected_requirements,
+                "integrity_probe": "metadata-runtime-interface-v3",
+                "import_probes": import_probes,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -378,21 +423,139 @@ import json
 import os
 import platform
 import re
+import subprocess
 import sys
 
 norm = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+package_records = {}
 try:
     from importlib.metadata import distributions
-    packages = {
-        norm(distribution.metadata.get("Name") or ""): distribution.version
-        for distribution in distributions()
-    }
 except ImportError:
+    try:
+        from importlib_metadata import distributions
+    except ImportError:
+        distributions = None
+if distributions is not None:
+    for distribution in distributions():
+        name = norm(distribution.metadata.get("Name") or "")
+        if not name:
+            continue
+        record = {
+            "version": str(distribution.version or ""),
+            "metadata_path": str(getattr(distribution, "_path", "") or ""),
+        }
+        if record not in package_records.setdefault(name, []):
+            package_records[name].append(record)
+else:
     import pkg_resources
-    packages = {
-        norm(distribution.project_name): distribution.version
-        for distribution in pkg_resources.working_set
-    }
+    for distribution in pkg_resources.working_set:
+        name = norm(distribution.project_name)
+        record = {
+            "version": str(distribution.version or ""),
+            "metadata_path": str(getattr(distribution, "egg_info", "") or ""),
+        }
+        if record not in package_records.setdefault(name, []):
+            package_records[name].append(record)
+packages = {
+    name: records[-1]["version"]
+    for name, records in package_records.items()
+    if records
+}
+duplicate_metadata = {
+    name: records for name, records in package_records.items() if len(records) > 1
+}
+probe_modules = __BRT_IMPORT_PROBES__
+runtime_probes = {}
+probe_code = r'''
+import importlib
+import json
+import sys
+module_name = sys.argv[1]
+module = importlib.import_module(module_name)
+print(json.dumps({
+    "version": str(getattr(module, "__version__", "") or ""),
+    "module_file": str(getattr(module, "__file__", "") or ""),
+}))
+'''
+for distribution_name, module_name in probe_modules.items():
+    try:
+        probe = subprocess.run(
+            [sys.executable, "-c", probe_code, module_name],
+            env=dict(os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1"),
+            universal_newlines=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            check=False,
+        )
+        try:
+            payload = json.loads((probe.stdout or "").strip().splitlines()[-1])
+        except (IndexError, ValueError):
+            payload = {}
+        runtime_probes[distribution_name] = dict({
+            "ok": probe.returncode == 0 and bool(payload),
+            "module": module_name,
+            "version": str(payload.get("version") or ""),
+            "module_file": str(payload.get("module_file") or ""),
+            "returncode": probe.returncode,
+            "stderr": (probe.stderr or "")[-4000:],
+        })
+    except subprocess.TimeoutExpired as exc:
+        runtime_probes[distribution_name] = {
+            "ok": False,
+            "module": module_name,
+            "version": "",
+            "module_file": "",
+            "timeout": True,
+            "error": repr(exc),
+        }
+interface_probes = {}
+if (
+    "cython" in probe_modules
+    and "numpy" in probe_modules
+    and runtime_probes.get("cython", {}).get("ok")
+    and runtime_probes.get("numpy", {}).get("ok")
+):
+    cython_numpy_probe = r'''
+import pathlib
+import tempfile
+from Cython.Build import cythonize
+
+with tempfile.TemporaryDirectory(prefix="brt-cython-numpy-") as root:
+    source = pathlib.Path(root) / "probe.pyx"
+    source.write_text(
+        "cimport numpy as cnp\\n"
+        "cdef cnp.int_t brt_integrity_value\\n",
+        encoding="utf-8",
+    )
+    cythonize(
+        str(source),
+        quiet=True,
+        compiler_directives={"language_level": 3},
+    )
+'''
+    try:
+        interface = subprocess.run(
+            [sys.executable, "-c", cython_numpy_probe],
+            env=dict(os.environ, OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1"),
+            universal_newlines=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+            check=False,
+        )
+        interface_probes["cython_numpy_pxd"] = {
+            "ok": interface.returncode == 0,
+            "returncode": interface.returncode,
+            "stdout": (interface.stdout or "")[-4000:],
+            "stderr": (interface.stderr or "")[-4000:],
+        }
+    except subprocess.TimeoutExpired as exc:
+        interface_probes["cython_numpy_pxd"] = {
+            "ok": False,
+            "timeout": True,
+            "error": repr(exc),
+        }
 marker_environment = {
     "implementation_name": getattr(sys.implementation, "name", ""),
     "implementation_version": platform.python_version(),
@@ -410,9 +573,17 @@ marker_environment = {
 print(json.dumps({
     "python": platform.python_version(),
     "packages": packages,
+    "package_records": package_records,
+    "duplicate_metadata": duplicate_metadata,
+    "runtime_probes": runtime_probes,
+    "interface_probes": interface_probes,
     "marker_environment": marker_environment,
 }))
 """
+    script = script.replace(
+        "__BRT_IMPORT_PROBES__",
+        json.dumps(import_probes, sort_keys=True),
+    )
     try:
         proc = subprocess.run(
             [CONDA_EXE, "run", "-n", env_name, "python", "-c", script],
@@ -434,6 +605,21 @@ print(json.dumps({
     except (IndexError, json.JSONDecodeError):
         snapshot = {}
     packages = snapshot.get("packages") if isinstance(snapshot.get("packages"), dict) else {}
+    duplicate_metadata = (
+        snapshot.get("duplicate_metadata")
+        if isinstance(snapshot.get("duplicate_metadata"), dict)
+        else {}
+    )
+    runtime_probes = (
+        snapshot.get("runtime_probes")
+        if isinstance(snapshot.get("runtime_probes"), dict)
+        else {}
+    )
+    interface_probes = (
+        snapshot.get("interface_probes")
+        if isinstance(snapshot.get("interface_probes"), dict)
+        else {}
+    )
     marker_environment = (
         snapshot.get("marker_environment")
         if isinstance(snapshot.get("marker_environment"), dict)
@@ -445,6 +631,60 @@ print(json.dumps({
     requirement_checks: list[dict[str, Any]] = []
     for requirement in expected_requirements:
         check = _requirement_compatibility(requirement, packages, marker_environment)
+        name = str(check.get("name") or "")
+        duplicate_records = duplicate_metadata.get(name)
+        runtime_probe = runtime_probes.get(name)
+        if check.get("applicable", True) and duplicate_records:
+            check.update(
+                {
+                    "ok": False,
+                    "reason": "duplicate_metadata",
+                    "metadata_records": duplicate_records,
+                }
+            )
+        elif check.get("ok") and isinstance(runtime_probe, dict):
+            if not runtime_probe.get("ok"):
+                check.update(
+                    {
+                        "ok": False,
+                        "reason": "runtime_import_error",
+                        "runtime_probe": runtime_probe,
+                    }
+                )
+            else:
+                imported_version = str(runtime_probe.get("version") or "")
+                try:
+                    parsed_requirement = Requirement(requirement)
+                    imported_matches = (
+                        not imported_version
+                        or not parsed_requirement.specifier
+                        or Version(imported_version) in parsed_requirement.specifier
+                    )
+                except (InvalidRequirement, InvalidVersion):
+                    imported_matches = False
+                if not imported_matches:
+                    check.update(
+                        {
+                            "ok": False,
+                            "reason": "runtime_version_mismatch",
+                            "runtime_probe": runtime_probe,
+                            "imported": imported_version,
+                        }
+                    )
+        cython_numpy_probe = interface_probes.get("cython_numpy_pxd")
+        if (
+            check.get("ok")
+            and name in {"cython", "numpy"}
+            and isinstance(cython_numpy_probe, dict)
+            and not cython_numpy_probe.get("ok")
+        ):
+            check.update(
+                {
+                    "ok": False,
+                    "reason": "runtime_interface_error",
+                    "interface_probe": cython_numpy_probe,
+                }
+            )
         requirement_checks.append(check)
         if check.get("reason") == "invalid_requirement":
             unsupported.append(requirement)
@@ -458,7 +698,10 @@ print(json.dumps({
                 {
                     "requirement": requirement,
                     "expected": str(check.get("specifier") or ""),
-                    "installed": str(check.get("installed") or ""),
+                    "installed": str(
+                        check.get("imported") or check.get("installed") or ""
+                    ),
+                    "reason": str(check.get("reason") or ""),
                 }
             )
     actual_python = str(snapshot.get("python") or "")
@@ -479,6 +722,13 @@ print(json.dumps({
         "missing": missing,
         "version_mismatches": mismatches,
         "unsupported_requirements": unsupported,
+        "duplicate_metadata": {
+            name: records
+            for name, records in duplicate_metadata.items()
+            if name in expected_names
+        },
+        "runtime_probes": runtime_probes,
+        "interface_probes": interface_probes,
         "requirement_checks": requirement_checks,
         "returncode": proc.returncode,
         "stderr": proc.stderr[-4000:],
@@ -700,7 +950,9 @@ def project_health_check(
     repo_dir: str,
     timeout: int = 90,
 ) -> dict[str, Any]:
+    project = str(repo or "").split("/")[-1]
     module = project_import_name(repo)
+    modules = _PROJECT_HEALTH_IMPORTS.get(project, [module])
     pythonpath = f"{repo_dir}:{repo_dir}/src:{repo_dir}/lib"
     command = (
         f"{conda_activate_cmd(env_name)} && "
@@ -708,9 +960,15 @@ def project_health_check(
         "python -c "
         + shlex.quote(
             "import importlib,json,sys; "
-            f"m=importlib.import_module({module!r}); "
+            f"names={modules!r}; "
+            "loaded=[importlib.import_module(name) for name in names]; "
             "print(json.dumps({'python':sys.version.split()[0],"
-            "'module':m.__name__,'module_file':getattr(m,'__file__','')}))"
+            "'module':loaded[-1].__name__,"
+            "'module_file':getattr(loaded[-1],'__file__',''),"
+            "'imports':[{'module':item.__name__,"
+            "'module_file':getattr(item,'__file__',''),"
+            "'version':str(getattr(item,'__version__','') or '')}"
+            " for item in loaded]}))"
         )
     )
     try:

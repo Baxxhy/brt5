@@ -8,7 +8,10 @@ from types import SimpleNamespace
 from unittest import mock
 
 from brt5.retrieval import icore_env_utils, icore_exec_spec, icore_runtime
-from brt5.retrieval.icore_env_constants import MAP_VERSION_TO_INSTALL_ASTROPY
+from brt5.retrieval.icore_env_constants import (
+    MAP_VERSION_TO_INSTALL_ASTROPY,
+    MAP_VERSION_TO_INSTALL_MATPLOTLIB,
+)
 from brt5.evaluation.direct_eval import setup_command as formal_setup_command
 from brt5.retrieval.icore_runtime import icore_setup_command
 from brt5.runtime import conda_env_manager as envm
@@ -260,6 +263,26 @@ class CondaEnvManagerTests(unittest.TestCase):
             )
         self.assertEqual(result["returncode"], 1)
 
+    def test_editable_scrub_receives_project_distribution(self) -> None:
+        payload = {
+            "project_distribution": "matplotlib",
+            "uninstall": {"returncode": 0},
+            "remaining_editable_bindings": [],
+        }
+        command_result = {
+            "returncode": 0,
+            "stdout": json.dumps(payload) + "\n",
+            "stderr": "",
+        }
+        with mock.patch.object(
+            icore_runtime, "_run_script", return_value=command_result
+        ) as run:
+            result = icore_runtime._scrub_cloned_editable_installs(
+                "env_a", str(self.root), 120, project_distribution="matplotlib"
+            )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("matplotlib", run.call_args.args[0])
+
     def test_environment_state_round_trip_is_atomic(self) -> None:
         with mock.patch.dict("os.environ", {"BRT4_ENV_CACHE_DIR": str(self.root)}):
             path = envm.write_environment_state("env_a", "key_a", {"status": "ready"})
@@ -335,6 +358,142 @@ class CondaEnvManagerTests(unittest.TestCase):
         self.assertTrue(compatible["ok"])
         self.assertFalse(incompatible["ok"])
         self.assertEqual(incompatible["version_mismatches"][0]["installed"], "1.25.2")
+
+    def test_dependency_compatibility_rejects_duplicate_metadata(self) -> None:
+        snapshot = {
+            "python": "3.10.14",
+            "packages": {"numpy": "1.23.0"},
+            "duplicate_metadata": {
+                "numpy": [
+                    {"version": "1.23.0", "metadata_path": "/env/numpy-a.dist-info"},
+                    {"version": "2.0.0", "metadata_path": "/env/numpy-b.dist-info"},
+                ]
+            },
+            "runtime_probes": {
+                "numpy": {
+                    "ok": True,
+                    "module": "numpy",
+                    "version": "1.23.0",
+                    "module_file": "/env/numpy/__init__.py",
+                }
+            },
+            "marker_environment": {},
+        }
+        proc = mock.Mock(returncode=0, stdout=json.dumps(snapshot) + "\n", stderr="")
+        with mock.patch.object(envm.subprocess, "run", return_value=proc):
+            result = envm.dependency_env_compatibility(
+                "legacy", {"python": "3.10", "pip_packages": ["numpy==1.23.0"]}
+            )
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["requirement_checks"][0]["reason"], "duplicate_metadata"
+        )
+        self.assertEqual(len(result["duplicate_metadata"]["numpy"]), 2)
+
+    def test_dependency_compatibility_rejects_runtime_import_failure(self) -> None:
+        snapshot = {
+            "python": "3.10.14",
+            "packages": {"numpy": "1.23.0", "pandas": "1.5.3"},
+            "duplicate_metadata": {},
+            "runtime_probes": {
+                "numpy": {
+                    "ok": True,
+                    "module": "numpy",
+                    "version": "1.23.0",
+                    "module_file": "/env/numpy/__init__.py",
+                },
+                "pandas": {
+                    "ok": False,
+                    "module": "pandas",
+                    "version": "",
+                    "module_file": "",
+                    "error": "ValueError('numpy.dtype size changed')",
+                },
+            },
+            "marker_environment": {},
+        }
+        proc = mock.Mock(returncode=0, stdout=json.dumps(snapshot) + "\n", stderr="")
+        with mock.patch.object(envm.subprocess, "run", return_value=proc):
+            result = envm.dependency_env_compatibility(
+                "legacy",
+                {
+                    "python": "3.10",
+                    "pip_packages": ["numpy==1.23.0", "pandas==1.5.3"],
+                },
+            )
+        checks = {check["name"]: check for check in result["requirement_checks"]}
+        self.assertFalse(result["ok"])
+        self.assertTrue(checks["numpy"]["ok"])
+        self.assertEqual(checks["pandas"]["reason"], "runtime_import_error")
+
+    def test_dependency_compatibility_checks_imported_version(self) -> None:
+        snapshot = {
+            "python": "3.11.9",
+            "packages": {"pyparsing": "3.0.9"},
+            "duplicate_metadata": {},
+            "runtime_probes": {
+                "pyparsing": {
+                    "ok": True,
+                    "module": "pyparsing",
+                    "version": "3.1.4",
+                    "module_file": "/env/pyparsing/__init__.py",
+                }
+            },
+            "marker_environment": {},
+        }
+        proc = mock.Mock(returncode=0, stdout=json.dumps(snapshot) + "\n", stderr="")
+        with mock.patch.object(envm.subprocess, "run", return_value=proc):
+            result = envm.dependency_env_compatibility(
+                "legacy", {"python": "3.11", "pip_packages": ["pyparsing==3.0.9"]}
+            )
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["requirement_checks"][0]["reason"],
+            "runtime_version_mismatch",
+        )
+        self.assertEqual(result["requirement_checks"][0]["imported"], "3.1.4")
+
+    def test_dependency_compatibility_checks_cython_numpy_interface(self) -> None:
+        snapshot = {
+            "python": "3.9.19",
+            "packages": {"cython": "0.29.33", "numpy": "1.23.0"},
+            "duplicate_metadata": {},
+            "runtime_probes": {
+                "cython": {
+                    "ok": True,
+                    "module": "Cython",
+                    "version": "0.29.33",
+                    "module_file": "/env/Cython/__init__.py",
+                },
+                "numpy": {
+                    "ok": True,
+                    "module": "numpy",
+                    "version": "1.23.0",
+                    "module_file": "/env/numpy/__init__.py",
+                },
+            },
+            "interface_probes": {
+                "cython_numpy_pxd": {
+                    "ok": False,
+                    "returncode": 1,
+                    "stderr": "'int_t' is not a type identifier",
+                }
+            },
+            "marker_environment": {},
+        }
+        proc = mock.Mock(returncode=0, stdout=json.dumps(snapshot) + "\n", stderr="")
+        with mock.patch.object(envm.subprocess, "run", return_value=proc):
+            result = envm.dependency_env_compatibility(
+                "legacy",
+                {
+                    "python": "3.9",
+                    "pip_packages": ["cython==0.29.33", "numpy==1.23"],
+                },
+            )
+        checks = {check["name"]: check for check in result["requirement_checks"]}
+        self.assertFalse(result["ok"])
+        self.assertEqual(checks["cython"]["reason"], "runtime_interface_error")
+        self.assertEqual(checks["numpy"]["reason"], "runtime_interface_error")
 
     def test_dependency_compatibility_supports_pep440_and_target_markers(self) -> None:
         packages = {"numpy": "1.25.2", "asgiref": "3.2.10"}
@@ -590,11 +749,96 @@ python -m pip install -r $HOME/requirements.txt
         self.assertEqual(result["returncode"], 0)
         self.assertNotEqual(result["env_name"], "template")
         clone.assert_called_once_with(
-            "template", result["env_name"], str(self.root), 120
+            "template",
+            result["env_name"],
+            str(self.root),
+            120,
+            project_distribution="",
         )
         self.assertEqual(
             write_identity.call_args.args[1]["kind"], "isolated_runtime"
         )
+
+    def test_existing_template_is_repaired_before_reuse(self) -> None:
+        row = issue()
+        env_name = envm.default_env_name(row, prefix="")
+        spec = SimpleNamespace(
+            instance_id=row["instance_id"],
+            repo=row["repo"],
+            version=row["version"],
+            base_commit=row["base_commit"],
+            environment_setup_commit=row["environment_setup_commit"],
+            env_script="create env",
+            install={"python": "3.10", "pip_packages": ["numpy==1.23.0"]},
+        )
+        incompatible = {
+            "ok": False,
+            "python_ok": True,
+            "requirement_checks": [
+                {
+                    "requirement": "numpy==1.23.0",
+                    "name": "numpy",
+                    "applicable": True,
+                    "ok": False,
+                    "reason": "duplicate_metadata",
+                }
+            ],
+        }
+        compatible = {
+            "ok": True,
+            "python_ok": True,
+            "requirement_checks": [],
+        }
+        with mock.patch.object(
+            icore_runtime,
+            "environment_lock_path",
+            return_value=self.root / "prepare.lock",
+        ), mock.patch.object(
+            icore_runtime,
+            "conda_env_inventory",
+            return_value={env_name: "/env"},
+        ), mock.patch.object(
+            icore_runtime,
+            "conda_env_exists",
+            return_value=True,
+        ), mock.patch.object(
+            icore_runtime,
+            "dependency_env_compatibility",
+            return_value=incompatible,
+        ), mock.patch.object(
+            icore_runtime,
+            "_restore_runtime_dependency_contract",
+            return_value={"status": "RESTORED", "returncode": 0, "after": compatible},
+        ) as repair, mock.patch.object(
+            icore_runtime,
+            "read_environment_state",
+            return_value={},
+        ), mock.patch.object(
+            icore_runtime,
+            "read_environment_identity",
+            return_value={},
+        ), mock.patch.object(
+            icore_runtime,
+            "has_recoverable_environment_state",
+            return_value=False,
+        ), mock.patch.object(
+            icore_runtime,
+            "env_health_check",
+            return_value={"ok": True, "version": "3.10.14"},
+        ), mock.patch.object(
+            icore_runtime,
+            "write_environment_state",
+        ), mock.patch.object(
+            icore_runtime,
+            "_remove_environment",
+        ) as remove:
+            result = icore_runtime.ensure_icore_environment(
+                spec, env_name, str(self.root), 120
+            )
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["dependency_repair"]["status"], "RESTORED")
+        repair.assert_called_once()
+        remove.assert_not_called()
 
     def test_runtime_clone_restores_only_drifted_dependency_pins(self) -> None:
         before = {
@@ -642,6 +886,74 @@ python -m pip install -r $HOME/requirements.txt
         )
         self.assertIn("setuptools==68.0.0", commands[-1])
         self.assertNotIn("numpy==1.23.5", commands[-1])
+
+    def test_runtime_contract_repair_reinstalls_abi_pair(self) -> None:
+        before = {
+            "ok": False,
+            "python_ok": True,
+            "requirement_checks": [
+                {
+                    "requirement": "numpy==1.23.0",
+                    "name": "numpy",
+                    "applicable": True,
+                    "ok": True,
+                    "reason": "compatible",
+                },
+                {
+                    "requirement": "pandas==1.5.3",
+                    "name": "pandas",
+                    "applicable": True,
+                    "ok": False,
+                    "reason": "runtime_import_error",
+                },
+            ],
+        }
+        after = {"ok": True, "python_ok": True, "requirement_checks": []}
+        with mock.patch.object(
+            icore_runtime,
+            "dependency_env_compatibility",
+            side_effect=[before, after],
+        ), mock.patch.object(
+            icore_runtime,
+            "_run_script",
+            return_value={"returncode": 0, "stdout": "", "stderr": ""},
+        ) as run, mock.patch.object(
+            icore_runtime,
+            "invalidate_environment_runtime_cache",
+        ):
+            result = icore_runtime._restore_runtime_dependency_contract(
+                "runtime", {"python": "3.10"}, str(self.root), 120
+            )
+        self.assertEqual(result["status"], "RESTORED")
+        self.assertEqual(
+            result["requirements"], ["numpy==1.23.0", "pandas==1.5.3"]
+        )
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn("--no-cache-dir --force-reinstall --no-deps", commands[-1])
+        self.assertIn("numpy==1.23.0", commands[-1])
+        self.assertIn("pandas==1.5.3", commands[-1])
+
+    def test_project_health_check_imports_abi_sensitive_dependencies(self) -> None:
+        proc = SimpleNamespace(returncode=0, stdout='{"module":"xarray"}\n', stderr="")
+        with mock.patch.object(envm.subprocess, "run", return_value=proc) as run:
+            result = envm.project_health_check(
+                "runtime", "pydata/xarray", str(self.root), 90
+            )
+        self.assertTrue(result["ok"])
+        command = run.call_args.args[0]
+        self.assertIn("numpy", command)
+        self.assertIn("pandas", command)
+        self.assertIn("xarray", command)
+
+    def test_legacy_matplotlib_uses_warning_compatible_setuptools(self) -> None:
+        spec = SimpleNamespace(
+            repo="matplotlib/matplotlib",
+            version="3.3",
+            install=MAP_VERSION_TO_INSTALL_MATPLOTLIB["3.3"],
+        )
+        command = icore_setup_command(spec)
+        self.assertIn("setuptools==65.5.1", command)
+        self.assertNotIn("setuptools==75.1.0", command)
 
     def test_runtime_cleanup_never_removes_dependency_template(self) -> None:
         with mock.patch.object(

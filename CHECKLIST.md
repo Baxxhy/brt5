@@ -68,3 +68,16 @@
 - [x] all eight instances formally evaluated in isolated project environments (6 success, 2 fixed fail, 0 environment errors)
 - [x] eight rows merged into the 276-row result with denominator 276 (132/276 = 47.8261%)
 - [x] no `brt5i_*` runtime environments or generation/evaluation processes remain
+
+## B-machine environment-integrity repair
+
+- [x] B-machine failure mechanisms mapped to concrete environment code paths
+- [x] duplicate dependency metadata is rejected
+- [x] imported dependency versions and ABI-sensitive imports are checked
+- [x] repair purges orphan metadata and force-reinstalls coherent dependency groups
+- [x] disposable clones scrub stale benchmark-project namespace and editable residue
+- [x] legacy Matplotlib setuptools protocol is compatible with warnings-as-errors startup
+- [x] all 127 unit tests pass under literal `icore`; all 105 Python files compile
+- [x] real Xarray, Scikit-learn, and current Matplotlib template integrity probes pass
+- [x] contaminated legacy Matplotlib template is rejected; current hashed template passes after targeted repair
+- [x] diff reviewed and release commit prepared for the B-machine rerun

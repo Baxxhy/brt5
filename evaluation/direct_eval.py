@@ -2256,6 +2256,7 @@ def evaluate_one(
             timeout,
             "formal_eval",
             spec.install,
+            project_distribution=str(issue.get("repo") or "").split("/")[-1],
         )
     env_name = str(runtime_prepare.get("env_name") or template_env_name)
     runtime_health = (
