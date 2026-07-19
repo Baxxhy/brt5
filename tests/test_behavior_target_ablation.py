@@ -99,7 +99,7 @@ class BehaviorTargetAblationTests(unittest.TestCase):
         self.assertIn("w/o Behavior Target", rendered)
         self.assertIn("原始 Issue（未结构化）", rendered)
 
-    def test_full_launcher_skips_rewrite_and_unsets_cache_when_disabled(self) -> None:
+    def test_full_launcher_skips_rewrite_coverage_and_cache_when_disabled(self) -> None:
         launcher = (
             Path(__file__).resolve().parents[1]
             / "scripts"
@@ -109,7 +109,12 @@ class BehaviorTargetAblationTests(unittest.TestCase):
         self.assertIn('issue_rewrite_skipped reason=w/o_behavior_target', launcher)
         self.assertIn('env -u BRT4_BEHAVIOR_CACHE_DIR', launcher)
         self.assertIn('--enable_behavior_target "$ENABLE_BEHAVIOR_TARGET"', launcher)
-        self.assertIn('--compute_patch_coverage true', launcher)
+        self.assertIn('COMPUTE_PATCH_COVERAGE=true', launcher)
+        self.assertIn('COMPUTE_PATCH_COVERAGE=false', launcher)
+        self.assertIn(
+            '--compute_patch_coverage "$COMPUTE_PATCH_COVERAGE"', launcher
+        )
+        self.assertIn('patch_coverage_enabled=$COMPUTE_PATCH_COVERAGE', launcher)
 
 
 if __name__ == "__main__":

@@ -20,7 +20,8 @@ Options:
   --dataset {swt|tdd}  Select the experiment dataset (default: swt).
   --behavior-target {on|off}
                        Enable BehaviorTarget (default: on). Use off for the
-                       "w/o Behavior Target" ablation; IssueRewrite is skipped.
+                       "w/o Behavior Target" ablation; IssueRewrite and Patch
+                       Coverage are skipped, so formal evaluation reports F2P only.
   -h, --help           Show this help message.
 
 DATASET_MODE, INSTANCES_PATH, GOLD_DATASET, and RUN_DIR may still be
@@ -137,8 +138,10 @@ esac
 
 RUN_TIMESTAMP=${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}
 RUN_VARIANT_SUFFIX=""
+COMPUTE_PATCH_COVERAGE=true
 if [ "$ENABLE_BEHAVIOR_TARGET" = "false" ]; then
   RUN_VARIANT_SUFFIX="_wo_behavior_target"
+  COMPUTE_PATCH_COVERAGE=false
 fi
 RUN_DIR=${RUN_DIR:-$PROJECT_ROOT/results/runs/p0_simple_llm_selector_${DATASET_MODE}${RUN_VARIANT_SUFFIX}_${RUN_TIMESTAMP}}
 INSTANCES_PATH=${INSTANCES_PATH:-$DEFAULT_INSTANCES_PATH}
@@ -216,6 +219,7 @@ echo "dataset_mode=$DATASET_MODE"
 echo "instances_path=$INSTANCES_PATH"
 echo "dataset_size=$DATASET_SIZE"
 echo "behavior_target_enabled=$ENABLE_BEHAVIOR_TARGET"
+echo "patch_coverage_enabled=$COMPUTE_PATCH_COVERAGE"
 if [ "$ENABLE_BEHAVIOR_TARGET" = "true" ]; then
   echo "method_variant=full"
 else
@@ -338,7 +342,7 @@ fi
   --evaluation_dir "$FORMAL_DIR" \
   --log_path "$LOG_DIR/formal_eval.log" \
   --summary_path "$RUN_DIR/evaluation/formal_eval_summary.json" \
-  --compute_patch_coverage true \
+  --compute_patch_coverage "$COMPUTE_PATCH_COVERAGE" \
   "${FORMAL_RUNTIME_ARGS[@]}"
 EVALUATION_RC=$?
 echo "__BRT_STAGE__ formal_f2p_end rc=$EVALUATION_RC $(date --iso-8601=seconds)"
