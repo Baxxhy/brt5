@@ -954,6 +954,11 @@ python -m pip install -r $HOME/requirements.txt
         command = icore_setup_command(spec)
         self.assertIn("setuptools==65.5.1", command)
         self.assertNotIn("setuptools==75.1.0", command)
+        self.assertIn("setuptools-scm==7.1.0", spec.install["pip_packages"])
+        self.assertIn(
+            "setuptools-scm-git-archive==1.4.1",
+            spec.install["pip_packages"],
+        )
 
     def test_runtime_cleanup_never_removes_dependency_template(self) -> None:
         with mock.patch.object(
