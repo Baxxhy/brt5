@@ -75,6 +75,7 @@ class ReproducibleBootstrapTests(unittest.TestCase):
 
     def test_reproduction_files_exist(self) -> None:
         required = [
+            "requirements.txt",
             "requirements-framework.txt",
             "README_REPRODUCE.md",
             ".env.example",
@@ -87,6 +88,30 @@ class ReproducibleBootstrapTests(unittest.TestCase):
         ]
         for relative in required:
             self.assertTrue((PROJECT_ROOT / relative).is_file(), relative)
+
+    def test_framework_requirements_exclude_benchmark_environments(self) -> None:
+        requirements = {
+            line.strip()
+            for line in (PROJECT_ROOT / "requirements.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        self.assertEqual(
+            requirements,
+            {
+                "datasets==5.0.0",
+                "packaging==26.0",
+                "requests==2.34.2",
+                'tomli>=2.0; python_version < "3.11"',
+            },
+        )
+        self.assertEqual(
+            (PROJECT_ROOT / "requirements-framework.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()[-1],
+            "-r requirements.txt",
+        )
 
     def test_launcher_has_no_fixed_workspace_root(self) -> None:
         launcher = (

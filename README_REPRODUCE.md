@@ -36,7 +36,7 @@ The bootstrap does the following:
 1. installs Linux build prerequisites with `apt-get`;
 2. installs Miniforge when Conda is absent;
 3. creates the `icore` framework environment;
-4. installs `requirements-framework.txt`;
+4. installs the project-only framework dependencies from `requirements.txt`;
 5. prompts for one or more DeepSeek-compatible keys and stores them at
    `.secrets/api_pool.json` with mode `0600`;
 6. clones all repositories required by the selected dataset;
@@ -94,6 +94,18 @@ The launcher uses the repository location dynamically. Generation runs in the
 `icore` framework environment; every benchmark project runs in its own
 iCoRe-derived Conda environment. Missing generated tests remain in the formal
 evaluation denominator. Formal output includes F2P and Change Coverage (Delta C).
+
+To install only the BRT5 framework environment without preparing any SWT/TDD
+repository or per-instance environment:
+
+```bash
+conda create -n icore -y python=3.12 pip
+conda run -n icore python -m pip install -r requirements.txt
+```
+
+This installs the framework and its transitive Python dependencies only. The
+benchmark-project environments are prepared separately by iCoRe when an
+experiment actually needs them.
 
 ## Limits of “one command”
 

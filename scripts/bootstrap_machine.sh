@@ -111,7 +111,7 @@ else
 fi
 PYTHON_BIN="$CONDA_BASE/envs/icore/bin/python"
 "$PYTHON_BIN" -m pip install pip==26.1.2 setuptools==82.0.1 wheel==0.47.0
-"$PYTHON_BIN" -m pip install -r "$PROJECT_ROOT/requirements-framework.txt"
+"$PYTHON_BIN" -m pip install -r "$PROJECT_ROOT/requirements.txt"
 
 export PYTHONPATH="$WORKSPACE_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 API_COUNT=$("$PYTHON_BIN" - <<'PY'

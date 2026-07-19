@@ -1,0 +1,9 @@
+# BRT5 framework/runtime dependencies only.
+#
+# Install this file into the ``icore`` environment.  Dependencies of benchmark
+# projects (Django, Matplotlib, Xarray, Scikit-learn, etc.) are intentionally
+# excluded: iCoRe creates and validates those isolated environments per task.
+datasets==5.0.0
+packaging==26.0
+requests==2.34.2
+tomli>=2.0; python_version < "3.11"
