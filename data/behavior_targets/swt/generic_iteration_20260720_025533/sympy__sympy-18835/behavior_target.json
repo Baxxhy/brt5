@@ -1,0 +1,204 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-18835",
+  "issue_summary": "uniq 函数在迭代过程中允许修改传入的列表，导致输出错误且不报错。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要构造一个列表，传递给 uniq，并在 for 循环中迭代 uniq 的结果并修改原列表。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_uniq",
+        "test_file": "sympy/utilities/tests/test_iterables.py",
+        "why_relevant": "这是 uniq 函数的直接单元测试，包含了各种输入用例。",
+        "reusable_parts": [
+          "imports",
+          "assert list(uniq(...)) 的断言风格",
+          "各种输入数据的构造方式"
+        ],
+        "possible_gap": "现有测试没有覆盖在迭代 uniq 时修改原始输入列表的场景。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "向 uniq 函数传入一个可迭代对象（如列表），并在迭代 uniq 返回的迭代器时，修改原始列表（如移除元素）。",
+      "evidence": [
+        "Issue 中示例：`for i in uniq(f): f.remove(i)`",
+        "源码显示 uniq 接受 seq 参数并迭代它。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "当在迭代 uniq 结果时修改原始列表，输出结果不正确（缺失元素），且没有抛出 RuntimeError 异常。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中示例输出为 `'T'`, `'I'`, `'L'`，而预期应包含所有唯一元素。",
+        "Issue 提到输出会“silently be wrong”。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "uniq",
+        "kind": "function",
+        "source_path": "sympy/utilities/iterables.py",
+        "reason": "这是 Issue 报告的直接目标函数。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/utilities/iterables.py",
+        "object": "uniq",
+        "lines": "2088-2124",
+        "reason": "该函数在迭代 seq 时没有检查 seq 的大小是否被外部修改。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "object_state",
+        "current_pattern": "测试中传入一个列表或生成器给 uniq，然后立即收集所有结果进行断言。",
+        "target_pattern": "传入一个列表给 uniq，但在迭代其返回的迭代器时，修改原始列表（如 remove 或 pop）。",
+        "reason": "Issue 的核心是迭代过程中修改输入，这可能导致内部迭代器状态不一致。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "uniq 函数在迭代过程中应检测传入序列的大小变化，如果发生变化，应抛出 RuntimeError 异常，类似于 Python 内置字典/集合迭代时的行为。",
+      "evidence": [
+        "Issue 建议：“recording the size at the start and then checking the size and raising a similar RuntimeError if the size changes”。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "list(uniq(seq)) 的结果，特别是在迭代过程中修改 seq 后收集的结果。",
+        "reason": "可以观察输出是否与预期唯一元素列表一致，或者是否因修改而缺失元素。"
+      },
+      {
+        "kind": "exception",
+        "expression_hint": "在迭代 uniq(seq) 并修改 seq 时，是否抛出 RuntimeError。",
+        "reason": "修复后应抛出异常，观测点可以捕获是否发生异常。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证在迭代 uniq(seq) 并修改 seq 时，会抛出 RuntimeError 异常。",
+        "preferred_assertion_style": "raises",
+        "avoid": "避免断言具体的完整输出列表，因为修改后输出是不确定的。",
+        "reason": "Issue 期望的行为是抛出异常，而不是静默产生错误输出。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "uniq 函数内部处理 TypeError 异常的分支（当元素不可哈希时）是否也需要同样的保护机制？",
+    "对于生成器输入（非列表），是否也需要检测大小变化？如何检测？",
+    "具体抛出 RuntimeError 的时机和错误信息文本是什么？"
+  ],
+  "raw": {
+    "issue_summary": "uniq 函数在迭代过程中允许修改传入的列表，导致输出错误且不报错。",
+    "trigger_condition": {
+      "text": "向 uniq 函数传入一个可迭代对象（如列表），并在迭代 uniq 返回的迭代器时，修改原始列表（如移除元素）。",
+      "evidence": [
+        "Issue 中示例：`for i in uniq(f): f.remove(i)`",
+        "源码显示 uniq 接受 seq 参数并迭代它。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "当在迭代 uniq 结果时修改原始列表，输出结果不正确（缺失元素），且没有抛出 RuntimeError 异常。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中示例输出为 `'T'`, `'I'`, `'L'`，而预期应包含所有唯一元素。",
+        "Issue 提到输出会“silently be wrong”。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "uniq 函数在迭代过程中应检测传入序列的大小变化，如果发生变化，应抛出 RuntimeError 异常，类似于 Python 内置字典/集合迭代时的行为。",
+      "evidence": [
+        "Issue 建议：“recording the size at the start and then checking the size and raising a similar RuntimeError if the size changes”。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "uniq",
+        "kind": "function",
+        "source_path": "sympy/utilities/iterables.py",
+        "reason": "这是 Issue 报告的直接目标函数。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/utilities/iterables.py",
+        "object": "uniq",
+        "lines": "2088-2124",
+        "reason": "该函数在迭代 seq 时没有检查 seq 的大小是否被外部修改。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_uniq",
+        "test_file": "sympy/utilities/tests/test_iterables.py",
+        "why_relevant": "这是 uniq 函数的直接单元测试，包含了各种输入用例。",
+        "reusable_parts": [
+          "imports",
+          "assert list(uniq(...)) 的断言风格",
+          "各种输入数据的构造方式"
+        ],
+        "possible_gap": "现有测试没有覆盖在迭代 uniq 时修改原始输入列表的场景。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "object_state",
+        "current_pattern": "测试中传入一个列表或生成器给 uniq，然后立即收集所有结果进行断言。",
+        "target_pattern": "传入一个列表给 uniq，但在迭代其返回的迭代器时，修改原始列表（如 remove 或 pop）。",
+        "reason": "Issue 的核心是迭代过程中修改输入，这可能导致内部迭代器状态不一致。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "list(uniq(seq)) 的结果，特别是在迭代过程中修改 seq 后收集的结果。",
+        "reason": "可以观察输出是否与预期唯一元素列表一致，或者是否因修改而缺失元素。"
+      },
+      {
+        "kind": "exception",
+        "expression_hint": "在迭代 uniq(seq) 并修改 seq 时，是否抛出 RuntimeError。",
+        "reason": "修复后应抛出异常，观测点可以捕获是否发生异常。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证在迭代 uniq(seq) 并修改 seq 时，会抛出 RuntimeError 异常。",
+        "preferred_assertion_style": "raises",
+        "avoid": "避免断言具体的完整输出列表，因为修改后输出是不确定的。",
+        "reason": "Issue 期望的行为是抛出异常，而不是静默产生错误输出。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要构造一个列表，传递给 uniq，并在 for 循环中迭代 uniq 的结果并修改原列表。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "uniq 函数内部处理 TypeError 异常的分支（当元素不可哈希时）是否也需要同样的保护机制？",
+      "对于生成器输入（非列表），是否也需要检测大小变化？如何检测？",
+      "具体抛出 RuntimeError 的时机和错误信息文本是什么？"
+    ]
+  }
+}

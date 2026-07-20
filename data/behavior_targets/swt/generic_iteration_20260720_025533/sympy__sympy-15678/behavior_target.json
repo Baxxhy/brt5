@@ -1,0 +1,270 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-15678",
+  "issue_summary": "idiff 函数不支持 Eq 对象作为方程输入，也不支持 f(x) 形式的依赖变量。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要从 sympy 导入 idiff, Eq, Symbol, Function, exp, Derivative 等。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试函数定义和变量声明可参考 test_idiff。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_idiff",
+        "test_file": "sympy/geometry/tests/test_util.py",
+        "why_relevant": "这是 idiff 函数的直接单元测试，包含了多种调用场景和断言，是生成新测试的天然起点。",
+        "reusable_parts": [
+          "导入 idiff 和 Symbol",
+          "使用 Symbol 定义变量",
+          "构造方程表达式（如 circ = x**2 + y**2 - 4）",
+          "调用 idiff 并断言结果",
+          "使用 .simplify() 和 .equals() 进行结果比较"
+        ],
+        "possible_gap": "现有测试用例没有使用 Eq 对象作为 eq 参数，也没有使用 f(x) 这样的函数作为 y 参数。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "调用 idiff 函数，第一个参数 eq 为 Eq(y*exp(y), x*exp(x)) 或 f(x)*exp(f(x)) - x*exp(x)，第二个参数 y 为 y 或 f(x)，第三个参数 x 为 x。",
+      "evidence": [
+        "Issue 中提供了三个调用示例：idiff(Eq(y*exp(y), x*exp(x)), y, x)、idiff(f(x)*exp(f(x)) - x*exp(x), f(x), x) 和 idiff(y*exp(y)- x*exp(x), y, x)。",
+        "源码片段 1 显示了 idiff 函数的签名和参数说明。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "对于 Eq 输入，抛出 IndexError: list index out of range；对于 f(x) 输入，抛出 ValueError: expecting x-dependent symbol(s) but got: f(x)。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中提供了两个异常堆栈跟踪：IndexError 和 ValueError。",
+        "源码片段 1 第 574 行和第 582 行附近是异常抛出的位置。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "idiff",
+        "kind": "function",
+        "source_path": "sympy/geometry/util.py",
+        "reason": "这是 Issue 报告的直接目标函数。"
+      },
+      {
+        "name": "Eq",
+        "kind": "global_var",
+        "source_path": "sympy/core/relational.py",
+        "reason": "Issue 指出 idiff 不支持 Eq 对象作为输入。"
+      },
+      {
+        "name": "solve",
+        "kind": "class_function",
+        "source_path": "sympy/matrices/matrices.py",
+        "reason": "源码片段 1 中 idiff 函数内部调用了 solve 来求解导数。"
+      },
+      {
+        "name": "diff",
+        "kind": "class_function",
+        "source_path": "sympy/matrices/matrices.py",
+        "reason": "源码片段 1 中 idiff 函数内部对 eq 调用了 .diff(x) 方法。"
+      },
+      {
+        "name": "subs",
+        "kind": "class_function",
+        "source_path": "sympy/physics/vector/vector.py",
+        "reason": "源码片段 1 中 idiff 函数内部调用了 .subs 方法进行替换。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/geometry/util.py",
+        "object": "idiff",
+        "lines": "528-587",
+        "reason": "Issue 中的异常堆栈指向该文件的第 574 行和第 582 行。函数开头对 y 参数的类型检查可能拒绝了 f(x)，且函数逻辑可能未处理 Eq 对象。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用普通表达式（如 x**2 + y**2 - 4）作为 eq 参数，使用 Symbol（如 y）作为 y 参数。",
+        "target_pattern": "将 eq 参数替换为 Eq(lhs, rhs) 对象，或将 y 参数替换为 Function 对象（如 f(x)）。",
+        "reason": "Issue 明确指出这两种输入模式会触发错误。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "idiff 函数应能正确处理 Eq 对象作为方程输入，并支持 f(x) 形式的依赖变量，返回正确的导数表达式。",
+      "evidence": [
+        "Issue 标题和描述指出 'Both should be easy to correct'，暗示了预期的支持能力。",
+        "Issue 中第三个调用 idiff(y*exp(y)- x*exp(x), y, x) 成功返回了 (x + 1)*exp(x - y)/(y + 1)，表明对于非 Eq 和非 f(x) 的类似表达式，函数能正常工作。",
+        "源码片段 1 的文档字符串说明函数应返回 dy/dx 假设 eq == 0，Eq 对象表示等式，逻辑上应等同于 eq = lhs - rhs。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 idiff(Eq(...), ...) 或 idiff(..., f(x), ...) 时是否抛出 IndexError 或 ValueError。",
+        "reason": "Issue 中观察到的错误现象就是这两个异常。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "成功调用 idiff 后返回的导数表达式，与预期结果或手动计算的结果进行比较。",
+        "reason": "修复后，函数应返回正确的导数，而不是抛出异常。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "使用 Eq 对象或 f(x) 作为参数调用 idiff 时，不应抛出 IndexError 或 ValueError，并应返回一个合理的导数表达式。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言返回表达式的完整字符串相等，因为符号化简可能有多种等价形式。",
+        "reason": "Issue 的核心是当前会抛出异常，修复后应不再抛出。可以先使用 raises 断言异常消失，再进一步验证返回值。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "对于 Eq 输入，修复后 idiff 内部是将 Eq 转换为 eq = lhs - rhs 再处理，还是有其他逻辑？",
+    "对于 f(x) 输入，修复后 idiff 的 y 参数类型检查逻辑会如何调整？是否允许 Function 对象？",
+    "修复后，对于 Issue 中给出的具体例子，返回的导数表达式具体是什么形式？"
+  ],
+  "raw": {
+    "issue_summary": "idiff 函数不支持 Eq 对象作为方程输入，也不支持 f(x) 形式的依赖变量。",
+    "trigger_condition": {
+      "text": "调用 idiff 函数，第一个参数 eq 为 Eq(y*exp(y), x*exp(x)) 或 f(x)*exp(f(x)) - x*exp(x)，第二个参数 y 为 y 或 f(x)，第三个参数 x 为 x。",
+      "evidence": [
+        "Issue 中提供了三个调用示例：idiff(Eq(y*exp(y), x*exp(x)), y, x)、idiff(f(x)*exp(f(x)) - x*exp(x), f(x), x) 和 idiff(y*exp(y)- x*exp(x), y, x)。",
+        "源码片段 1 显示了 idiff 函数的签名和参数说明。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "对于 Eq 输入，抛出 IndexError: list index out of range；对于 f(x) 输入，抛出 ValueError: expecting x-dependent symbol(s) but got: f(x)。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中提供了两个异常堆栈跟踪：IndexError 和 ValueError。",
+        "源码片段 1 第 574 行和第 582 行附近是异常抛出的位置。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "idiff 函数应能正确处理 Eq 对象作为方程输入，并支持 f(x) 形式的依赖变量，返回正确的导数表达式。",
+      "evidence": [
+        "Issue 标题和描述指出 'Both should be easy to correct'，暗示了预期的支持能力。",
+        "Issue 中第三个调用 idiff(y*exp(y)- x*exp(x), y, x) 成功返回了 (x + 1)*exp(x - y)/(y + 1)，表明对于非 Eq 和非 f(x) 的类似表达式，函数能正常工作。",
+        "源码片段 1 的文档字符串说明函数应返回 dy/dx 假设 eq == 0，Eq 对象表示等式，逻辑上应等同于 eq = lhs - rhs。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "idiff",
+        "kind": "function",
+        "source_path": "sympy/geometry/util.py",
+        "reason": "这是 Issue 报告的直接目标函数。"
+      },
+      {
+        "name": "Eq",
+        "kind": "global_var",
+        "source_path": "sympy/core/relational.py",
+        "reason": "Issue 指出 idiff 不支持 Eq 对象作为输入。"
+      },
+      {
+        "name": "solve",
+        "kind": "class_function",
+        "source_path": "sympy/matrices/matrices.py",
+        "reason": "源码片段 1 中 idiff 函数内部调用了 solve 来求解导数。"
+      },
+      {
+        "name": "diff",
+        "kind": "class_function",
+        "source_path": "sympy/matrices/matrices.py",
+        "reason": "源码片段 1 中 idiff 函数内部对 eq 调用了 .diff(x) 方法。"
+      },
+      {
+        "name": "subs",
+        "kind": "class_function",
+        "source_path": "sympy/physics/vector/vector.py",
+        "reason": "源码片段 1 中 idiff 函数内部调用了 .subs 方法进行替换。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/geometry/util.py",
+        "object": "idiff",
+        "lines": "528-587",
+        "reason": "Issue 中的异常堆栈指向该文件的第 574 行和第 582 行。函数开头对 y 参数的类型检查可能拒绝了 f(x)，且函数逻辑可能未处理 Eq 对象。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_idiff",
+        "test_file": "sympy/geometry/tests/test_util.py",
+        "why_relevant": "这是 idiff 函数的直接单元测试，包含了多种调用场景和断言，是生成新测试的天然起点。",
+        "reusable_parts": [
+          "导入 idiff 和 Symbol",
+          "使用 Symbol 定义变量",
+          "构造方程表达式（如 circ = x**2 + y**2 - 4）",
+          "调用 idiff 并断言结果",
+          "使用 .simplify() 和 .equals() 进行结果比较"
+        ],
+        "possible_gap": "现有测试用例没有使用 Eq 对象作为 eq 参数，也没有使用 f(x) 这样的函数作为 y 参数。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用普通表达式（如 x**2 + y**2 - 4）作为 eq 参数，使用 Symbol（如 y）作为 y 参数。",
+        "target_pattern": "将 eq 参数替换为 Eq(lhs, rhs) 对象，或将 y 参数替换为 Function 对象（如 f(x)）。",
+        "reason": "Issue 明确指出这两种输入模式会触发错误。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 idiff(Eq(...), ...) 或 idiff(..., f(x), ...) 时是否抛出 IndexError 或 ValueError。",
+        "reason": "Issue 中观察到的错误现象就是这两个异常。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "成功调用 idiff 后返回的导数表达式，与预期结果或手动计算的结果进行比较。",
+        "reason": "修复后，函数应返回正确的导数，而不是抛出异常。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "使用 Eq 对象或 f(x) 作为参数调用 idiff 时，不应抛出 IndexError 或 ValueError，并应返回一个合理的导数表达式。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言返回表达式的完整字符串相等，因为符号化简可能有多种等价形式。",
+        "reason": "Issue 的核心是当前会抛出异常，修复后应不再抛出。可以先使用 raises 断言异常消失，再进一步验证返回值。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要从 sympy 导入 idiff, Eq, Symbol, Function, exp, Derivative 等。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试函数定义和变量声明可参考 test_idiff。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "对于 Eq 输入，修复后 idiff 内部是将 Eq 转换为 eq = lhs - rhs 再处理，还是有其他逻辑？",
+      "对于 f(x) 输入，修复后 idiff 的 y 参数类型检查逻辑会如何调整？是否允许 Function 对象？",
+      "修复后，对于 Issue 中给出的具体例子，返回的导数表达式具体是什么形式？"
+    ]
+  }
+}

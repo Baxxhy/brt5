@@ -1,0 +1,272 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sphinx-doc__sphinx-8435",
+  "issue_summary": "autodoc_type_aliases 配置对模块级变量和类属性不生效。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要创建一个临时的测试模块文件（类似 example.py），包含模块级变量和带类型别名的类属性。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 pytest.mark.sphinx fixture 创建 Sphinx 应用 (app)。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 testroot='ext-autodoc' 或类似机制来定位测试数据目录。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_autodoc_type_aliases",
+        "test_file": "tests/test_ext_autodoc_configs.py",
+        "why_relevant": "该测试直接验证 autodoc_type_aliases 配置对函数参数和返回类型的影响，是处理相同配置的测试。",
+        "reusable_parts": [
+          "使用 app.config.autodoc_type_aliases 设置配置",
+          "使用 do_autodoc 生成文档",
+          "断言生成的文档字符串列表"
+        ],
+        "possible_gap": "该测试只检查了函数（py:function）的类型别名替换，没有测试模块级数据（py:data）或类属性（py:attribute）。"
+      },
+      {
+        "test_name": "test_autodoc_typed_instance_variables",
+        "test_file": "tests/test_ext_autodoc.py",
+        "why_relevant": "该测试验证了带类型注解的实例变量和模块级变量的文档生成，涉及 Issue 中的变量和属性。",
+        "reusable_parts": [
+          "使用 do_autodoc 生成模块文档",
+          "断言包含 py:data 和 py:attribute 的文档结构"
+        ],
+        "possible_gap": "该测试没有使用 autodoc_type_aliases 配置，因此不涉及类型别名替换。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用 autodoc_type_aliases 配置将类型别名映射到具体类型，并生成包含模块级变量或类属性的文档。",
+      "evidence": [
+        "Issue 中的 conf.py 设置了 autodoc_type_aliases = {'String': 'example.MyString'}",
+        "Issue 中的 example.py 包含模块级变量 var: String 和类属性 var: String",
+        "Issue 中的 index.rst 使用 .. automodule:: 生成文档"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "生成的文档中，模块级变量和类属性的类型注解未被 autodoc_type_aliases 替换，仍显示原始类型别名。",
+      "symptom_type": "wrong_type",
+      "evidence": [
+        "Issue 描述：\"autodoc_type_aliases does not effect to variables and attributes\"",
+        "Issue 的 Expected behavior 表明期望应用替换"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "sphinx.ext.autodoc",
+        "kind": "module",
+        "source_path": "",
+        "reason": "Issue 涉及 autodoc 扩展及其配置 autodoc_type_aliases。"
+      },
+      {
+        "name": "do_autodoc",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试中使用此函数生成文档输出以进行断言。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "",
+        "object": "",
+        "lines": "",
+        "reason": "iCoRe 未提供相关源码片段，无法推断具体位置。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "test_autodoc_type_aliases 中设置 app.config.autodoc_type_aliases = {'myint': 'myint'} 并测试函数。",
+        "target_pattern": "设置 app.config.autodoc_type_aliases = {'String': 'example.MyString'} 并测试包含模块级变量和类属性的模块。",
+        "reason": "Issue 表明当前配置对变量和属性无效，需要将测试目标从函数改为变量/属性。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "test_autodoc_type_aliases 中对 target.annotations 模块（包含函数）生成文档。",
+        "target_pattern": "对一个包含模块级变量和类属性（类型为别名）的模块生成文档。",
+        "reason": "需要触发对变量和属性的文档生成路径，以暴露缺陷。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "autodoc_type_aliases 配置应能正确应用于模块级变量和类属性的类型注解，在生成的文档中显示映射后的类型。",
+      "evidence": [
+        "Issue 的 Expected behavior: \"`autodoc_type_aliases` should be applied to `example.var` and `example.MyString.var`.\""
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "type",
+        "expression_hint": "生成的文档字符串中，对应变量和属性的类型字段（例如 :type: String 或 :type: example.MyString）。",
+        "reason": "Issue 的核心是类型别名是否被正确替换，观察类型字段内容可直接判断。"
+      },
+      {
+        "kind": "file_output",
+        "expression_hint": "do_autodoc 返回的文档行列表。",
+        "reason": "相关测试通过断言文档行列表来验证行为，这是直接的输出观测点。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "生成的文档中，模块级变量和类属性的类型应显示为映射后的类型（example.MyString），而非原始别名（String）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "避免断言完整的、可能因格式微调而变化的文档字符串。",
+        "reason": "Issue 关注类型替换是否发生，而非文档的完整格式；检查类型片段更稳定。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "缺陷的确切源码位置未知。",
+    "autodoc_type_aliases 是否应对所有类型的变量和属性（如实例变量、类变量）生效，还是存在特定限制。",
+    "生成文档时，类型别名的解析和替换发生在处理链的哪个具体阶段。"
+  ],
+  "raw": {
+    "issue_summary": "autodoc_type_aliases 配置对模块级变量和类属性不生效。",
+    "trigger_condition": {
+      "text": "使用 autodoc_type_aliases 配置将类型别名映射到具体类型，并生成包含模块级变量或类属性的文档。",
+      "evidence": [
+        "Issue 中的 conf.py 设置了 autodoc_type_aliases = {'String': 'example.MyString'}",
+        "Issue 中的 example.py 包含模块级变量 var: String 和类属性 var: String",
+        "Issue 中的 index.rst 使用 .. automodule:: 生成文档"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "生成的文档中，模块级变量和类属性的类型注解未被 autodoc_type_aliases 替换，仍显示原始类型别名。",
+      "symptom_type": "wrong_type",
+      "evidence": [
+        "Issue 描述：\"autodoc_type_aliases does not effect to variables and attributes\"",
+        "Issue 的 Expected behavior 表明期望应用替换"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "autodoc_type_aliases 配置应能正确应用于模块级变量和类属性的类型注解，在生成的文档中显示映射后的类型。",
+      "evidence": [
+        "Issue 的 Expected behavior: \"`autodoc_type_aliases` should be applied to `example.var` and `example.MyString.var`.\""
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "sphinx.ext.autodoc",
+        "kind": "module",
+        "source_path": "",
+        "reason": "Issue 涉及 autodoc 扩展及其配置 autodoc_type_aliases。"
+      },
+      {
+        "name": "do_autodoc",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试中使用此函数生成文档输出以进行断言。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "",
+        "object": "",
+        "lines": "",
+        "reason": "iCoRe 未提供相关源码片段，无法推断具体位置。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_autodoc_type_aliases",
+        "test_file": "tests/test_ext_autodoc_configs.py",
+        "why_relevant": "该测试直接验证 autodoc_type_aliases 配置对函数参数和返回类型的影响，是处理相同配置的测试。",
+        "reusable_parts": [
+          "使用 app.config.autodoc_type_aliases 设置配置",
+          "使用 do_autodoc 生成文档",
+          "断言生成的文档字符串列表"
+        ],
+        "possible_gap": "该测试只检查了函数（py:function）的类型别名替换，没有测试模块级数据（py:data）或类属性（py:attribute）。"
+      },
+      {
+        "test_name": "test_autodoc_typed_instance_variables",
+        "test_file": "tests/test_ext_autodoc.py",
+        "why_relevant": "该测试验证了带类型注解的实例变量和模块级变量的文档生成，涉及 Issue 中的变量和属性。",
+        "reusable_parts": [
+          "使用 do_autodoc 生成模块文档",
+          "断言包含 py:data 和 py:attribute 的文档结构"
+        ],
+        "possible_gap": "该测试没有使用 autodoc_type_aliases 配置，因此不涉及类型别名替换。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "test_autodoc_type_aliases 中设置 app.config.autodoc_type_aliases = {'myint': 'myint'} 并测试函数。",
+        "target_pattern": "设置 app.config.autodoc_type_aliases = {'String': 'example.MyString'} 并测试包含模块级变量和类属性的模块。",
+        "reason": "Issue 表明当前配置对变量和属性无效，需要将测试目标从函数改为变量/属性。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "test_autodoc_type_aliases 中对 target.annotations 模块（包含函数）生成文档。",
+        "target_pattern": "对一个包含模块级变量和类属性（类型为别名）的模块生成文档。",
+        "reason": "需要触发对变量和属性的文档生成路径，以暴露缺陷。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "type",
+        "expression_hint": "生成的文档字符串中，对应变量和属性的类型字段（例如 :type: String 或 :type: example.MyString）。",
+        "reason": "Issue 的核心是类型别名是否被正确替换，观察类型字段内容可直接判断。"
+      },
+      {
+        "kind": "file_output",
+        "expression_hint": "do_autodoc 返回的文档行列表。",
+        "reason": "相关测试通过断言文档行列表来验证行为，这是直接的输出观测点。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "生成的文档中，模块级变量和类属性的类型应显示为映射后的类型（example.MyString），而非原始别名（String）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "避免断言完整的、可能因格式微调而变化的文档字符串。",
+        "reason": "Issue 关注类型替换是否发生，而非文档的完整格式；检查类型片段更稳定。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要创建一个临时的测试模块文件（类似 example.py），包含模块级变量和带类型别名的类属性。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 pytest.mark.sphinx fixture 创建 Sphinx 应用 (app)。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 testroot='ext-autodoc' 或类似机制来定位测试数据目录。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "缺陷的确切源码位置未知。",
+      "autodoc_type_aliases 是否应对所有类型的变量和属性（如实例变量、类变量）生效，还是存在特定限制。",
+      "生成文档时，类型别名的解析和替换发生在处理链的哪个具体阶段。"
+    ]
+  }
+}

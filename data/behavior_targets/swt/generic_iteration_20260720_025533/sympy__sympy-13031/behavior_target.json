@@ -1,0 +1,210 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-13031",
+  "issue_summary": "在 sympy 1.1 中，当水平堆叠多个零行矩阵时，对于行数为 0 的矩阵，hstack 返回的列数计算错误。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 的 Matrix 类。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_hstack",
+        "test_file": "sympy/matrices/tests/test_commonmatrix.py",
+        "why_relevant": "它直接测试了 hstack 方法，并包含针对零行矩阵堆叠的回归测试用例（#12938）。",
+        "reusable_parts": [
+          "导入 Matrix 和 ShapingOnlyMatrix",
+          "使用 Matrix.zeros 构造零矩阵",
+          "调用 Matrix.hstack 和 ShapingOnlyMatrix.hstack",
+          "使用 .rows 和 .cols 属性进行形状断言"
+        ],
+        "possible_gap": "该测试已经包含了正确的断言，可能无法直接复现当前 Issue 中的错误行为（即它可能是在修复后添加的）。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "调用 Matrix.hstack 水平堆叠多个行数为 0 但列数不同的零矩阵。",
+      "evidence": [
+        "Issue 中展示了使用 Matrix.zeros(0, 0), Matrix.zeros(0, 1), Matrix.zeros(0, 2), Matrix.zeros(0, 3) 作为输入。",
+        "相关测试 1 中也使用了相同的输入来测试回归 #12938。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "Matrix.hstack 返回的矩阵形状为 (0, 3)，而预期应为 (0, 6)。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中对比了 sympy 1.0 返回 (0, 6) 和 sympy 1.1 返回 (0, 3)。",
+        "相关测试 1 中的断言表明预期形状为 (0, 6)。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "Matrix.hstack",
+        "kind": "class_function",
+        "source_path": "sympy/matrices/common.py",
+        "reason": "Issue 直接报告了此方法的行为变化。"
+      },
+      {
+        "name": "Matrix.zeros",
+        "kind": "class_function",
+        "source_path": "sympy/matrices/common.py",
+        "reason": "用于构造触发 bug 的输入矩阵。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/matrices/common.py",
+        "object": "Matrix.hstack",
+        "lines": "364-381",
+        "reason": "该方法是问题发生的直接位置，其内部实现（如 `reduce(kls.row_join, args)`）在处理零行矩阵时可能有问题。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中已经使用了零行矩阵作为输入。",
+        "target_pattern": "与 Issue 中完全相同的输入序列：Matrix.zeros(0, 0), Matrix.zeros(0, 1), Matrix.zeros(0, 2), Matrix.zeros(0, 3)。",
+        "reason": "Issue 表明此特定输入序列在 sympy 1.1 中触发了错误行为。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "水平堆叠多个零行矩阵时，返回矩阵的列数应为所有输入矩阵列数之和。",
+      "evidence": [
+        "Issue 中 sympy 1.0 的行为返回 (0, 6)，即列数总和 (0+1+2+3=6)。",
+        "相关测试 1 中的断言 `assert m.rows == 0 and m.cols == 6` 明确了预期行为。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "Matrix.hstack(M1, M2, M3, M4).shape",
+        "reason": "Issue 的核心错误是返回的形状值不正确，直接观察此表达式可以判断 bug 是否触发。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证水平堆叠给定零行矩阵后，结果矩阵的形状为 (0, 6)。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的矩阵 repr 或内部数据，因为零矩阵的表示可能变化。",
+        "reason": "Issue 明确指出了形状计算错误，形状断言直接、稳定且与问题核心相关。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "bug 的确切根源是 hstack 方法本身，还是其依赖的 row_join 方法？",
+    "除了零行矩阵，是否还有其他边界情况（如零列矩阵）会受到影响？",
+    "vstack 方法是否也存在类似问题？Issue 标题提到了 vstack，但内容未展示。"
+  ],
+  "raw": {
+    "issue_summary": "在 sympy 1.1 中，当水平堆叠多个零行矩阵时，对于行数为 0 的矩阵，hstack 返回的列数计算错误。",
+    "trigger_condition": {
+      "text": "调用 Matrix.hstack 水平堆叠多个行数为 0 但列数不同的零矩阵。",
+      "evidence": [
+        "Issue 中展示了使用 Matrix.zeros(0, 0), Matrix.zeros(0, 1), Matrix.zeros(0, 2), Matrix.zeros(0, 3) 作为输入。",
+        "相关测试 1 中也使用了相同的输入来测试回归 #12938。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "Matrix.hstack 返回的矩阵形状为 (0, 3)，而预期应为 (0, 6)。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中对比了 sympy 1.0 返回 (0, 6) 和 sympy 1.1 返回 (0, 3)。",
+        "相关测试 1 中的断言表明预期形状为 (0, 6)。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "水平堆叠多个零行矩阵时，返回矩阵的列数应为所有输入矩阵列数之和。",
+      "evidence": [
+        "Issue 中 sympy 1.0 的行为返回 (0, 6)，即列数总和 (0+1+2+3=6)。",
+        "相关测试 1 中的断言 `assert m.rows == 0 and m.cols == 6` 明确了预期行为。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "Matrix.hstack",
+        "kind": "class_function",
+        "source_path": "sympy/matrices/common.py",
+        "reason": "Issue 直接报告了此方法的行为变化。"
+      },
+      {
+        "name": "Matrix.zeros",
+        "kind": "class_function",
+        "source_path": "sympy/matrices/common.py",
+        "reason": "用于构造触发 bug 的输入矩阵。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/matrices/common.py",
+        "object": "Matrix.hstack",
+        "lines": "364-381",
+        "reason": "该方法是问题发生的直接位置，其内部实现（如 `reduce(kls.row_join, args)`）在处理零行矩阵时可能有问题。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_hstack",
+        "test_file": "sympy/matrices/tests/test_commonmatrix.py",
+        "why_relevant": "它直接测试了 hstack 方法，并包含针对零行矩阵堆叠的回归测试用例（#12938）。",
+        "reusable_parts": [
+          "导入 Matrix 和 ShapingOnlyMatrix",
+          "使用 Matrix.zeros 构造零矩阵",
+          "调用 Matrix.hstack 和 ShapingOnlyMatrix.hstack",
+          "使用 .rows 和 .cols 属性进行形状断言"
+        ],
+        "possible_gap": "该测试已经包含了正确的断言，可能无法直接复现当前 Issue 中的错误行为（即它可能是在修复后添加的）。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中已经使用了零行矩阵作为输入。",
+        "target_pattern": "与 Issue 中完全相同的输入序列：Matrix.zeros(0, 0), Matrix.zeros(0, 1), Matrix.zeros(0, 2), Matrix.zeros(0, 3)。",
+        "reason": "Issue 表明此特定输入序列在 sympy 1.1 中触发了错误行为。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "Matrix.hstack(M1, M2, M3, M4).shape",
+        "reason": "Issue 的核心错误是返回的形状值不正确，直接观察此表达式可以判断 bug 是否触发。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证水平堆叠给定零行矩阵后，结果矩阵的形状为 (0, 6)。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的矩阵 repr 或内部数据，因为零矩阵的表示可能变化。",
+        "reason": "Issue 明确指出了形状计算错误，形状断言直接、稳定且与问题核心相关。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 的 Matrix 类。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "bug 的确切根源是 hstack 方法本身，还是其依赖的 row_join 方法？",
+      "除了零行矩阵，是否还有其他边界情况（如零列矩阵）会受到影响？",
+      "vstack 方法是否也存在类似问题？Issue 标题提到了 vstack，但内容未展示。"
+    ]
+  }
+}

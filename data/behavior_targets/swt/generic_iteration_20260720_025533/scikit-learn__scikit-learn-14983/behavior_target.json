@@ -1,0 +1,330 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "scikit-learn__scikit-learn-14983",
+  "issue_summary": "RepeatedKFold 和 RepeatedStratifiedKFold 的 __repr__ 方法没有返回包含参数信息的字符串，而是返回了默认的对象表示。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要从 sklearn.model_selection 导入 RepeatedKFold 和 RepeatedStratifiedKFold。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能在一个简单的函数中运行，不需要复杂的 fixture 或外部数据。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_build_repr",
+        "test_file": "sklearn/model_selection/tests/test_split.py",
+        "why_relevant": "它直接测试了 _build_repr 函数，该函数用于生成 repr 字符串，并且展示了预期的 repr 格式。",
+        "reusable_parts": [
+          "_build_repr 的导入和使用",
+          "assert 风格：比较 repr 输出与预期字符串"
+        ],
+        "possible_gap": "它测试的是一个 Mock 类，而不是实际的 RepeatedKFold 或 RepeatedStratifiedKFold 类。"
+      },
+      {
+        "test_name": "test_repeated_cv_value_errors",
+        "test_file": "sklearn/model_selection/tests/test_split.py",
+        "why_relevant": "它导入了 RepeatedKFold 和 RepeatedStratifiedKFold 并测试了它们的构造参数验证。",
+        "reusable_parts": [
+          "RepeatedKFold 和 RepeatedStratifiedKFold 的导入",
+          "使用 assert_raises 进行异常断言"
+        ],
+        "possible_gap": "它不测试 __repr__ 方法，只测试参数验证。"
+      },
+      {
+        "test_name": "test_get_n_splits_for_repeated_kfold",
+        "test_file": "sklearn/model_selection/tests/test_split.py",
+        "why_relevant": "它构造了 RepeatedKFold 实例并调用了其方法。",
+        "reusable_parts": [
+          "RepeatedKFold 的导入和实例化",
+          "使用默认或指定参数构造对象"
+        ],
+        "possible_gap": "它测试的是 get_n_splits 方法，而不是 __repr__。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "创建 RepeatedKFold 或 RepeatedStratifiedKFold 的默认实例（不传参数或使用默认参数），然后调用 repr() 或直接打印。",
+      "evidence": [
+        "Issue 的 Steps/Code to Reproduce 展示了 `repr(RepeatedKFold())` 和 `repr(RepeatedStratifiedKFold())`。",
+        "源码片段 1 和 2 显示了类的 __init__ 方法有默认参数 n_splits=5, n_repeats=10, random_state=None。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "repr() 返回了默认的对象内存地址表示（如 '<sklearn.model_selection._split.RepeatedKFold object at 0x...>'），而不是预期的包含参数名称和值的字符串。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 的 Actual Results 展示了错误的 repr 输出。",
+        "Issue 的 Expected Results 展示了预期的正确 repr 输出格式。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "RepeatedKFold",
+        "kind": "class",
+        "source_path": "sklearn/model_selection/_split.py",
+        "reason": "Issue 报告其 __repr__ 方法行为不正确。"
+      },
+      {
+        "name": "RepeatedStratifiedKFold",
+        "kind": "class",
+        "source_path": "sklearn/model_selection/_split.py",
+        "reason": "Issue 报告其 __repr__ 方法行为不正确。"
+      },
+      {
+        "name": "__repr__",
+        "kind": "method",
+        "source_path": "sklearn/model_selection/_split.py",
+        "reason": "这是直接导致问题的函数。"
+      },
+      {
+        "name": "_build_repr",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试 1 显示 BaseCrossValidator 的 __repr__ 使用 _build_repr 来生成 repr 字符串，这可能是修复的关键。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/model_selection/_split.py",
+        "object": "RepeatedKFold",
+        "lines": "1167-1217",
+        "reason": "该类可能没有正确实现或继承 __repr__ 方法。"
+      },
+      {
+        "path": "sklearn/model_selection/_split.py",
+        "object": "RepeatedStratifiedKFold",
+        "lines": "1220-1270",
+        "reason": "该类可能没有正确实现或继承 __repr__ 方法。"
+      },
+      {
+        "path": "sklearn/model_selection/_split.py",
+        "object": "_RepeatedSplits",
+        "lines": "",
+        "reason": "RepeatedKFold 和 RepeatedStratifiedKFold 的父类，可能缺少 __repr__ 定义或定义有误。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "object_state",
+        "current_pattern": "相关测试主要关注对象的方法调用（如 get_n_splits）或参数验证。",
+        "target_pattern": "在构造对象后，调用 repr() 函数或直接打印对象。",
+        "reason": "Issue 的触发条件是调用 repr() 函数，而现有测试没有覆盖这个操作。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "测试中使用默认参数或特定参数构造对象。",
+        "target_pattern": "使用默认参数（即不传参）构造对象，因为 Issue 的复现步骤就是如此。",
+        "reason": "Issue 的复现步骤是 `repr(RepeatedKFold())`，使用默认构造。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "RepeatedKFold 和 RepeatedStratifiedKFold 实例的 __repr__ 方法应返回一个包含类名及其构造参数（n_splits, n_repeats, random_state）及其当前值的字符串。",
+      "evidence": [
+        "Issue 的 Expected Results 展示了预期的输出格式：'RepeatedKFold(n_splits=5, n_repeats=10, random_state=None)'。",
+        "相关测试 1 (test_build_repr) 展示了 _build_repr 函数用于生成类似格式的 repr。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "repr",
+        "expression_hint": "repr(instance)",
+        "reason": "Issue 的核心是 __repr__ 方法的输出不正确。观察 repr() 的返回值是判断问题是否存在的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "type(repr(instance)) 和 repr(instance).startswith('Repeated')",
+        "reason": "需要确认返回值是字符串，并且以类名开头，而不是默认的对象地址表示。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "repr(instance) 返回的字符串应以类名（'RepeatedKFold' 或 'RepeatedStratifiedKFold'）开头，并包含参数名（如 n_splits=）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的 repr 字符串完全等于某个具体值，因为内存地址部分会变化。",
+        "reason": "Issue 的预期输出展示了稳定的模式：类名后跟括号内的参数列表。断言包含关键片段（类名和参数名）比断言完整字符串更稳定。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "_build_repr 函数的确切位置和签名未知。",
+    "BaseCrossValidator 或其父类中 __repr__ 的具体实现细节未知。",
+    "_RepeatedSplits 基类是否定义了 __repr__ 或是否依赖于继承。",
+    "修复后 repr 字符串中参数的顺序是否与 Issue 示例完全一致。"
+  ],
+  "raw": {
+    "issue_summary": "RepeatedKFold 和 RepeatedStratifiedKFold 的 __repr__ 方法没有返回包含参数信息的字符串，而是返回了默认的对象表示。",
+    "trigger_condition": {
+      "text": "创建 RepeatedKFold 或 RepeatedStratifiedKFold 的默认实例（不传参数或使用默认参数），然后调用 repr() 或直接打印。",
+      "evidence": [
+        "Issue 的 Steps/Code to Reproduce 展示了 `repr(RepeatedKFold())` 和 `repr(RepeatedStratifiedKFold())`。",
+        "源码片段 1 和 2 显示了类的 __init__ 方法有默认参数 n_splits=5, n_repeats=10, random_state=None。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "repr() 返回了默认的对象内存地址表示（如 '<sklearn.model_selection._split.RepeatedKFold object at 0x...>'），而不是预期的包含参数名称和值的字符串。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 的 Actual Results 展示了错误的 repr 输出。",
+        "Issue 的 Expected Results 展示了预期的正确 repr 输出格式。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "RepeatedKFold 和 RepeatedStratifiedKFold 实例的 __repr__ 方法应返回一个包含类名及其构造参数（n_splits, n_repeats, random_state）及其当前值的字符串。",
+      "evidence": [
+        "Issue 的 Expected Results 展示了预期的输出格式：'RepeatedKFold(n_splits=5, n_repeats=10, random_state=None)'。",
+        "相关测试 1 (test_build_repr) 展示了 _build_repr 函数用于生成类似格式的 repr。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "RepeatedKFold",
+        "kind": "class",
+        "source_path": "sklearn/model_selection/_split.py",
+        "reason": "Issue 报告其 __repr__ 方法行为不正确。"
+      },
+      {
+        "name": "RepeatedStratifiedKFold",
+        "kind": "class",
+        "source_path": "sklearn/model_selection/_split.py",
+        "reason": "Issue 报告其 __repr__ 方法行为不正确。"
+      },
+      {
+        "name": "__repr__",
+        "kind": "method",
+        "source_path": "sklearn/model_selection/_split.py",
+        "reason": "这是直接导致问题的函数。"
+      },
+      {
+        "name": "_build_repr",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试 1 显示 BaseCrossValidator 的 __repr__ 使用 _build_repr 来生成 repr 字符串，这可能是修复的关键。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/model_selection/_split.py",
+        "object": "RepeatedKFold",
+        "lines": "1167-1217",
+        "reason": "该类可能没有正确实现或继承 __repr__ 方法。"
+      },
+      {
+        "path": "sklearn/model_selection/_split.py",
+        "object": "RepeatedStratifiedKFold",
+        "lines": "1220-1270",
+        "reason": "该类可能没有正确实现或继承 __repr__ 方法。"
+      },
+      {
+        "path": "sklearn/model_selection/_split.py",
+        "object": "_RepeatedSplits",
+        "lines": "",
+        "reason": "RepeatedKFold 和 RepeatedStratifiedKFold 的父类，可能缺少 __repr__ 定义或定义有误。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_build_repr",
+        "test_file": "sklearn/model_selection/tests/test_split.py",
+        "why_relevant": "它直接测试了 _build_repr 函数，该函数用于生成 repr 字符串，并且展示了预期的 repr 格式。",
+        "reusable_parts": [
+          "_build_repr 的导入和使用",
+          "assert 风格：比较 repr 输出与预期字符串"
+        ],
+        "possible_gap": "它测试的是一个 Mock 类，而不是实际的 RepeatedKFold 或 RepeatedStratifiedKFold 类。"
+      },
+      {
+        "test_name": "test_repeated_cv_value_errors",
+        "test_file": "sklearn/model_selection/tests/test_split.py",
+        "why_relevant": "它导入了 RepeatedKFold 和 RepeatedStratifiedKFold 并测试了它们的构造参数验证。",
+        "reusable_parts": [
+          "RepeatedKFold 和 RepeatedStratifiedKFold 的导入",
+          "使用 assert_raises 进行异常断言"
+        ],
+        "possible_gap": "它不测试 __repr__ 方法，只测试参数验证。"
+      },
+      {
+        "test_name": "test_get_n_splits_for_repeated_kfold",
+        "test_file": "sklearn/model_selection/tests/test_split.py",
+        "why_relevant": "它构造了 RepeatedKFold 实例并调用了其方法。",
+        "reusable_parts": [
+          "RepeatedKFold 的导入和实例化",
+          "使用默认或指定参数构造对象"
+        ],
+        "possible_gap": "它测试的是 get_n_splits 方法，而不是 __repr__。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "object_state",
+        "current_pattern": "相关测试主要关注对象的方法调用（如 get_n_splits）或参数验证。",
+        "target_pattern": "在构造对象后，调用 repr() 函数或直接打印对象。",
+        "reason": "Issue 的触发条件是调用 repr() 函数，而现有测试没有覆盖这个操作。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "测试中使用默认参数或特定参数构造对象。",
+        "target_pattern": "使用默认参数（即不传参）构造对象，因为 Issue 的复现步骤就是如此。",
+        "reason": "Issue 的复现步骤是 `repr(RepeatedKFold())`，使用默认构造。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "repr",
+        "expression_hint": "repr(instance)",
+        "reason": "Issue 的核心是 __repr__ 方法的输出不正确。观察 repr() 的返回值是判断问题是否存在的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "type(repr(instance)) 和 repr(instance).startswith('Repeated')",
+        "reason": "需要确认返回值是字符串，并且以类名开头，而不是默认的对象地址表示。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "repr(instance) 返回的字符串应以类名（'RepeatedKFold' 或 'RepeatedStratifiedKFold'）开头，并包含参数名（如 n_splits=）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的 repr 字符串完全等于某个具体值，因为内存地址部分会变化。",
+        "reason": "Issue 的预期输出展示了稳定的模式：类名后跟括号内的参数列表。断言包含关键片段（类名和参数名）比断言完整字符串更稳定。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要从 sklearn.model_selection 导入 RepeatedKFold 和 RepeatedStratifiedKFold。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能在一个简单的函数中运行，不需要复杂的 fixture 或外部数据。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "_build_repr 函数的确切位置和签名未知。",
+      "BaseCrossValidator 或其父类中 __repr__ 的具体实现细节未知。",
+      "_RepeatedSplits 基类是否定义了 __repr__ 或是否依赖于继承。",
+      "修复后 repr 字符串中参数的顺序是否与 Issue 示例完全一致。"
+    ]
+  }
+}

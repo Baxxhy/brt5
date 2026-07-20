@@ -106,6 +106,14 @@ class BehaviorTargetAblationTests(unittest.TestCase):
             / "run_p0_simple_llm_selector_full.sh"
         ).read_text(encoding="utf-8")
         self.assertIn('--behavior-target {on|off}', launcher)
+        self.assertIn('--behavior-target-cache PATH', launcher)
+        self.assertIn(
+            'issue_rewrite_skipped reason=explicit_behavior_target_cache',
+            launcher,
+        )
+        self.assertIn(
+            '--behavior-target-cache "$BEHAVIOR_TARGET_CACHE"', launcher
+        )
         self.assertIn('issue_rewrite_skipped reason=w/o_behavior_target', launcher)
         self.assertIn('env -u BRT4_BEHAVIOR_CACHE_DIR', launcher)
         self.assertIn('--enable_behavior_target "$ENABLE_BEHAVIOR_TARGET"', launcher)

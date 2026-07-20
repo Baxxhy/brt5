@@ -21,6 +21,9 @@ Options:
   --behavior-target {on|off}
                        Enable BehaviorTarget (default: on). Use off for the
                        "w/o Behavior Target" ablation; IssueRewrite is skipped.
+  --behavior-target-cache PATH
+                       Reuse a frozen, versioned BehaviorTarget cache and skip
+                       IssueRewrite. If omitted, BehaviorTarget is regenerated.
   --mutation {on|off}  Enable explicit mutation planning (default: on).
   --specialized-feedback {on|off}
                        Enable setup/trigger/assertion-specific feedback (default: on).
@@ -47,6 +50,7 @@ ENABLE_SPECIALIZED_FEEDBACK=${ENABLE_SPECIALIZED_FEEDBACK:-true}
 ENABLE_ENVIRONMENT_FEEDBACK=${ENABLE_ENVIRONMENT_FEEDBACK:-true}
 ENABLE_TRIGGER_FEEDBACK=${ENABLE_TRIGGER_FEEDBACK:-true}
 ENABLE_ASSERTION_FEEDBACK=${ENABLE_ASSERTION_FEEDBACK:-true}
+BEHAVIOR_TARGET_CACHE=${BEHAVIOR_TARGET_CACHE:-}
 
 normalize_switch() {
   case "$1" in
@@ -97,6 +101,23 @@ while [[ $# -gt 0 ]]; do
           exit 2
           ;;
       esac
+      shift
+      ;;
+    --behavior-target-cache)
+      if [[ $# -lt 2 ]]; then
+        echo "--behavior-target-cache requires a directory path" >&2
+        usage >&2
+        exit 2
+      fi
+      BEHAVIOR_TARGET_CACHE=$2
+      shift 2
+      ;;
+    --behavior-target-cache=*)
+      BEHAVIOR_TARGET_CACHE=${1#*=}
+      if [[ -z "$BEHAVIOR_TARGET_CACHE" ]]; then
+        echo "--behavior-target-cache requires a non-empty directory path" >&2
+        exit 2
+      fi
       shift
       ;;
     --mutation|--specialized-feedback|--environment-feedback|--trigger-feedback|--assertion-feedback)
@@ -168,6 +189,13 @@ done
 if [[ "$OFF_COUNT" -gt 1 ]]; then
   echo "ablation switches are mutually exclusive; at most one component may be off" >&2
   exit 2
+fi
+if [[ -n "$BEHAVIOR_TARGET_CACHE" && "$ENABLE_BEHAVIOR_TARGET" == "false" ]]; then
+  echo "--behavior-target-cache cannot be combined with --behavior-target off" >&2
+  exit 2
+fi
+if [[ -n "$BEHAVIOR_TARGET_CACHE" && "$BEHAVIOR_TARGET_CACHE" != /* ]]; then
+  BEHAVIOR_TARGET_CACHE=$PROJECT_ROOT/$BEHAVIOR_TARGET_CACHE
 fi
 
 CONDA_EXE=${CONDA_EXE:-}
@@ -295,11 +323,30 @@ FORMAL_DIR=$RUN_DIR/evaluation/formal_f2p
 LOG_DIR=$RUN_DIR/logs
 mkdir -p "$ISSUE_DIR" "$GENERATION_DIR" "$FORMAL_DIR" "$LOG_DIR" "$RUN_DIR/tmp"
 
-"$PYTHON_BIN" - "$RUN_DIR/run_config.json" <<PY
+BEHAVIOR_CACHE_VALIDATION_PATH=""
+if [[ -n "$BEHAVIOR_TARGET_CACHE" ]]; then
+  BEHAVIOR_CACHE_VALIDATION_PATH=$RUN_DIR/behavior_target_cache_validation.json
+  "$PYTHON_BIN" "$PROJECT_ROOT/scripts/validate_behavior_target_cache.py" \
+    --cache-dir "$BEHAVIOR_TARGET_CACHE" \
+    --instances-path "$INSTANCES_PATH" \
+    --dataset-mode "$DATASET_MODE" \
+    --code-retrieval-path "$CODE_RETRIEVAL" \
+    --test-retrieval-path "$TEST_RETRIEVAL" \
+    --output-path "$BEHAVIOR_CACHE_VALIDATION_PATH" >/dev/null || exit $?
+fi
+
+"$PYTHON_BIN" - "$RUN_DIR/run_config.json" "$BEHAVIOR_CACHE_VALIDATION_PATH" <<PY
 import json
 import sys
 from pathlib import Path
 
+behavior_source = {
+    "mode": "regenerated" if "$ENABLE_BEHAVIOR_TARGET" == "true" else "disabled",
+    "cache_id": "",
+    "source_signature": "" if "$ENABLE_BEHAVIOR_TARGET" == "true" else "behavior_target_disabled",
+}
+if sys.argv[2]:
+    behavior_source = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 config = {
     "dataset_mode": "$DATASET_MODE",
     "behavior_target": "$ENABLE_BEHAVIOR_TARGET" == "true",
@@ -312,6 +359,8 @@ config = {
     "method_variant": "$METHOD_VARIANT",
     "run_suffix": "$RUN_VARIANT_SUFFIX",
     "patch_cov_enabled": "$COMPUTE_PATCH_COVERAGE" == "true",
+    "behavior_target_source": behavior_source,
+    "behavior_target_source_signature": behavior_source.get("source_signature", ""),
 }
 config["ablation_signature"] = ";".join(
     f"{name}={int(config[name])}"
@@ -351,6 +400,10 @@ echo "dataset_mode=$DATASET_MODE"
 echo "instances_path=$INSTANCES_PATH"
 echo "dataset_size=$DATASET_SIZE"
 echo "behavior_target_enabled=$ENABLE_BEHAVIOR_TARGET"
+echo "behavior_target_source=$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1]))["behavior_target_source"]["mode"])' "$RUN_DIR/run_config.json")"
+if [[ -n "$BEHAVIOR_TARGET_CACHE" ]]; then
+  echo "behavior_target_cache=$BEHAVIOR_TARGET_CACHE"
+fi
 echo "mutation_enabled=$ENABLE_MUTATION"
 echo "specialized_feedback_enabled=$ENABLE_SPECIALIZED_FEEDBACK"
 echo "environment_feedback_enabled=$ENABLE_ENVIRONMENT_FEEDBACK"
@@ -383,7 +436,11 @@ cd "$PACKAGE_ROOT"
 
 ISSUE_RC=1
 ISSUE_TARGETS=0
-if [ "$ENABLE_BEHAVIOR_TARGET" = "true" ]; then
+if [[ -n "$BEHAVIOR_TARGET_CACHE" ]]; then
+  ISSUE_RC=0
+  ISSUE_TARGETS=$DATASET_SIZE
+  echo "__BRT_STAGE__ issue_rewrite_skipped reason=explicit_behavior_target_cache targets=$ISSUE_TARGETS $(date --iso-8601=seconds)"
+elif [ "$ENABLE_BEHAVIOR_TARGET" = "true" ]; then
   echo "__BRT_STAGE__ issue_rewrite_start $(date --iso-8601=seconds)"
   for ISSUE_ATTEMPT in 1 2 3; do
     RESUME_ARGS=()
@@ -435,6 +492,10 @@ GENERATION_RUNTIME_ARGS=()
 if [ "$DATASET_MODE" = "tdd" ]; then
   GENERATION_RUNTIME_ARGS+=(--dataset_mode tdd --runtime_backend local_conda)
 fi
+BEHAVIOR_CACHE_ARGS=()
+if [[ -n "$BEHAVIOR_TARGET_CACHE" ]]; then
+  BEHAVIOR_CACHE_ARGS+=(--behavior-target-cache "$BEHAVIOR_TARGET_CACHE")
+fi
 GENERATION_COMMAND=(
 "$PYTHON_BIN" -m brt5.pipeline.run \
   --instances_path "$INSTANCES_PATH" \
@@ -457,9 +518,12 @@ GENERATION_COMMAND=(
   --enable_environment_feedback "$ENABLE_ENVIRONMENT_FEEDBACK" \
   --enable_trigger_feedback "$ENABLE_TRIGGER_FEEDBACK" \
   --enable_assertion_feedback "$ENABLE_ASSERTION_FEEDBACK" \
+  "${BEHAVIOR_CACHE_ARGS[@]}" \
   "${GENERATION_RUNTIME_ARGS[@]}"
 )
-if [ "$ENABLE_BEHAVIOR_TARGET" = "true" ]; then
+if [[ -n "$BEHAVIOR_TARGET_CACHE" ]]; then
+  "${GENERATION_COMMAND[@]}"
+elif [ "$ENABLE_BEHAVIOR_TARGET" = "true" ]; then
   BRT4_BEHAVIOR_CACHE_DIR="$ISSUE_DIR" "${GENERATION_COMMAND[@]}"
 else
   env -u BRT4_BEHAVIOR_CACHE_DIR "${GENERATION_COMMAND[@]}"
@@ -538,6 +602,8 @@ completion = {
     'ablation_id': run_config['ablation_id'],
     'ablation_signature': run_config['ablation_signature'],
     'ablation_config': run_config,
+    'behavior_target_source': run_config.get('behavior_target_source', {}),
+    'behavior_target_source_signature': run_config.get('behavior_target_source_signature', ''),
     'instances_path': str(instances_path),
     'issue_rewrite_returncode': issue_rc,
     'generation_returncode': generation_rc,

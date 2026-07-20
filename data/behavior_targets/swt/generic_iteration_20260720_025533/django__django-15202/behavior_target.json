@@ -1,0 +1,268 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-15202",
+  "issue_summary": "URLField.clean() 对特定无效 URL 抛出 ValueError 而非 ValidationError。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用 SimpleTestCase 或其子类作为测试基类。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要导入 django.forms.fields.URLField。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "URLFieldTest.test_urlfield_clean_invalid",
+        "test_file": "tests/forms_tests/field_tests/test_urlfield.py",
+        "why_relevant": "该测试专门验证 URLField 对一系列无效输入应抛出 ValidationError，与 Issue 场景高度相似。",
+        "reusable_parts": [
+          "测试类 URLFieldTest 和 FormFieldAssertionsMixin 的继承",
+          "URLField 对象的构造 (f = URLField())",
+          "使用 assertRaisesMessage 验证 ValidationError 的断言风格",
+          "使用 subTest 进行参数化测试的结构"
+        ],
+        "possible_gap": "该测试用例列表未包含触发 ValueError 的特定输入 '////]@N.AN'，且可能未覆盖导致底层 urlsplit 抛出 ValueError 的输入模式。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "调用 forms.URLField().clean('////]@N.AN')。",
+      "evidence": [
+        "Issue 描述中给出了调用 forms.URLField( ).clean('////]@N.AN') 导致 ValueError 的示例。",
+        "相关测试 1 展示了 URLField 对一系列无效输入调用 clean 方法并期望抛出 ValidationError。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "抛出 ValueError: Invalid IPv6 URL，而不是预期的 ValidationError。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 描述中显示了 ValueError: Invalid IPv6 URL 的异常堆栈。",
+        "源码片段 2 和 3 表明 clean 和 run_validators 方法应抛出 ValidationError。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "django.forms.fields.URLField",
+        "kind": "class",
+        "source_path": "django/forms/fields.py",
+        "reason": "Issue 直接关于 URLField 的 clean 方法行为。"
+      },
+      {
+        "name": "django.forms.fields.URLField.clean",
+        "kind": "method",
+        "source_path": "django/forms/fields.py",
+        "reason": "Issue 中触发错误的直接方法调用。"
+      },
+      {
+        "name": "django.forms.fields.Field.run_validators",
+        "kind": "method",
+        "source_path": "django/forms/fields.py",
+        "reason": "clean 方法调用 run_validators，后者负责调用验证器并收集 ValidationError。"
+      },
+      {
+        "name": "django.core.validators.URLValidator",
+        "kind": "class",
+        "source_path": "django/core/validators.py",
+        "reason": "URLField 的默认验证器，其 __call__ 方法可能抛出异常。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/core/validators.py",
+        "object": "URLValidator.__call__ 或其内部调用的验证逻辑",
+        "lines": "",
+        "reason": "Issue 堆栈跟踪指向 urllib/parse.py 的 urlsplit，这可能在 URLValidator 内部被调用。ValueError 可能源自底层验证逻辑，但未被捕获并转换为 ValidationError。"
+      },
+      {
+        "path": "django/forms/fields.py",
+        "object": "Field.run_validators",
+        "lines": "130-142",
+        "reason": "run_validators 方法应捕获验证器抛出的异常并封装为 ValidationError。如果验证器抛出 ValueError，它可能未被捕获。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中列出的无效 URL 字符串，如 'foo'、'http://example.'。",
+        "target_pattern": "可能导致 urllib.parse.urlsplit 解析失败并抛出 ValueError 的畸形 URL，如 '////]@N.AN'。",
+        "reason": "Issue 表明特定畸形输入触发了 urlsplit 内部的 ValueError，而现有无效测试用例可能未触发此路径。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "对无效 URL 输入，URLField.clean() 应抛出 ValidationError 及其相应的错误消息。",
+      "evidence": [
+        "源码片段 2 中 clean 方法的文档字符串说明 'Raise ValidationError for any errors.'。",
+        "源码片段 3 中 run_validators 方法在收集错误后 raise ValidationError(errors)。",
+        "相关测试 1 中对无效输入使用 assertRaisesMessage(ValidationError, msg)。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 f.clean(test_input) 时捕获的异常类型和消息。",
+        "reason": "Issue 的核心是异常类型错误（ValueError vs ValidationError）。观测抛出的异常类型和消息可直接判断缺陷是否触发。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "f.clean(test_input) 的返回值（如果未抛出异常）。",
+        "reason": "对于有效输入，应返回清理后的 URL 字符串。观测返回值可确保正常功能不受影响。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "对无效输入 '////]@N.AN'，调用 clean 方法应抛出 ValidationError 异常。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串相等，因为错误消息可能被本地化或调整；断言抛出的是 ValueError。",
+        "reason": "Issue 的预期行为是抛出 ValidationError。使用 raises 风格断言异常类型，而非具体消息，更稳定。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "导致 ValueError 的输入模式具体有哪些？除了 '////]@N.AN' 是否还有其他类似输入？",
+    "ValueError 是在 URLValidator 的哪个具体验证步骤中抛出的？是在正则匹配之前还是之后？",
+    "修复方案是应该在 URLValidator 内部捕获 ValueError 并转换为 ValidationError，还是在 Field.run_validators 中捕获所有异常？"
+  ],
+  "raw": {
+    "issue_summary": "URLField.clean() 对特定无效 URL 抛出 ValueError 而非 ValidationError。",
+    "trigger_condition": {
+      "text": "调用 forms.URLField().clean('////]@N.AN')。",
+      "evidence": [
+        "Issue 描述中给出了调用 forms.URLField( ).clean('////]@N.AN') 导致 ValueError 的示例。",
+        "相关测试 1 展示了 URLField 对一系列无效输入调用 clean 方法并期望抛出 ValidationError。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "抛出 ValueError: Invalid IPv6 URL，而不是预期的 ValidationError。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 描述中显示了 ValueError: Invalid IPv6 URL 的异常堆栈。",
+        "源码片段 2 和 3 表明 clean 和 run_validators 方法应抛出 ValidationError。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "对无效 URL 输入，URLField.clean() 应抛出 ValidationError 及其相应的错误消息。",
+      "evidence": [
+        "源码片段 2 中 clean 方法的文档字符串说明 'Raise ValidationError for any errors.'。",
+        "源码片段 3 中 run_validators 方法在收集错误后 raise ValidationError(errors)。",
+        "相关测试 1 中对无效输入使用 assertRaisesMessage(ValidationError, msg)。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "django.forms.fields.URLField",
+        "kind": "class",
+        "source_path": "django/forms/fields.py",
+        "reason": "Issue 直接关于 URLField 的 clean 方法行为。"
+      },
+      {
+        "name": "django.forms.fields.URLField.clean",
+        "kind": "method",
+        "source_path": "django/forms/fields.py",
+        "reason": "Issue 中触发错误的直接方法调用。"
+      },
+      {
+        "name": "django.forms.fields.Field.run_validators",
+        "kind": "method",
+        "source_path": "django/forms/fields.py",
+        "reason": "clean 方法调用 run_validators，后者负责调用验证器并收集 ValidationError。"
+      },
+      {
+        "name": "django.core.validators.URLValidator",
+        "kind": "class",
+        "source_path": "django/core/validators.py",
+        "reason": "URLField 的默认验证器，其 __call__ 方法可能抛出异常。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/core/validators.py",
+        "object": "URLValidator.__call__ 或其内部调用的验证逻辑",
+        "lines": "",
+        "reason": "Issue 堆栈跟踪指向 urllib/parse.py 的 urlsplit，这可能在 URLValidator 内部被调用。ValueError 可能源自底层验证逻辑，但未被捕获并转换为 ValidationError。"
+      },
+      {
+        "path": "django/forms/fields.py",
+        "object": "Field.run_validators",
+        "lines": "130-142",
+        "reason": "run_validators 方法应捕获验证器抛出的异常并封装为 ValidationError。如果验证器抛出 ValueError，它可能未被捕获。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "URLFieldTest.test_urlfield_clean_invalid",
+        "test_file": "tests/forms_tests/field_tests/test_urlfield.py",
+        "why_relevant": "该测试专门验证 URLField 对一系列无效输入应抛出 ValidationError，与 Issue 场景高度相似。",
+        "reusable_parts": [
+          "测试类 URLFieldTest 和 FormFieldAssertionsMixin 的继承",
+          "URLField 对象的构造 (f = URLField())",
+          "使用 assertRaisesMessage 验证 ValidationError 的断言风格",
+          "使用 subTest 进行参数化测试的结构"
+        ],
+        "possible_gap": "该测试用例列表未包含触发 ValueError 的特定输入 '////]@N.AN'，且可能未覆盖导致底层 urlsplit 抛出 ValueError 的输入模式。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中列出的无效 URL 字符串，如 'foo'、'http://example.'。",
+        "target_pattern": "可能导致 urllib.parse.urlsplit 解析失败并抛出 ValueError 的畸形 URL，如 '////]@N.AN'。",
+        "reason": "Issue 表明特定畸形输入触发了 urlsplit 内部的 ValueError，而现有无效测试用例可能未触发此路径。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 f.clean(test_input) 时捕获的异常类型和消息。",
+        "reason": "Issue 的核心是异常类型错误（ValueError vs ValidationError）。观测抛出的异常类型和消息可直接判断缺陷是否触发。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "f.clean(test_input) 的返回值（如果未抛出异常）。",
+        "reason": "对于有效输入，应返回清理后的 URL 字符串。观测返回值可确保正常功能不受影响。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "对无效输入 '////]@N.AN'，调用 clean 方法应抛出 ValidationError 异常。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串相等，因为错误消息可能被本地化或调整；断言抛出的是 ValueError。",
+        "reason": "Issue 的预期行为是抛出 ValidationError。使用 raises 风格断言异常类型，而非具体消息，更稳定。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用 SimpleTestCase 或其子类作为测试基类。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要导入 django.forms.fields.URLField。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "导致 ValueError 的输入模式具体有哪些？除了 '////]@N.AN' 是否还有其他类似输入？",
+      "ValueError 是在 URLValidator 的哪个具体验证步骤中抛出的？是在正则匹配之前还是之后？",
+      "修复方案是应该在 URLValidator 内部捕获 ValueError 并转换为 ValidationError，还是在 Field.run_validators 中捕获所有异常？"
+    ]
+  }
+}

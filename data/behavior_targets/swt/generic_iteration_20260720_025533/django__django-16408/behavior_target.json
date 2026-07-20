@@ -1,0 +1,326 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-16408",
+  "issue_summary": "使用 FilteredRelation 进行多级关联过滤并配合 select_related() 时，可能设置错误的关联对象。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要继承自 TestCase 的测试类，并设置包含 Tournament, Pool, PoolStyle 等具有外键关系的模型 fixture。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要使用 assertNumQueries 来监控查询数量，如 Issue 所示。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_reverse_fk_select_related_multiple",
+        "test_file": "tests/known_related_objects/tests.py",
+        "why_relevant": "它位于同一个测试类（ExistingRelatedInstancesTests）中，使用了 FilteredRelation 和 select_related，并检查了关联对象的身份一致性。",
+        "reusable_parts": [
+          "测试类 ExistingRelatedInstancesTests",
+          "使用 FilteredRelation 和 select_related 的模式",
+          "assertIs 用于检查对象身份",
+          "assertNumQueries 上下文"
+        ],
+        "possible_gap": "它使用的是单级 FilteredRelation（'pool' 和 'another_pool'），而 Issue 涉及多级路径（'pool__tournament__pool'）。"
+      },
+      {
+        "test_name": "test_select_related_foreign_key",
+        "test_file": "tests/filtered_relation/tests.py",
+        "why_relevant": "它直接测试了 FilteredRelation 与 select_related 的组合使用，并验证了结果。",
+        "reusable_parts": [
+          "FilteredRelation 与 select_related 的基本调用链",
+          "assertQuerySetEqual 用于验证结果",
+          "assertNumQueries 上下文"
+        ],
+        "possible_gap": "它使用的是单级外键关系（'author'），没有测试多级 FilteredRelation 路径。"
+      },
+      {
+        "test_name": "test_select_related",
+        "test_file": "tests/filtered_relation/tests.py",
+        "why_relevant": "它测试了通过 FilteredRelation 别名进行多级 select_related（'book_join__editor'），与 Issue 的多级路径概念相关。",
+        "reusable_parts": [
+          "多级 select_related 的语法",
+          "验证复杂对象关系链的断言模式"
+        ],
+        "possible_gap": "它的 FilteredRelation 路径是单级的（'book'），多级体现在 select_related 的参数上，而 Issue 的 FilteredRelation 路径本身就是多级的。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "在 QuerySet 上使用 annotate() 添加一个多级（例如 'pool__tournament__pool'）的 FilteredRelation，然后对该 FilteredRelation 别名（例如 'tournament_pool'）调用 select_related()。",
+      "evidence": [
+        "Issue 中的测试代码：PoolStyle.objects.annotate(tournament_pool=FilteredRelation('pool__tournament__pool')).select_related('tournament_pool')"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "通过 FilteredRelation 别名 select_related 获取的对象与通过原始关系链获取的关联对象不匹配。具体表现为 p[0].pool.tournament 不等于 p[0].tournament_pool.tournament，且 tournament_pool.tournament 错误地返回了一个 PoolStyle 对象。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中的断言失败信息：AssertionError: <Tournament: Tournament object (1)> != <PoolStyle: PoolStyle object (1)>"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "FilteredRelation",
+        "kind": "class",
+        "source_path": "django/db/models/query_utils.py",
+        "reason": "Issue 的核心是使用 FilteredRelation 进行注解。"
+      },
+      {
+        "name": "QuerySet.annotate",
+        "kind": "method",
+        "source_path": "django/db/models/query.py",
+        "reason": "用于添加 FilteredRelation 注解。"
+      },
+      {
+        "name": "QuerySet.select_related",
+        "kind": "method",
+        "source_path": "django/db/models/query.py",
+        "reason": "用于预取 FilteredRelation 别名关联的对象，是触发条件的一部分。"
+      },
+      {
+        "name": "TransactionTestCase.assertNumQueries",
+        "kind": "method",
+        "source_path": "django/test/testcases.py",
+        "reason": "Issue 中的测试用例使用了此断言来检查查询数量。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/models/query.py",
+        "object": "QuerySet.select_related 或相关的查询构建逻辑",
+        "lines": "",
+        "reason": "Issue 涉及 select_related 与 FilteredRelation 的交互，且错误表现为关联对象设置错误，这很可能发生在查询构建或结果处理阶段。"
+      },
+      {
+        "path": "django/db/models/query_utils.py",
+        "object": "FilteredRelation",
+        "lines": "",
+        "reason": "FilteredRelation 负责定义连接过滤条件，其多级路径（'pool__tournament__pool'）的处理可能与 select_related 的字段解析产生冲突。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用单级关系名作为 FilteredRelation 参数，例如 'pool', 'author', 'book'。",
+        "target_pattern": "使用多级关系路径作为 FilteredRelation 参数，例如 'pool__tournament__pool'。",
+        "reason": "Issue 明确指出问题发生在“Multi-level FilteredRelation”场景下。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "在 annotate 中使用 FilteredRelation 后，select_related 的参数通常是该 FilteredRelation 的别名。",
+        "target_pattern": "在 annotate 中使用多级路径的 FilteredRelation 后，select_related 的参数是该别名，并需要验证通过该别名访问更深层属性（如 .tournament）的结果。",
+        "reason": "Issue 的测试验证了 p[0].tournament_pool.tournament，这需要访问 FilteredRelation 别名关联对象的属性。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "通过 FilteredRelation 别名 select_related 获取的关联对象应与通过原始关系链导航得到的对应对象一致。",
+      "evidence": [
+        "Issue 中测试的断言目标：self.assertEqual(p[0].pool.tournament, p[0].tournament_pool.tournament)"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "p[0].tournament_pool 的类型和 repr，以及 p[0].tournament_pool.tournament 的值。",
+        "reason": "Issue 显示 tournament_pool.tournament 错误地返回了一个 PoolStyle 对象，观察这些值可以直接发现错误。"
+      },
+      {
+        "kind": "sql",
+        "expression_hint": "生成的 SQL 查询语句，特别是 JOIN 子句和 SELECT 子句。",
+        "reason": "关联对象设置错误很可能源于错误的 SQL JOIN 逻辑或字段映射。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "查询执行后，ORM 缓存中为 p[0].tournament_pool 和 p[0].pool.tournament 设置的对象。",
+        "reason": "问题可能在于对象实例的缓存或关系解析被错误地覆盖或混淆。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "通过 FilteredRelation 别名 select_related 获取的关联对象，与通过原始模型关系链导航得到的对应对象，应该是同一个对象（或相等）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的 SQL 字符串或无关的对象属性。",
+        "reason": "Issue 的核心是对象一致性错误，直接比较相关对象的值或身份是最稳定的断言。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "导致错误的具体 SQL 生成或 ORM 内部处理步骤是什么？",
+    "除了示例中的三模型链，其他多级路径是否也会触发此问题？",
+    "FilteredRelation 的 condition 参数是否会影响此缺陷？"
+  ],
+  "raw": {
+    "issue_summary": "使用 FilteredRelation 进行多级关联过滤并配合 select_related() 时，可能设置错误的关联对象。",
+    "trigger_condition": {
+      "text": "在 QuerySet 上使用 annotate() 添加一个多级（例如 'pool__tournament__pool'）的 FilteredRelation，然后对该 FilteredRelation 别名（例如 'tournament_pool'）调用 select_related()。",
+      "evidence": [
+        "Issue 中的测试代码：PoolStyle.objects.annotate(tournament_pool=FilteredRelation('pool__tournament__pool')).select_related('tournament_pool')"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "通过 FilteredRelation 别名 select_related 获取的对象与通过原始关系链获取的关联对象不匹配。具体表现为 p[0].pool.tournament 不等于 p[0].tournament_pool.tournament，且 tournament_pool.tournament 错误地返回了一个 PoolStyle 对象。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中的断言失败信息：AssertionError: <Tournament: Tournament object (1)> != <PoolStyle: PoolStyle object (1)>"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "通过 FilteredRelation 别名 select_related 获取的关联对象应与通过原始关系链导航得到的对应对象一致。",
+      "evidence": [
+        "Issue 中测试的断言目标：self.assertEqual(p[0].pool.tournament, p[0].tournament_pool.tournament)"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "FilteredRelation",
+        "kind": "class",
+        "source_path": "django/db/models/query_utils.py",
+        "reason": "Issue 的核心是使用 FilteredRelation 进行注解。"
+      },
+      {
+        "name": "QuerySet.annotate",
+        "kind": "method",
+        "source_path": "django/db/models/query.py",
+        "reason": "用于添加 FilteredRelation 注解。"
+      },
+      {
+        "name": "QuerySet.select_related",
+        "kind": "method",
+        "source_path": "django/db/models/query.py",
+        "reason": "用于预取 FilteredRelation 别名关联的对象，是触发条件的一部分。"
+      },
+      {
+        "name": "TransactionTestCase.assertNumQueries",
+        "kind": "method",
+        "source_path": "django/test/testcases.py",
+        "reason": "Issue 中的测试用例使用了此断言来检查查询数量。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/models/query.py",
+        "object": "QuerySet.select_related 或相关的查询构建逻辑",
+        "lines": "",
+        "reason": "Issue 涉及 select_related 与 FilteredRelation 的交互，且错误表现为关联对象设置错误，这很可能发生在查询构建或结果处理阶段。"
+      },
+      {
+        "path": "django/db/models/query_utils.py",
+        "object": "FilteredRelation",
+        "lines": "",
+        "reason": "FilteredRelation 负责定义连接过滤条件，其多级路径（'pool__tournament__pool'）的处理可能与 select_related 的字段解析产生冲突。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_reverse_fk_select_related_multiple",
+        "test_file": "tests/known_related_objects/tests.py",
+        "why_relevant": "它位于同一个测试类（ExistingRelatedInstancesTests）中，使用了 FilteredRelation 和 select_related，并检查了关联对象的身份一致性。",
+        "reusable_parts": [
+          "测试类 ExistingRelatedInstancesTests",
+          "使用 FilteredRelation 和 select_related 的模式",
+          "assertIs 用于检查对象身份",
+          "assertNumQueries 上下文"
+        ],
+        "possible_gap": "它使用的是单级 FilteredRelation（'pool' 和 'another_pool'），而 Issue 涉及多级路径（'pool__tournament__pool'）。"
+      },
+      {
+        "test_name": "test_select_related_foreign_key",
+        "test_file": "tests/filtered_relation/tests.py",
+        "why_relevant": "它直接测试了 FilteredRelation 与 select_related 的组合使用，并验证了结果。",
+        "reusable_parts": [
+          "FilteredRelation 与 select_related 的基本调用链",
+          "assertQuerySetEqual 用于验证结果",
+          "assertNumQueries 上下文"
+        ],
+        "possible_gap": "它使用的是单级外键关系（'author'），没有测试多级 FilteredRelation 路径。"
+      },
+      {
+        "test_name": "test_select_related",
+        "test_file": "tests/filtered_relation/tests.py",
+        "why_relevant": "它测试了通过 FilteredRelation 别名进行多级 select_related（'book_join__editor'），与 Issue 的多级路径概念相关。",
+        "reusable_parts": [
+          "多级 select_related 的语法",
+          "验证复杂对象关系链的断言模式"
+        ],
+        "possible_gap": "它的 FilteredRelation 路径是单级的（'book'），多级体现在 select_related 的参数上，而 Issue 的 FilteredRelation 路径本身就是多级的。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用单级关系名作为 FilteredRelation 参数，例如 'pool', 'author', 'book'。",
+        "target_pattern": "使用多级关系路径作为 FilteredRelation 参数，例如 'pool__tournament__pool'。",
+        "reason": "Issue 明确指出问题发生在“Multi-level FilteredRelation”场景下。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "在 annotate 中使用 FilteredRelation 后，select_related 的参数通常是该 FilteredRelation 的别名。",
+        "target_pattern": "在 annotate 中使用多级路径的 FilteredRelation 后，select_related 的参数是该别名，并需要验证通过该别名访问更深层属性（如 .tournament）的结果。",
+        "reason": "Issue 的测试验证了 p[0].tournament_pool.tournament，这需要访问 FilteredRelation 别名关联对象的属性。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "p[0].tournament_pool 的类型和 repr，以及 p[0].tournament_pool.tournament 的值。",
+        "reason": "Issue 显示 tournament_pool.tournament 错误地返回了一个 PoolStyle 对象，观察这些值可以直接发现错误。"
+      },
+      {
+        "kind": "sql",
+        "expression_hint": "生成的 SQL 查询语句，特别是 JOIN 子句和 SELECT 子句。",
+        "reason": "关联对象设置错误很可能源于错误的 SQL JOIN 逻辑或字段映射。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "查询执行后，ORM 缓存中为 p[0].tournament_pool 和 p[0].pool.tournament 设置的对象。",
+        "reason": "问题可能在于对象实例的缓存或关系解析被错误地覆盖或混淆。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "通过 FilteredRelation 别名 select_related 获取的关联对象，与通过原始模型关系链导航得到的对应对象，应该是同一个对象（或相等）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的 SQL 字符串或无关的对象属性。",
+        "reason": "Issue 的核心是对象一致性错误，直接比较相关对象的值或身份是最稳定的断言。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要继承自 TestCase 的测试类，并设置包含 Tournament, Pool, PoolStyle 等具有外键关系的模型 fixture。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要使用 assertNumQueries 来监控查询数量，如 Issue 所示。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "导致错误的具体 SQL 生成或 ORM 内部处理步骤是什么？",
+      "除了示例中的三模型链，其他多级路径是否也会触发此问题？",
+      "FilteredRelation 的 condition 参数是否会影响此缺陷？"
+    ]
+  }
+}

@@ -1,0 +1,344 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "matplotlib__matplotlib-23299",
+  "issue_summary": "在 rc_context 中创建的第一个 figure 会导致调用 get_backend() 时清除 Gcf.figs 中的所有 figures。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "可能需要设置特定的后端（如 QtAgg），因为 Issue 发生在该后端下。",
+        "source": "issue",
+        "confidence": "medium"
+      },
+      {
+        "hint": "使用 pytest.mark.backend 装饰器来指定后端。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_fig_close",
+        "test_file": "lib/matplotlib/tests/test_backend_qt.py",
+        "why_relevant": "测试涉及 Gcf.figs 的状态变化和 figure 管理器的清理。",
+        "reusable_parts": [
+          "导入 Gcf 和 plt",
+          "使用 plt.figure() 创建 figure",
+          "比较 Gcf.figs 前后状态"
+        ],
+        "possible_gap": "该测试模拟通过窗口关闭 figure，不涉及 rc_context 或 get_backend。"
+      },
+      {
+        "test_name": "test_gcf",
+        "test_file": "lib/matplotlib/tests/test_pickle.py",
+        "why_relevant": "测试直接检查 Gcf.figs 的状态（是否为空）。",
+        "reusable_parts": [
+          "导入 plt 和 _pylab_helpers",
+          "断言 Gcf.figs 的状态"
+        ],
+        "possible_gap": "测试焦点是 pickle，不涉及 rc_context 或 get_backend 的交互。"
+      },
+      {
+        "test_name": "test_rcparams_reset_after_fail",
+        "test_file": "lib/matplotlib/tests/test_rcparams.py",
+        "why_relevant": "测试使用 rc_context 并检查 rcParams 状态，涉及上下文管理器。",
+        "reusable_parts": [
+          "使用 mpl.rc_context",
+          "在上下文中执行操作",
+          "断言上下文后的状态"
+        ],
+        "possible_gap": "测试焦点是 rcParams 异常恢复，不涉及 figure 创建或 Gcf.figs。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "在 rc_context 上下文中创建第一个 figure（或第一个 figure 在 rc_context 中创建），然后调用 get_backend()。",
+      "evidence": [
+        "Issue 中的代码：'with rc_context(): fig2 = plt.figure()' 后调用 'get_backend()'。",
+        "Issue 描述：'calling matplotlib.get_backend() removes all figures from Gcf if the *first* figure in Gcf.figs was created in an rc_context.'"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 get_backend() 后，Gcf.figs 变为空 OrderedDict，导致之前创建的 figure 丢失。",
+      "symptom_type": "state_not_updated",
+      "evidence": [
+        "Issue 中的断言错误：'before' 显示有 figure 管理器，'after' 显示为空 OrderedDict。",
+        "Issue 描述：'The figure should not be missing from Gcf.'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "matplotlib.get_backend",
+        "kind": "function",
+        "source_path": "lib/matplotlib/__init__.py",
+        "reason": "Issue 中触发 bug 的直接调用。"
+      },
+      {
+        "name": "matplotlib.rc_context",
+        "kind": "function",
+        "source_path": "lib/matplotlib/__init__.py",
+        "reason": "创建 figure 的上下文，是触发条件的一部分。"
+      },
+      {
+        "name": "matplotlib.pyplot.figure",
+        "kind": "function",
+        "source_path": "lib/matplotlib/pyplot.py",
+        "reason": "用于在 rc_context 中创建 figure。"
+      },
+      {
+        "name": "matplotlib._pylab_helpers.Gcf",
+        "kind": "class",
+        "source_path": "lib/matplotlib/_pylab_helpers.py",
+        "reason": "存储 figure 管理器的单例，其 figs 属性被错误清空。"
+      },
+      {
+        "name": "matplotlib._pylab_helpers.Gcf.destroy_fig",
+        "kind": "method",
+        "source_path": "lib/matplotlib/_pylab_helpers.py",
+        "reason": "Issue 提到 figure 丢失后导致 plt.close(fig2) 失败，因为 destroy_fig 找不到它。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "lib/matplotlib/__init__.py",
+        "object": "get_backend",
+        "lines": "1170-1178",
+        "reason": "直接调用的函数，可能内部有副作用或触发了某些状态重置。"
+      },
+      {
+        "path": "lib/matplotlib/_pylab_helpers.py",
+        "object": "Gcf",
+        "lines": "10-141",
+        "reason": "存储 figures 的类，其 figs 属性被清空，可能在其他地方被修改。"
+      },
+      {
+        "path": "lib/matplotlib/pyplot.py",
+        "object": "figure",
+        "lines": "697-834",
+        "reason": "在 rc_context 中创建 figure 可能设置了某些特殊状态，与 get_backend 交互时出现问题。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "在正常上下文中创建 figure（无 rc_context）。",
+        "target_pattern": "在 rc_context 上下文中创建第一个 figure。",
+        "reason": "Issue 表明 rc_context 是触发条件的关键。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "创建 figure 后可能直接关闭或进行其他操作。",
+        "target_pattern": "创建 figure 后调用 get_backend()。",
+        "reason": "get_backend() 调用触发了错误的清理。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "调用 get_backend() 不应改变 Gcf.figs 的内容，之前创建的 figure 应保持在其中。",
+      "evidence": [
+        "Issue 中的断言期望：'assert before == after'，期望前后状态一致。",
+        "Issue 描述：'The figure should not be missing from Gcf.'"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "state",
+        "expression_hint": "plt._pylab_helpers.Gcf.figs 在调用 get_backend() 前后的内容（如 repr 或 len）。",
+        "reason": "Issue 的核心是 Gcf.figs 状态被错误清空。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "plt._pylab_helpers.Gcf 的 id（对象身份）在调用前后是否变化。",
+        "reason": "Issue 代码检查了 id，确认是同一个对象但内容变了。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "调用 get_backend() 后，Gcf.figs 应包含之前创建的 figure 管理器。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言完整的 repr 字符串相等，因为管理器对象表示可能变化。",
+        "reason": "Issue 期望状态保持不变，比较前后状态（如长度或键存在）更稳定。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "get_backend() 内部如何导致 Gcf.figs 被清空的具体机制。",
+    "是否只有特定后端（如 QtAgg）才会触发此 bug。",
+    "rc_context 中创建 figure 与正常创建 figure 在内部状态上有何不同。"
+  ],
+  "raw": {
+    "issue_summary": "在 rc_context 中创建的第一个 figure 会导致调用 get_backend() 时清除 Gcf.figs 中的所有 figures。",
+    "trigger_condition": {
+      "text": "在 rc_context 上下文中创建第一个 figure（或第一个 figure 在 rc_context 中创建），然后调用 get_backend()。",
+      "evidence": [
+        "Issue 中的代码：'with rc_context(): fig2 = plt.figure()' 后调用 'get_backend()'。",
+        "Issue 描述：'calling matplotlib.get_backend() removes all figures from Gcf if the *first* figure in Gcf.figs was created in an rc_context.'"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 get_backend() 后，Gcf.figs 变为空 OrderedDict，导致之前创建的 figure 丢失。",
+      "symptom_type": "state_not_updated",
+      "evidence": [
+        "Issue 中的断言错误：'before' 显示有 figure 管理器，'after' 显示为空 OrderedDict。",
+        "Issue 描述：'The figure should not be missing from Gcf.'"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "调用 get_backend() 不应改变 Gcf.figs 的内容，之前创建的 figure 应保持在其中。",
+      "evidence": [
+        "Issue 中的断言期望：'assert before == after'，期望前后状态一致。",
+        "Issue 描述：'The figure should not be missing from Gcf.'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "matplotlib.get_backend",
+        "kind": "function",
+        "source_path": "lib/matplotlib/__init__.py",
+        "reason": "Issue 中触发 bug 的直接调用。"
+      },
+      {
+        "name": "matplotlib.rc_context",
+        "kind": "function",
+        "source_path": "lib/matplotlib/__init__.py",
+        "reason": "创建 figure 的上下文，是触发条件的一部分。"
+      },
+      {
+        "name": "matplotlib.pyplot.figure",
+        "kind": "function",
+        "source_path": "lib/matplotlib/pyplot.py",
+        "reason": "用于在 rc_context 中创建 figure。"
+      },
+      {
+        "name": "matplotlib._pylab_helpers.Gcf",
+        "kind": "class",
+        "source_path": "lib/matplotlib/_pylab_helpers.py",
+        "reason": "存储 figure 管理器的单例，其 figs 属性被错误清空。"
+      },
+      {
+        "name": "matplotlib._pylab_helpers.Gcf.destroy_fig",
+        "kind": "method",
+        "source_path": "lib/matplotlib/_pylab_helpers.py",
+        "reason": "Issue 提到 figure 丢失后导致 plt.close(fig2) 失败，因为 destroy_fig 找不到它。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "lib/matplotlib/__init__.py",
+        "object": "get_backend",
+        "lines": "1170-1178",
+        "reason": "直接调用的函数，可能内部有副作用或触发了某些状态重置。"
+      },
+      {
+        "path": "lib/matplotlib/_pylab_helpers.py",
+        "object": "Gcf",
+        "lines": "10-141",
+        "reason": "存储 figures 的类，其 figs 属性被清空，可能在其他地方被修改。"
+      },
+      {
+        "path": "lib/matplotlib/pyplot.py",
+        "object": "figure",
+        "lines": "697-834",
+        "reason": "在 rc_context 中创建 figure 可能设置了某些特殊状态，与 get_backend 交互时出现问题。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_fig_close",
+        "test_file": "lib/matplotlib/tests/test_backend_qt.py",
+        "why_relevant": "测试涉及 Gcf.figs 的状态变化和 figure 管理器的清理。",
+        "reusable_parts": [
+          "导入 Gcf 和 plt",
+          "使用 plt.figure() 创建 figure",
+          "比较 Gcf.figs 前后状态"
+        ],
+        "possible_gap": "该测试模拟通过窗口关闭 figure，不涉及 rc_context 或 get_backend。"
+      },
+      {
+        "test_name": "test_gcf",
+        "test_file": "lib/matplotlib/tests/test_pickle.py",
+        "why_relevant": "测试直接检查 Gcf.figs 的状态（是否为空）。",
+        "reusable_parts": [
+          "导入 plt 和 _pylab_helpers",
+          "断言 Gcf.figs 的状态"
+        ],
+        "possible_gap": "测试焦点是 pickle，不涉及 rc_context 或 get_backend 的交互。"
+      },
+      {
+        "test_name": "test_rcparams_reset_after_fail",
+        "test_file": "lib/matplotlib/tests/test_rcparams.py",
+        "why_relevant": "测试使用 rc_context 并检查 rcParams 状态，涉及上下文管理器。",
+        "reusable_parts": [
+          "使用 mpl.rc_context",
+          "在上下文中执行操作",
+          "断言上下文后的状态"
+        ],
+        "possible_gap": "测试焦点是 rcParams 异常恢复，不涉及 figure 创建或 Gcf.figs。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "在正常上下文中创建 figure（无 rc_context）。",
+        "target_pattern": "在 rc_context 上下文中创建第一个 figure。",
+        "reason": "Issue 表明 rc_context 是触发条件的关键。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "创建 figure 后可能直接关闭或进行其他操作。",
+        "target_pattern": "创建 figure 后调用 get_backend()。",
+        "reason": "get_backend() 调用触发了错误的清理。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "state",
+        "expression_hint": "plt._pylab_helpers.Gcf.figs 在调用 get_backend() 前后的内容（如 repr 或 len）。",
+        "reason": "Issue 的核心是 Gcf.figs 状态被错误清空。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "plt._pylab_helpers.Gcf 的 id（对象身份）在调用前后是否变化。",
+        "reason": "Issue 代码检查了 id，确认是同一个对象但内容变了。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "调用 get_backend() 后，Gcf.figs 应包含之前创建的 figure 管理器。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言完整的 repr 字符串相等，因为管理器对象表示可能变化。",
+        "reason": "Issue 期望状态保持不变，比较前后状态（如长度或键存在）更稳定。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "可能需要设置特定的后端（如 QtAgg），因为 Issue 发生在该后端下。",
+        "source": "issue",
+        "confidence": "medium"
+      },
+      {
+        "hint": "使用 pytest.mark.backend 装饰器来指定后端。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "get_backend() 内部如何导致 Gcf.figs 被清空的具体机制。",
+      "是否只有特定后端（如 QtAgg）才会触发此 bug。",
+      "rc_context 中创建 figure 与正常创建 figure 在内部状态上有何不同。"
+    ]
+  }
+}

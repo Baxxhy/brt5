@@ -1,0 +1,274 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "pylint-dev__pylint-7114",
+  "issue_summary": "当模块目录中包含同名文件时，pylint 错误地尝试加载 __init__.py 文件并导致解析失败。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用 `tmpdir` fixture 创建临时目录和文件结构，模拟 Issue 中的场景。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 `subprocess` 模块调用 pylint 命令行，并捕获其输出。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestRunTC.test_can_list_directories_without_dunder_init",
+        "test_file": "tests/test_self.py",
+        "why_relevant": "该测试验证了 pylint 可以在没有 `__init__.py` 文件的目录上运行成功，与 Issue 的核心问题（对 `__init__.py` 的错误需求）直接相关。",
+        "reusable_parts": [
+          "使用 `tmpdir` fixture 创建临时目录结构",
+          "使用 `subprocess.check_output` 调用 pylint 命令行",
+          "测试目录下包含 `.py` 文件但不包含 `__init__.py` 的场景"
+        ],
+        "possible_gap": "该测试的目录名（'test_directory'）与其中的 Python 文件（'spam.py'）不同名，而 Issue 的触发条件是目录名与其中的 `.py` 文件名相同。"
+      },
+      {
+        "test_name": "TestExpandModules.test_expand_modules",
+        "test_file": "tests/lint/unittest_expand_modules.py",
+        "why_relevant": "该测试直接调用了 `expand_modules` 函数，该函数负责将输入的文件或模块路径扩展为待检查的模块列表，是模块发现逻辑的核心。",
+        "reusable_parts": [
+          "使用 `CheckerTestCase` 和 `set_config` 装饰器",
+          "调用 `expand_modules` 函数并检查其输出",
+          "对模块列表进行排序和断言"
+        ],
+        "possible_gap": "该测试是单元测试，直接调用内部函数，而 Issue 是通过命令行触发的。测试用例的参数是现有文件或目录路径，没有模拟 Issue 中特定的目录结构（包含同名文件）。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "运行 `pylint a` 命令，其中 `a` 是一个目录，且该目录下包含一个名为 `a.py` 的文件。",
+      "evidence": [
+        "Issue 中 Steps to reproduce 部分描述了文件结构：目录 `a/` 下包含 `a.py` 和 `b.py`，并运行 `pylint a`。",
+        "Issue 中 Current behavior 部分说明：'Running `pylint a` if `a/a.py` is present fails while searching for an `__init__.py` file.'"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "pylint 报告解析错误：无法加载文件 `a/__init__.py`，因为该文件不存在。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中错误输出显示：'F0010: error while code parsing: Unable to load file a/__init__.py: [Errno 2] No such file or directory: 'a/__init__.py''"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "expand_modules",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试代码中多次出现此函数，用于扩展模块列表，可能与模块发现和路径处理逻辑相关。"
+      },
+      {
+        "name": "subprocess.check_output",
+        "kind": "function",
+        "source_path": "",
+        "reason": "多个相关测试使用此函数来调用 pylint 命令行，与 Issue 中触发 bug 的方式一致。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "",
+        "object": "",
+        "lines": "",
+        "reason": "iCoRe 未提供相关源代码片段，无法推断具体位置。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中，目录名为 'test_directory'，文件名为 'spam.py'。",
+        "target_pattern": "目录名与其中的一个 `.py` 文件名相同，例如目录 'a' 包含文件 'a.py'。",
+        "reason": "Issue 明确指出，当目录下存在与目录同名的 `.py` 文件时，pylint 会错误地寻找 `__init__.py`。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "相关测试 1 中，pylint 调用时禁用了 'missing-docstring' 和 'missing-final-newline'。",
+        "target_pattern": "pylint 调用时不使用额外的禁用参数，或者使用 Issue 中提到的 `-E` 参数。",
+        "reason": "Issue 的复现步骤和附加信息中使用了不带额外禁用参数的 `pylint a` 和带 `-E` 参数的 `pylint -E r a`。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "即使目录下存在与目录同名的 `.py` 文件，运行 `pylint a` 也应该成功，而不需要 `__init__.py` 文件。",
+      "evidence": [
+        "Issue 中 Expected behavior 部分说明：'Running `pylint a` if `a/a.py` is present should succeed.'",
+        "Issue 中 Steps to reproduce 部分提到，重命名 `a.py` 或创建 `__init__.py` 可以使命令成功，但后者被认为是不必要的。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "subprocess 调用 pylint 时的 stderr 输出，特别是是否包含 'F0010' 错误或 'No such file or directory: ... __init__.py' 信息。",
+        "reason": "Issue 中观察到的错误症状是 stderr 中的解析错误信息。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "`expand_modules` 函数返回的 `modules` 列表和 `errors` 列表。",
+        "reason": "该函数负责扩展模块，其输出可能反映了模块发现逻辑在处理同名文件时的错误。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证当对包含同名文件的目录运行 pylint 时，不会产生关于缺少 `__init__.py` 的解析错误。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "断言完整的 stderr 字符串等于某个特定值，因为输出可能包含版本信息或其他非确定内容。",
+        "reason": "Issue 的核心是错误信息（F0010）不应该出现。断言错误信息不存在比断言完整输出更稳定。"
+      },
+      {
+        "assertion_goal": "验证 `expand_modules` 函数在处理包含同名文件的目录时，返回的 `errors` 列表为空。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言 `modules` 列表的精确顺序或完整内容，除非与 Issue 直接相关。",
+        "reason": "`errors` 列表为空表明模块扩展过程没有遇到问题，这与修复后的预期行为一致。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "导致错误的具体代码位置和逻辑（因为未提供相关源代码片段）。",
+    "`expand_modules` 函数在处理同名文件时的内部行为细节。",
+    "除了 `expand_modules`，是否还有其他函数或模块（如模块解析、导入机制）涉及此缺陷。"
+  ],
+  "raw": {
+    "issue_summary": "当模块目录中包含同名文件时，pylint 错误地尝试加载 __init__.py 文件并导致解析失败。",
+    "trigger_condition": {
+      "text": "运行 `pylint a` 命令，其中 `a` 是一个目录，且该目录下包含一个名为 `a.py` 的文件。",
+      "evidence": [
+        "Issue 中 Steps to reproduce 部分描述了文件结构：目录 `a/` 下包含 `a.py` 和 `b.py`，并运行 `pylint a`。",
+        "Issue 中 Current behavior 部分说明：'Running `pylint a` if `a/a.py` is present fails while searching for an `__init__.py` file.'"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "pylint 报告解析错误：无法加载文件 `a/__init__.py`，因为该文件不存在。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中错误输出显示：'F0010: error while code parsing: Unable to load file a/__init__.py: [Errno 2] No such file or directory: 'a/__init__.py''"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "即使目录下存在与目录同名的 `.py` 文件，运行 `pylint a` 也应该成功，而不需要 `__init__.py` 文件。",
+      "evidence": [
+        "Issue 中 Expected behavior 部分说明：'Running `pylint a` if `a/a.py` is present should succeed.'",
+        "Issue 中 Steps to reproduce 部分提到，重命名 `a.py` 或创建 `__init__.py` 可以使命令成功，但后者被认为是不必要的。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "expand_modules",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试代码中多次出现此函数，用于扩展模块列表，可能与模块发现和路径处理逻辑相关。"
+      },
+      {
+        "name": "subprocess.check_output",
+        "kind": "function",
+        "source_path": "",
+        "reason": "多个相关测试使用此函数来调用 pylint 命令行，与 Issue 中触发 bug 的方式一致。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "",
+        "object": "",
+        "lines": "",
+        "reason": "iCoRe 未提供相关源代码片段，无法推断具体位置。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestRunTC.test_can_list_directories_without_dunder_init",
+        "test_file": "tests/test_self.py",
+        "why_relevant": "该测试验证了 pylint 可以在没有 `__init__.py` 文件的目录上运行成功，与 Issue 的核心问题（对 `__init__.py` 的错误需求）直接相关。",
+        "reusable_parts": [
+          "使用 `tmpdir` fixture 创建临时目录结构",
+          "使用 `subprocess.check_output` 调用 pylint 命令行",
+          "测试目录下包含 `.py` 文件但不包含 `__init__.py` 的场景"
+        ],
+        "possible_gap": "该测试的目录名（'test_directory'）与其中的 Python 文件（'spam.py'）不同名，而 Issue 的触发条件是目录名与其中的 `.py` 文件名相同。"
+      },
+      {
+        "test_name": "TestExpandModules.test_expand_modules",
+        "test_file": "tests/lint/unittest_expand_modules.py",
+        "why_relevant": "该测试直接调用了 `expand_modules` 函数，该函数负责将输入的文件或模块路径扩展为待检查的模块列表，是模块发现逻辑的核心。",
+        "reusable_parts": [
+          "使用 `CheckerTestCase` 和 `set_config` 装饰器",
+          "调用 `expand_modules` 函数并检查其输出",
+          "对模块列表进行排序和断言"
+        ],
+        "possible_gap": "该测试是单元测试，直接调用内部函数，而 Issue 是通过命令行触发的。测试用例的参数是现有文件或目录路径，没有模拟 Issue 中特定的目录结构（包含同名文件）。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中，目录名为 'test_directory'，文件名为 'spam.py'。",
+        "target_pattern": "目录名与其中的一个 `.py` 文件名相同，例如目录 'a' 包含文件 'a.py'。",
+        "reason": "Issue 明确指出，当目录下存在与目录同名的 `.py` 文件时，pylint 会错误地寻找 `__init__.py`。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "相关测试 1 中，pylint 调用时禁用了 'missing-docstring' 和 'missing-final-newline'。",
+        "target_pattern": "pylint 调用时不使用额外的禁用参数，或者使用 Issue 中提到的 `-E` 参数。",
+        "reason": "Issue 的复现步骤和附加信息中使用了不带额外禁用参数的 `pylint a` 和带 `-E` 参数的 `pylint -E r a`。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "subprocess 调用 pylint 时的 stderr 输出，特别是是否包含 'F0010' 错误或 'No such file or directory: ... __init__.py' 信息。",
+        "reason": "Issue 中观察到的错误症状是 stderr 中的解析错误信息。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "`expand_modules` 函数返回的 `modules` 列表和 `errors` 列表。",
+        "reason": "该函数负责扩展模块，其输出可能反映了模块发现逻辑在处理同名文件时的错误。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证当对包含同名文件的目录运行 pylint 时，不会产生关于缺少 `__init__.py` 的解析错误。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "断言完整的 stderr 字符串等于某个特定值，因为输出可能包含版本信息或其他非确定内容。",
+        "reason": "Issue 的核心是错误信息（F0010）不应该出现。断言错误信息不存在比断言完整输出更稳定。"
+      },
+      {
+        "assertion_goal": "验证 `expand_modules` 函数在处理包含同名文件的目录时，返回的 `errors` 列表为空。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言 `modules` 列表的精确顺序或完整内容，除非与 Issue 直接相关。",
+        "reason": "`errors` 列表为空表明模块扩展过程没有遇到问题，这与修复后的预期行为一致。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用 `tmpdir` fixture 创建临时目录和文件结构，模拟 Issue 中的场景。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 `subprocess` 模块调用 pylint 命令行，并捕获其输出。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "导致错误的具体代码位置和逻辑（因为未提供相关源代码片段）。",
+      "`expand_modules` 函数在处理同名文件时的内部行为细节。",
+      "除了 `expand_modules`，是否还有其他函数或模块（如模块解析、导入机制）涉及此缺陷。"
+    ]
+  }
+}

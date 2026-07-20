@@ -1,0 +1,316 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-13220",
+  "issue_summary": "ValidationError 实例在消息相同时不相等，缺少 __eq__ 方法。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用 unittest.TestCase 或 django.test.TestCase。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要从 django.core.exceptions 导入 ValidationError。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestValidationError.test_messages_concatenates_error_dict_values",
+        "test_file": "tests/test_exceptions/test_validation_error.py",
+        "why_relevant": "该测试直接构造 ValidationError 实例并检查其 messages 属性，与 Issue 中比较消息的核心相关。",
+        "reusable_parts": [
+          "ValidationError 的导入",
+          "使用 message_dict 和列表构造 ValidationError",
+          "使用 self.assertEqual 断言"
+        ],
+        "possible_gap": "该测试只检查 messages 属性，不进行 ValidationError 实例间的相等性比较。"
+      },
+      {
+        "test_name": "PickableValidationErrorTestCase.test_validationerror_is_picklable",
+        "test_file": "tests/validation/test_picklable.py",
+        "why_relevant": "该测试广泛构造了多种形式的 ValidationError 实例（单消息、列表、嵌套、字典），展示了其不同初始化模式。",
+        "reusable_parts": [
+          "ValidationError 的各种构造方式",
+          "使用 self.assertEqual 比较属性"
+        ],
+        "possible_gap": "该测试关注 pickling 和 unpickling 后的属性相等性，而非两个独立 ValidationError 实例的 __eq__ 比较。"
+      },
+      {
+        "test_name": "ValidationMessagesTest._test_validation_messages",
+        "test_file": "tests/validation/test_error_messages.py",
+        "why_relevant": "该测试捕获 ValidationError 并比较其 messages 属性与预期值，展示了在验证上下文中使用 ValidationError 的模式。",
+        "reusable_parts": [
+          "使用 assertRaises(ValidationError) 捕获异常",
+          "通过 cm.exception 访问异常实例",
+          "比较 exception.messages"
+        ],
+        "possible_gap": "该测试是辅助方法，不直接进行 ValidationError 实例间的相等性比较。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "创建两个具有相同消息的 ValidationError 实例并进行相等性比较。",
+      "evidence": [
+        "Issue 描述：'ValidationErrors that have identical messages don't equal each other'",
+        "源码片段 1 显示 ValidationError 类没有 __eq__ 方法。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "两个消息相同的 ValidationError 实例比较结果为不相等。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 描述：'ValidationErrors that have identical messages don't equal each other'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "django.core.exceptions.ValidationError",
+        "kind": "class",
+        "source_path": "django/core/exceptions.py",
+        "reason": "Issue 直接针对 ValidationError 类，需要为其添加 __eq__ 方法。"
+      },
+      {
+        "name": "ValidationError.messages",
+        "kind": "method",
+        "source_path": "django/core/exceptions.py",
+        "reason": "Issue 提到比较可能与 messages 属性相关，且源码片段 3 显示了其实现。"
+      },
+      {
+        "name": "django.core.checks.messages.CheckMessage.__eq__",
+        "kind": "method",
+        "source_path": "django/core/checks/messages.py",
+        "reason": "源码片段 2 提供了一个 Django 内部类似类的 __eq__ 方法实现，可作为参考。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/core/exceptions.py",
+        "object": "ValidationError",
+        "lines": "99-183",
+        "reason": "Issue 要求为 ValidationError 添加 __eq__ 方法，而源码片段 1 显示该类当前没有 __eq__ 方法。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "operator",
+        "current_pattern": "相似测试中使用 self.assertEqual 比较 ValidationError 的特定属性（如 messages、code）。",
+        "target_pattern": "使用相等运算符（==）直接比较两个 ValidationError 实例。",
+        "reason": "Issue 的核心是 ValidationError 实例本身不支持相等比较，需要变异测试以直接使用 == 操作符。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中构造 ValidationError 时使用单一消息、列表或字典。",
+        "target_pattern": "构造两个具有相同消息内容但可能不同顺序（如列表顺序、字典键顺序）的 ValidationError 实例。",
+        "reason": "Issue 提到比较应独立于错误引发的顺序，因此需要测试顺序无关的相等性。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "两个具有相同消息的 ValidationError 实例应该相等，且比较应独立于错误在字段或非字段错误中引发的顺序。",
+      "evidence": [
+        "Issue 描述：'Please add an __eq__ method that allows two ValidationErrors to be compared.'",
+        "Issue 描述：'It would be most helpful if the comparison were independent of the order...'"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "两个 ValidationError 实例使用 == 操作符比较的结果。",
+        "reason": "直接观察相等性比较的返回值，这是 Issue 描述的错误现象。"
+      },
+      {
+        "kind": "repr",
+        "expression_hint": "ValidationError 实例的 repr 或 str 表示。",
+        "reason": "帮助理解实例的内部状态，但 Issue 主要关注相等性，而非字符串表示。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "ValidationError 实例的 messages 属性或 error_dict 属性。",
+        "reason": "Issue 暗示比较可能与 messages 相关，观察这些属性有助于理解比较的基础。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证两个具有相同消息的 ValidationError 实例相等。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的 repr 字符串相等或依赖于内部实现细节的断言。",
+        "reason": "Issue 要求支持 __eq__ 比较，因此应使用 assertEqual 或 assertTrue(a == b) 来验证语义相等性。"
+      },
+      {
+        "assertion_goal": "验证相等性比较独立于错误消息的顺序（例如，列表顺序或字典键顺序）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言 messages 列表的顺序严格相等。",
+        "reason": "Issue 明确希望比较独立于顺序，因此断言应允许不同顺序下的相等。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "ValidationError 的 __eq__ 方法具体应如何实现（例如，是否还应比较 code、params 等属性）。",
+    "对于嵌套的 ValidationError 实例（如列表中的 ValidationError），相等性比较的预期行为是什么。",
+    "当前 ValidationError 的 __eq__ 是否已继承自父类 Exception 并产生默认行为（基于身份或 args）。"
+  ],
+  "raw": {
+    "issue_summary": "ValidationError 实例在消息相同时不相等，缺少 __eq__ 方法。",
+    "trigger_condition": {
+      "text": "创建两个具有相同消息的 ValidationError 实例并进行相等性比较。",
+      "evidence": [
+        "Issue 描述：'ValidationErrors that have identical messages don't equal each other'",
+        "源码片段 1 显示 ValidationError 类没有 __eq__ 方法。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "两个消息相同的 ValidationError 实例比较结果为不相等。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 描述：'ValidationErrors that have identical messages don't equal each other'"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "两个具有相同消息的 ValidationError 实例应该相等，且比较应独立于错误在字段或非字段错误中引发的顺序。",
+      "evidence": [
+        "Issue 描述：'Please add an __eq__ method that allows two ValidationErrors to be compared.'",
+        "Issue 描述：'It would be most helpful if the comparison were independent of the order...'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "django.core.exceptions.ValidationError",
+        "kind": "class",
+        "source_path": "django/core/exceptions.py",
+        "reason": "Issue 直接针对 ValidationError 类，需要为其添加 __eq__ 方法。"
+      },
+      {
+        "name": "ValidationError.messages",
+        "kind": "method",
+        "source_path": "django/core/exceptions.py",
+        "reason": "Issue 提到比较可能与 messages 属性相关，且源码片段 3 显示了其实现。"
+      },
+      {
+        "name": "django.core.checks.messages.CheckMessage.__eq__",
+        "kind": "method",
+        "source_path": "django/core/checks/messages.py",
+        "reason": "源码片段 2 提供了一个 Django 内部类似类的 __eq__ 方法实现，可作为参考。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/core/exceptions.py",
+        "object": "ValidationError",
+        "lines": "99-183",
+        "reason": "Issue 要求为 ValidationError 添加 __eq__ 方法，而源码片段 1 显示该类当前没有 __eq__ 方法。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestValidationError.test_messages_concatenates_error_dict_values",
+        "test_file": "tests/test_exceptions/test_validation_error.py",
+        "why_relevant": "该测试直接构造 ValidationError 实例并检查其 messages 属性，与 Issue 中比较消息的核心相关。",
+        "reusable_parts": [
+          "ValidationError 的导入",
+          "使用 message_dict 和列表构造 ValidationError",
+          "使用 self.assertEqual 断言"
+        ],
+        "possible_gap": "该测试只检查 messages 属性，不进行 ValidationError 实例间的相等性比较。"
+      },
+      {
+        "test_name": "PickableValidationErrorTestCase.test_validationerror_is_picklable",
+        "test_file": "tests/validation/test_picklable.py",
+        "why_relevant": "该测试广泛构造了多种形式的 ValidationError 实例（单消息、列表、嵌套、字典），展示了其不同初始化模式。",
+        "reusable_parts": [
+          "ValidationError 的各种构造方式",
+          "使用 self.assertEqual 比较属性"
+        ],
+        "possible_gap": "该测试关注 pickling 和 unpickling 后的属性相等性，而非两个独立 ValidationError 实例的 __eq__ 比较。"
+      },
+      {
+        "test_name": "ValidationMessagesTest._test_validation_messages",
+        "test_file": "tests/validation/test_error_messages.py",
+        "why_relevant": "该测试捕获 ValidationError 并比较其 messages 属性与预期值，展示了在验证上下文中使用 ValidationError 的模式。",
+        "reusable_parts": [
+          "使用 assertRaises(ValidationError) 捕获异常",
+          "通过 cm.exception 访问异常实例",
+          "比较 exception.messages"
+        ],
+        "possible_gap": "该测试是辅助方法，不直接进行 ValidationError 实例间的相等性比较。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "operator",
+        "current_pattern": "相似测试中使用 self.assertEqual 比较 ValidationError 的特定属性（如 messages、code）。",
+        "target_pattern": "使用相等运算符（==）直接比较两个 ValidationError 实例。",
+        "reason": "Issue 的核心是 ValidationError 实例本身不支持相等比较，需要变异测试以直接使用 == 操作符。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中构造 ValidationError 时使用单一消息、列表或字典。",
+        "target_pattern": "构造两个具有相同消息内容但可能不同顺序（如列表顺序、字典键顺序）的 ValidationError 实例。",
+        "reason": "Issue 提到比较应独立于错误引发的顺序，因此需要测试顺序无关的相等性。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "两个 ValidationError 实例使用 == 操作符比较的结果。",
+        "reason": "直接观察相等性比较的返回值，这是 Issue 描述的错误现象。"
+      },
+      {
+        "kind": "repr",
+        "expression_hint": "ValidationError 实例的 repr 或 str 表示。",
+        "reason": "帮助理解实例的内部状态，但 Issue 主要关注相等性，而非字符串表示。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "ValidationError 实例的 messages 属性或 error_dict 属性。",
+        "reason": "Issue 暗示比较可能与 messages 相关，观察这些属性有助于理解比较的基础。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证两个具有相同消息的 ValidationError 实例相等。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的 repr 字符串相等或依赖于内部实现细节的断言。",
+        "reason": "Issue 要求支持 __eq__ 比较，因此应使用 assertEqual 或 assertTrue(a == b) 来验证语义相等性。"
+      },
+      {
+        "assertion_goal": "验证相等性比较独立于错误消息的顺序（例如，列表顺序或字典键顺序）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言 messages 列表的顺序严格相等。",
+        "reason": "Issue 明确希望比较独立于顺序，因此断言应允许不同顺序下的相等。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用 unittest.TestCase 或 django.test.TestCase。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要从 django.core.exceptions 导入 ValidationError。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "ValidationError 的 __eq__ 方法具体应如何实现（例如，是否还应比较 code、params 等属性）。",
+      "对于嵌套的 ValidationError 实例（如列表中的 ValidationError），相等性比较的预期行为是什么。",
+      "当前 ValidationError 的 __eq__ 是否已继承自父类 Exception 并产生默认行为（基于身份或 args）。"
+    ]
+  }
+}

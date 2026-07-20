@@ -1,0 +1,340 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-16816",
+  "issue_summary": "Django admin 的 E108 系统检查未能捕获某些无效的 list_display 配置，导致运行时 AttributeError 而非提前的验证错误。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要创建两个具有 ForeignKey 关系的 Django 模型（如 Question 和 Choice），并注册相应的 ModelAdmin。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要继承自 django.test.TestCase 或相关的 SimpleTestCase，并设置正确的 INSTALLED_APPS 以包含 admin 和测试模型。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 AdminSite 实例来注册 ModelAdmin 并调用其 check() 方法。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "ListDisplayTests.test_missing_field",
+        "test_file": "tests/modeladmin/test_checks.py",
+        "why_relevant": "它直接测试了当 list_display 包含不存在的字段名时，E108 检查是否被触发。这是 Issue 期望但未发生的行为。",
+        "reusable_parts": [
+          "测试类结构 (ListDisplayTests, CheckTestCase)",
+          "使用 ModelAdmin 子类并设置 list_display",
+          "使用 assertIsInvalid 和 admin.E108 的验证模式",
+          "对 ValidationTestModel 的使用"
+        ],
+        "possible_gap": "该测试使用的 'non_existent_field' 是一个完全虚构的字段名。而 Issue 中的 'choice' 可能是一个存在于相关模型 (Choice) 但在本模型 (Question) 中不存在的字段名。检查逻辑可能对这两种情况的处理不同。"
+      },
+      {
+        "test_name": "UtilsTests.test_label_for_field",
+        "test_file": "tests/admin_utils/tests.py",
+        "why_relevant": "它直接测试了 label_for_field 函数在遇到未知字段名时的行为（抛出 AttributeError），这与 Issue 中观察到的运行时错误一致。",
+        "reusable_parts": [
+          "测试类结构 (UtilsTests)",
+          "对 label_for_field 的直接调用",
+          "使用 assertRaisesMessage 来捕获 AttributeError 及其消息",
+          "使用 Article 模型作为测试上下文"
+        ],
+        "possible_gap": "这是一个单元测试，直接调用 API，不涉及完整的 admin 系统检查流程或页面渲染。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "在 ModelAdmin 的 list_display 中配置一个指向相关模型（如 ForeignKey）字段名的字符串，该字段名在模型本身或其 ModelAdmin 中不存在。",
+      "evidence": [
+        "Issue 描述：'I have two models, Question and Choice. And if I write list_display = [\"choice\"] in QuestionAdmin, I get no errors.'",
+        "Issue 描述：'But when I visit /admin/polls/question/, the following trace is returned:'",
+        "相关测试 1 (test_missing_field) 展示了 list_display 包含不存在的字段名时，系统检查 E108 应该被触发。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "访问 admin 列表页面时，抛出 AttributeError: Unable to lookup 'choice' on Question or QuestionAdmin，而不是在启动时抛出 E108 验证错误。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的完整错误堆栈，最终指向 'raise AttributeError(message)'。",
+        "源码片段 2 (label_for_field) 第 362 行附近：'raise AttributeError(message)'。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "label_for_field",
+        "kind": "function",
+        "source_path": "django/contrib/admin/utils.py",
+        "reason": "错误堆栈显示异常由该函数抛出，它负责解析 list_display 中的字段名。"
+      },
+      {
+        "name": "_get_non_gfk_field",
+        "kind": "function",
+        "source_path": "django/contrib/admin/utils.py",
+        "reason": "label_for_field 调用它来获取字段，它抛出 FieldDoesNotExist 异常，是错误路径的起点。"
+      },
+      {
+        "name": "result_headers",
+        "kind": "function",
+        "source_path": "django/contrib/admin/templatetags/admin_list.py",
+        "reason": "admin 列表渲染时调用 result_headers，进而调用 label_for_field。"
+      },
+      {
+        "name": "ModelAdmin.list_display",
+        "kind": "attribute",
+        "source_path": "",
+        "reason": "Issue 的触发配置是设置 list_display = [\"choice\"]。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/contrib/admin/utils.py",
+        "object": "label_for_field",
+        "lines": "340-402",
+        "reason": "该函数是抛出运行时 AttributeError 的直接位置，其逻辑（特别是处理 FieldDoesNotExist 后的分支）可能未能将所有无效情况映射到系统检查能捕获的形式。"
+      },
+      {
+        "path": "django/contrib/admin/checks.py",
+        "object": "E108 检查逻辑",
+        "lines": "",
+        "reason": "Issue 明确指出 E108 检查未覆盖此情况，因此检查逻辑本身可能存在遗漏。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中 list_display = (\"non_existent_field\",)",
+        "target_pattern": "list_display = (\"choice\",)，其中 'choice' 是另一个相关模型 (Choice) 的字段名，但在当前模型 (Question) 中不存在。",
+        "reason": "Issue 表明，当字段名指向相关模型时，E108 检查可能被绕过，导致运行时错误。需要变异输入来模拟这种特定情况。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "相关测试 1 中使用通用的 ValidationTestModel。",
+        "target_pattern": "配置两个具有 ForeignKey 关系的模型（如 Question 和 Choice），并在 QuestionAdmin 中设置 list_display。",
+        "reason": "Issue 明确提到了两个模型 Question 和 Choice，需要建立这种关联关系来复现缺陷场景。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "在 Django 启动或执行系统检查时，应能检测到 list_display 中引用了无效的字段名（如指向相关模型而非本模型字段），并抛出 E108 验证错误，阻止应用启动或给出明确警告。",
+      "evidence": [
+        "Issue 标题：'Error E108 does not cover some cases'。",
+        "Issue 描述：'I suggest that error E108 be updated to cover this case as well'。",
+        "相关测试 1 (test_missing_field) 展示了 E108 检查对于不存在的字段名应如何工作。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "访问 admin 列表页面时是否抛出 AttributeError，及其错误消息是否包含 'Unable to lookup'。",
+        "reason": "Issue 的核心症状是运行时 AttributeError，而非预期的 E108 验证错误。"
+      },
+      {
+        "kind": "warning",
+        "expression_hint": "在运行 Django 系统检查 (check) 时，是否产生了 admin.E108 错误。",
+        "reason": "修复后，期望的行为是在检查阶段就捕获错误，因此观测系统检查的输出是关键。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "ModelAdmin.check() 方法的返回值，特别是其中是否包含 id 为 'admin.E108' 的错误。",
+        "reason": "系统检查的结果直接反映了 E108 是否被触发。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当 list_display 包含指向相关模型字段的无效名称时，系统检查应产生一个 admin.E108 错误。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的异常消息字符串，因为消息格式可能在修复中微调。避免断言非 E108 的错误。",
+        "reason": "Issue 的目标是让 E108 检查覆盖此情况。断言检查结果中包含 E108 错误是稳定且与 Issue 目标对齐的。"
+      },
+      {
+        "assertion_goal": "在修复前，访问 admin 列表页面应引发 AttributeError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言错误消息的完整精确匹配，只断言消息中包含 'Unable to lookup' 等稳定片段。",
+        "reason": "这能确认当前缺陷行为的存在，作为测试的基线。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "字段名 'choice' 在 Issue 的上下文中具体指什么？是 Choice 模型的一个字段，还是 Question 模型的一个 ForeignKey 字段名？这影响无效性的精确性质。",
+    "E108 检查逻辑的具体实现位置和当前遗漏的精确条件是什么？",
+    "除了 list_display，其他类似的 admin 配置（如 readonly_fields，如相关测试 2/3 所示）是否也存在相同问题？"
+  ],
+  "raw": {
+    "issue_summary": "Django admin 的 E108 系统检查未能捕获某些无效的 list_display 配置，导致运行时 AttributeError 而非提前的验证错误。",
+    "trigger_condition": {
+      "text": "在 ModelAdmin 的 list_display 中配置一个指向相关模型（如 ForeignKey）字段名的字符串，该字段名在模型本身或其 ModelAdmin 中不存在。",
+      "evidence": [
+        "Issue 描述：'I have two models, Question and Choice. And if I write list_display = [\"choice\"] in QuestionAdmin, I get no errors.'",
+        "Issue 描述：'But when I visit /admin/polls/question/, the following trace is returned:'",
+        "相关测试 1 (test_missing_field) 展示了 list_display 包含不存在的字段名时，系统检查 E108 应该被触发。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "访问 admin 列表页面时，抛出 AttributeError: Unable to lookup 'choice' on Question or QuestionAdmin，而不是在启动时抛出 E108 验证错误。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的完整错误堆栈，最终指向 'raise AttributeError(message)'。",
+        "源码片段 2 (label_for_field) 第 362 行附近：'raise AttributeError(message)'。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "在 Django 启动或执行系统检查时，应能检测到 list_display 中引用了无效的字段名（如指向相关模型而非本模型字段），并抛出 E108 验证错误，阻止应用启动或给出明确警告。",
+      "evidence": [
+        "Issue 标题：'Error E108 does not cover some cases'。",
+        "Issue 描述：'I suggest that error E108 be updated to cover this case as well'。",
+        "相关测试 1 (test_missing_field) 展示了 E108 检查对于不存在的字段名应如何工作。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "label_for_field",
+        "kind": "function",
+        "source_path": "django/contrib/admin/utils.py",
+        "reason": "错误堆栈显示异常由该函数抛出，它负责解析 list_display 中的字段名。"
+      },
+      {
+        "name": "_get_non_gfk_field",
+        "kind": "function",
+        "source_path": "django/contrib/admin/utils.py",
+        "reason": "label_for_field 调用它来获取字段，它抛出 FieldDoesNotExist 异常，是错误路径的起点。"
+      },
+      {
+        "name": "result_headers",
+        "kind": "function",
+        "source_path": "django/contrib/admin/templatetags/admin_list.py",
+        "reason": "admin 列表渲染时调用 result_headers，进而调用 label_for_field。"
+      },
+      {
+        "name": "ModelAdmin.list_display",
+        "kind": "attribute",
+        "source_path": "",
+        "reason": "Issue 的触发配置是设置 list_display = [\"choice\"]。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/contrib/admin/utils.py",
+        "object": "label_for_field",
+        "lines": "340-402",
+        "reason": "该函数是抛出运行时 AttributeError 的直接位置，其逻辑（特别是处理 FieldDoesNotExist 后的分支）可能未能将所有无效情况映射到系统检查能捕获的形式。"
+      },
+      {
+        "path": "django/contrib/admin/checks.py",
+        "object": "E108 检查逻辑",
+        "lines": "",
+        "reason": "Issue 明确指出 E108 检查未覆盖此情况，因此检查逻辑本身可能存在遗漏。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "ListDisplayTests.test_missing_field",
+        "test_file": "tests/modeladmin/test_checks.py",
+        "why_relevant": "它直接测试了当 list_display 包含不存在的字段名时，E108 检查是否被触发。这是 Issue 期望但未发生的行为。",
+        "reusable_parts": [
+          "测试类结构 (ListDisplayTests, CheckTestCase)",
+          "使用 ModelAdmin 子类并设置 list_display",
+          "使用 assertIsInvalid 和 admin.E108 的验证模式",
+          "对 ValidationTestModel 的使用"
+        ],
+        "possible_gap": "该测试使用的 'non_existent_field' 是一个完全虚构的字段名。而 Issue 中的 'choice' 可能是一个存在于相关模型 (Choice) 但在本模型 (Question) 中不存在的字段名。检查逻辑可能对这两种情况的处理不同。"
+      },
+      {
+        "test_name": "UtilsTests.test_label_for_field",
+        "test_file": "tests/admin_utils/tests.py",
+        "why_relevant": "它直接测试了 label_for_field 函数在遇到未知字段名时的行为（抛出 AttributeError），这与 Issue 中观察到的运行时错误一致。",
+        "reusable_parts": [
+          "测试类结构 (UtilsTests)",
+          "对 label_for_field 的直接调用",
+          "使用 assertRaisesMessage 来捕获 AttributeError 及其消息",
+          "使用 Article 模型作为测试上下文"
+        ],
+        "possible_gap": "这是一个单元测试，直接调用 API，不涉及完整的 admin 系统检查流程或页面渲染。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中 list_display = (\"non_existent_field\",)",
+        "target_pattern": "list_display = (\"choice\",)，其中 'choice' 是另一个相关模型 (Choice) 的字段名，但在当前模型 (Question) 中不存在。",
+        "reason": "Issue 表明，当字段名指向相关模型时，E108 检查可能被绕过，导致运行时错误。需要变异输入来模拟这种特定情况。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "相关测试 1 中使用通用的 ValidationTestModel。",
+        "target_pattern": "配置两个具有 ForeignKey 关系的模型（如 Question 和 Choice），并在 QuestionAdmin 中设置 list_display。",
+        "reason": "Issue 明确提到了两个模型 Question 和 Choice，需要建立这种关联关系来复现缺陷场景。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "访问 admin 列表页面时是否抛出 AttributeError，及其错误消息是否包含 'Unable to lookup'。",
+        "reason": "Issue 的核心症状是运行时 AttributeError，而非预期的 E108 验证错误。"
+      },
+      {
+        "kind": "warning",
+        "expression_hint": "在运行 Django 系统检查 (check) 时，是否产生了 admin.E108 错误。",
+        "reason": "修复后，期望的行为是在检查阶段就捕获错误，因此观测系统检查的输出是关键。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "ModelAdmin.check() 方法的返回值，特别是其中是否包含 id 为 'admin.E108' 的错误。",
+        "reason": "系统检查的结果直接反映了 E108 是否被触发。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当 list_display 包含指向相关模型字段的无效名称时，系统检查应产生一个 admin.E108 错误。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的异常消息字符串，因为消息格式可能在修复中微调。避免断言非 E108 的错误。",
+        "reason": "Issue 的目标是让 E108 检查覆盖此情况。断言检查结果中包含 E108 错误是稳定且与 Issue 目标对齐的。"
+      },
+      {
+        "assertion_goal": "在修复前，访问 admin 列表页面应引发 AttributeError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言错误消息的完整精确匹配，只断言消息中包含 'Unable to lookup' 等稳定片段。",
+        "reason": "这能确认当前缺陷行为的存在，作为测试的基线。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要创建两个具有 ForeignKey 关系的 Django 模型（如 Question 和 Choice），并注册相应的 ModelAdmin。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要继承自 django.test.TestCase 或相关的 SimpleTestCase，并设置正确的 INSTALLED_APPS 以包含 admin 和测试模型。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 AdminSite 实例来注册 ModelAdmin 并调用其 check() 方法。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "字段名 'choice' 在 Issue 的上下文中具体指什么？是 Choice 模型的一个字段，还是 Question 模型的一个 ForeignKey 字段名？这影响无效性的精确性质。",
+      "E108 检查逻辑的具体实现位置和当前遗漏的精确条件是什么？",
+      "除了 list_display，其他类似的 admin 配置（如 readonly_fields，如相关测试 2/3 所示）是否也存在相同问题？"
+    ]
+  }
+}

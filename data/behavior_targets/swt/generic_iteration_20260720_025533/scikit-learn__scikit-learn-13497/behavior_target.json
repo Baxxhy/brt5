@@ -1,0 +1,278 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "scikit-learn__scikit-learn-13497",
+  "issue_summary": "在 _estimate_mi 函数中，使用字符串比较 'discrete_features == \"auto\"' 来处理可能为数组或布尔掩码的 discrete_features 参数，这在未来版本的 NumPy 中会出错。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 numpy、sklearn.feature_selection.mutual_info_ 及相关测试工具（如 assert_raises, assert_array_equal）。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要设置特定的 NumPy 版本或启用未来错误警告的兼容性设置来模拟未来行为。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_mutual_info_classif_mixed",
+        "test_file": "sklearn/feature_selection/tests/test_mutual_info.py",
+        "why_relevant": "该测试调用了 mutual_info_classif，并设置了 discrete_features=[2]（一个索引数组），这与 Issue 中提到的触发条件（数组）相关。",
+        "reusable_parts": [
+          "imports",
+          "数据构造 (X, y)",
+          "调用 mutual_info_classif 并设置 discrete_features 为数组",
+          "assert 风格"
+        ],
+        "possible_gap": "该测试目前可能没有触发错误，因为它可能没有直接暴露 _estimate_mi 内部的字符串比较问题，或者当前 NumPy 版本尚未报错。"
+      },
+      {
+        "test_name": "test_mutual_info_options",
+        "test_file": "sklearn/feature_selection/tests/test_mutual_info.py",
+        "why_relevant": "该测试调用了 mutual_info 函数（可能是 _estimate_mi 的包装），并测试了 discrete_features 的不同取值（'auto', False, True）。",
+        "reusable_parts": [
+          "imports",
+          "数据构造 (X, y, X_csr)",
+          "调用 mutual_info 函数",
+          "assert 风格"
+        ],
+        "possible_gap": "该测试没有使用数组作为 discrete_features 参数，因此没有覆盖 Issue 中提到的触发条件。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "调用 _estimate_mi 函数，并将 discrete_features 参数设置为一个数组（例如索引列表或布尔掩码），而不是字符串 'auto' 或布尔值。",
+      "evidence": [
+        "Issue 中提到 'discrete features can be an array of indices or a boolean mask'",
+        "源码片段 1 中函数签名显示 discrete_features 参数类型为 {'auto', bool, array_like}",
+        "源码片段 1 中第 229 行有 'if discrete_features == \"auto\":' 的比较"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "当 discrete_features 是数组时，与字符串 'auto' 的比较在未来版本的 NumPy 中会引发错误（例如 FutureWarning 或异常）。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中明确说明 'This will error in future versions of numpy.'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "_estimate_mi",
+        "kind": "function",
+        "source_path": "sklearn/feature_selection/mutual_info_.py",
+        "reason": "这是 Issue 直接报告存在问题的函数。"
+      },
+      {
+        "name": "mutual_info_classif",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试中调用了此函数，它可能内部调用 _estimate_mi。"
+      },
+      {
+        "name": "mutual_info_regression",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试中调用了此函数，它可能内部调用 _estimate_mi。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/feature_selection/mutual_info_.py",
+        "object": "_estimate_mi",
+        "lines": "229",
+        "reason": "Issue 明确指出该行存在 'discrete_features == \"auto\"' 的字符串比较问题。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "argument",
+        "current_pattern": "在相关测试中，discrete_features 参数通常设置为 'auto'、True、False 或单个索引列表 [2]。",
+        "target_pattern": "将 discrete_features 参数设置为一个更复杂的数组，例如一个布尔掩码数组（如 [True, False, True]）或一个包含多个索引的列表（如 [0, 2]）。",
+        "reason": "Issue 指出 discrete_features 可以是数组或布尔掩码，而当前测试可能未充分覆盖这些情况，变异后可能触发字符串比较错误。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "函数应能正确处理 discrete_features 参数为数组（索引列表或布尔掩码）的情况，不应因与字符串 'auto' 的比较而引发错误。",
+      "evidence": [
+        "Issue 暗示 discrete_features 参数设计上支持数组类型",
+        "源码片段 1 中参数文档说明 discrete_features 可以是 array_like"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 _estimate_mi 或相关包装函数（如 mutual_info_classif）时，观察是否抛出 FutureWarning、DeprecationWarning 或 ValueError 等异常。",
+        "reason": "Issue 预测未来 NumPy 版本会因数组与字符串比较而报错，观测异常是判断 Issue 是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "函数的返回值（mi 数组）是否正常计算，没有因内部错误而返回异常值（如 NaN 或全零）。",
+        "reason": "即使没有立即抛出异常，错误的比较可能导致逻辑分支错误，进而影响计算结果。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证当 discrete_features 为数组时，函数调用不会引发与字符串比较相关的异常（如 FutureWarning）。",
+        "preferred_assertion_style": "raises",
+        "avoid": "避免断言具体的完整警告消息字符串，因为消息可能随 NumPy 版本变化。",
+        "reason": "Issue 的核心是避免未来错误，因此断言不引发特定异常是关键。"
+      },
+      {
+        "assertion_goal": "验证函数在 discrete_features 为数组时能正常执行并返回合理的互信息估计值（例如，非负数组）。",
+        "preferred_assertion_style": "isinstance",
+        "avoid": "避免断言返回值的精确数值，因为这是估计值，可能因随机性而变化。",
+        "reason": "确保函数功能正常，而不仅仅是避免崩溃。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "当前 NumPy 版本下，数组与字符串 'auto' 的比较是否已经会引发警告或错误？",
+    "除了字符串比较，函数内部逻辑在处理数组类型的 discrete_features 时是否还有其他潜在问题？",
+    "Issue 中提到的 'we never test this function with discrete features != \"auto\"' 是否准确？相关测试似乎覆盖了 True/False 和数组。"
+  ],
+  "raw": {
+    "issue_summary": "在 _estimate_mi 函数中，使用字符串比较 'discrete_features == \"auto\"' 来处理可能为数组或布尔掩码的 discrete_features 参数，这在未来版本的 NumPy 中会出错。",
+    "trigger_condition": {
+      "text": "调用 _estimate_mi 函数，并将 discrete_features 参数设置为一个数组（例如索引列表或布尔掩码），而不是字符串 'auto' 或布尔值。",
+      "evidence": [
+        "Issue 中提到 'discrete features can be an array of indices or a boolean mask'",
+        "源码片段 1 中函数签名显示 discrete_features 参数类型为 {'auto', bool, array_like}",
+        "源码片段 1 中第 229 行有 'if discrete_features == \"auto\":' 的比较"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "当 discrete_features 是数组时，与字符串 'auto' 的比较在未来版本的 NumPy 中会引发错误（例如 FutureWarning 或异常）。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中明确说明 'This will error in future versions of numpy.'"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "函数应能正确处理 discrete_features 参数为数组（索引列表或布尔掩码）的情况，不应因与字符串 'auto' 的比较而引发错误。",
+      "evidence": [
+        "Issue 暗示 discrete_features 参数设计上支持数组类型",
+        "源码片段 1 中参数文档说明 discrete_features 可以是 array_like"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "_estimate_mi",
+        "kind": "function",
+        "source_path": "sklearn/feature_selection/mutual_info_.py",
+        "reason": "这是 Issue 直接报告存在问题的函数。"
+      },
+      {
+        "name": "mutual_info_classif",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试中调用了此函数，它可能内部调用 _estimate_mi。"
+      },
+      {
+        "name": "mutual_info_regression",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试中调用了此函数，它可能内部调用 _estimate_mi。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/feature_selection/mutual_info_.py",
+        "object": "_estimate_mi",
+        "lines": "229",
+        "reason": "Issue 明确指出该行存在 'discrete_features == \"auto\"' 的字符串比较问题。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_mutual_info_classif_mixed",
+        "test_file": "sklearn/feature_selection/tests/test_mutual_info.py",
+        "why_relevant": "该测试调用了 mutual_info_classif，并设置了 discrete_features=[2]（一个索引数组），这与 Issue 中提到的触发条件（数组）相关。",
+        "reusable_parts": [
+          "imports",
+          "数据构造 (X, y)",
+          "调用 mutual_info_classif 并设置 discrete_features 为数组",
+          "assert 风格"
+        ],
+        "possible_gap": "该测试目前可能没有触发错误，因为它可能没有直接暴露 _estimate_mi 内部的字符串比较问题，或者当前 NumPy 版本尚未报错。"
+      },
+      {
+        "test_name": "test_mutual_info_options",
+        "test_file": "sklearn/feature_selection/tests/test_mutual_info.py",
+        "why_relevant": "该测试调用了 mutual_info 函数（可能是 _estimate_mi 的包装），并测试了 discrete_features 的不同取值（'auto', False, True）。",
+        "reusable_parts": [
+          "imports",
+          "数据构造 (X, y, X_csr)",
+          "调用 mutual_info 函数",
+          "assert 风格"
+        ],
+        "possible_gap": "该测试没有使用数组作为 discrete_features 参数，因此没有覆盖 Issue 中提到的触发条件。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "argument",
+        "current_pattern": "在相关测试中，discrete_features 参数通常设置为 'auto'、True、False 或单个索引列表 [2]。",
+        "target_pattern": "将 discrete_features 参数设置为一个更复杂的数组，例如一个布尔掩码数组（如 [True, False, True]）或一个包含多个索引的列表（如 [0, 2]）。",
+        "reason": "Issue 指出 discrete_features 可以是数组或布尔掩码，而当前测试可能未充分覆盖这些情况，变异后可能触发字符串比较错误。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 _estimate_mi 或相关包装函数（如 mutual_info_classif）时，观察是否抛出 FutureWarning、DeprecationWarning 或 ValueError 等异常。",
+        "reason": "Issue 预测未来 NumPy 版本会因数组与字符串比较而报错，观测异常是判断 Issue 是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "函数的返回值（mi 数组）是否正常计算，没有因内部错误而返回异常值（如 NaN 或全零）。",
+        "reason": "即使没有立即抛出异常，错误的比较可能导致逻辑分支错误，进而影响计算结果。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证当 discrete_features 为数组时，函数调用不会引发与字符串比较相关的异常（如 FutureWarning）。",
+        "preferred_assertion_style": "raises",
+        "avoid": "避免断言具体的完整警告消息字符串，因为消息可能随 NumPy 版本变化。",
+        "reason": "Issue 的核心是避免未来错误，因此断言不引发特定异常是关键。"
+      },
+      {
+        "assertion_goal": "验证函数在 discrete_features 为数组时能正常执行并返回合理的互信息估计值（例如，非负数组）。",
+        "preferred_assertion_style": "isinstance",
+        "avoid": "避免断言返回值的精确数值，因为这是估计值，可能因随机性而变化。",
+        "reason": "确保函数功能正常，而不仅仅是避免崩溃。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 numpy、sklearn.feature_selection.mutual_info_ 及相关测试工具（如 assert_raises, assert_array_equal）。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要设置特定的 NumPy 版本或启用未来错误警告的兼容性设置来模拟未来行为。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "当前 NumPy 版本下，数组与字符串 'auto' 的比较是否已经会引发警告或错误？",
+      "除了字符串比较，函数内部逻辑在处理数组类型的 discrete_features 时是否还有其他潜在问题？",
+      "Issue 中提到的 'we never test this function with discrete features != \"auto\"' 是否准确？相关测试似乎覆盖了 True/False 和数组。"
+    ]
+  }
+}

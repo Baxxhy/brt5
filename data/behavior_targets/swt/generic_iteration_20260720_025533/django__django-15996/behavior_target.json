@@ -1,0 +1,284 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-15996",
+  "issue_summary": "EnumSerializer 无法序列化组合的 Enum flags（多个标志位 OR 运算的结果），导致迁移文件生成错误。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 re 模块和 django.db.models。可能需要定义一个 IntFlag 枚举或使用 Python 标准库的 enum.IntFlag（如 re.RegexFlag）。",
+        "source": "issue|retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试应继承自 SimpleTestCase（如相关测试所示），并使用 MigrationWriter.serialize 进行序列化。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_serialize_enum_flags",
+        "test_file": "tests/migrations/test_writer.py",
+        "why_relevant": "该测试专门测试 IntFlagEnum 的序列化，包括作为 IntegerField 的 default 值。这与 Issue 场景高度相似，但只测试了单个枚举值（A, B），没有测试组合值（A|B）。",
+        "reusable_parts": [
+          "测试类 WriterTests",
+          "assertSerializedResultEqual 和 assertSerializedEqual 的断言风格",
+          "使用 MigrationWriter.serialize 序列化字段的模式",
+          "IntFlagEnum 的定义（可能在同一个文件）"
+        ],
+        "possible_gap": "该测试只验证了单个枚举标志的序列化，没有验证组合标志（OR 运算）的序列化，这正是 Issue 报告的问题。"
+      },
+      {
+        "test_name": "test_serialize_enums",
+        "test_file": "tests/migrations/test_writer.py",
+        "why_relevant": "该测试广泛测试了各种枚举类型（包括 IntEnum）作为模型字段 default 和 choices 的序列化，展示了序列化输出的格式。",
+        "reusable_parts": [
+          "创建带 default 和 choices 的模型字段的模式",
+          "序列化字段并检查字符串输出的方法",
+          "对不同枚举类型的处理"
+        ],
+        "possible_gap": "同样，没有测试组合的枚举标志。"
+      },
+      {
+        "test_name": "test_serialize_class_based_validators",
+        "test_file": "tests/migrations/test_writer.py",
+        "why_relevant": "该测试中有一个子案例序列化了带有 `flags=re.RegexFlag['DOTALL']` 的 RegexValidator，展示了 re.RegexFlag 枚举的序列化，并且使用了 `re.RegexFlag['DOTALL']` 的表示法。",
+        "reusable_parts": [
+          "使用 re.RegexFlag 枚举",
+          "序列化包含 flags 参数的对象的模式"
+        ],
+        "possible_gap": "该测试使用的是单个标志 `re.S`，而不是组合标志。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "创建一个模型字段，其 default 值为一个组合的 Enum flags（例如 re.UNICODE | re.IGNORECASE），然后对该字段进行序列化（例如生成迁移文件）。",
+      "evidence": [
+        "Issue 描述中给出了示例：`regex_flags = models.IntegerField(default=re.UNICODE | re.IGNORECASE)`",
+        "Issue 提到当没有单个枚举项对应给定值时，EnumSerializer 会失败。",
+        "相关测试 1 和 2 展示了序列化单个枚举值作为 default 的正常情况。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "序列化组合的 Enum flags 时，生成的迁移文件中 default 值不正确，例如 `default=re.RegexFlag[None]`，而不是能重构出原始组合值的表达式。",
+      "symptom_type": "serialization_error",
+      "evidence": [
+        "Issue 描述：`This is turned into a migration with: default=re.RegexFlag[None]`",
+        "Issue 解释原因：`if there is no single item for the given value, then there is no such name.`"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "django.db.migrations.serializer.EnumSerializer.serialize",
+        "kind": "method",
+        "source_path": "django/db/migrations/serializer.py",
+        "reason": "Issue 直接指出 EnumSerializer 在处理组合 flags 时有问题，这是负责序列化枚举的核心方法。"
+      },
+      {
+        "name": "django.db.migrations.writer.MigrationWriter.serialize",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试中多次使用此函数来序列化对象（包括字段和验证器），是触发序列化流程的入口。"
+      },
+      {
+        "name": "django.db.models.IntegerField",
+        "kind": "class",
+        "source_path": "django/forms/fields.py",
+        "reason": "Issue 示例和多个相关测试中使用 IntegerField 来承载枚举默认值。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/migrations/serializer.py",
+        "object": "EnumSerializer.serialize",
+        "lines": "124-131",
+        "reason": "源码片段 2 显示当前实现直接使用 `self.value.name`，当 value 是组合 flags 时，`self.value` 可能没有对应的 `.name` 属性，导致序列化失败。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试中使用单个枚举值作为 default，例如 `default=IntFlagEnum.A` 或 `default=re.RegexFlag['DOTALL']`。",
+        "target_pattern": "使用组合的枚举标志作为 default，例如 `default=IntFlagEnum.A | IntFlagEnum.B` 或 `default=re.UNICODE | re.IGNORECASE`。",
+        "reason": "Issue 明确指出当 default 值是组合 flags（没有对应单个 name）时，序列化会失败。将输入从单个值变异为组合值，可以触发缺陷路径。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "EnumSerializer 应该能够正确序列化组合的 Enum flags，生成一个能通过 OR 运算重构出原始组合值的表达式。",
+      "evidence": [
+        "Issue 建议的修复方向：`In that case, we can use enum._decompose to obtain a list of names, and create an expression to create the enum value by \"ORing\" the items together.`"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "serialization",
+        "expression_hint": "MigrationWriter.serialize(field)[0] 生成的字符串表示，特别是 default=... 部分。",
+        "reason": "Issue 的核心错误是序列化输出不正确（生成 `re.RegexFlag[None]`）。观察序列化后的字符串可以直接判断是否触发了缺陷。"
+      },
+      {
+        "kind": "exception",
+        "expression_hint": "在序列化过程中是否抛出异常（如 AttributeError 当访问 .name 失败时）。",
+        "reason": "如果 EnumSerializer 无法处理组合值，可能在尝试访问 `.name` 属性时失败。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "序列化组合 Enum flags 生成的 default 表达式应能正确重构原始值，不应包含 `[None]`，而应包含通过 OR 连接的有效标志名。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的、具体的序列化字符串相等，因为修复后的确切格式可能变化（例如使用 `|` 还是 `+`）。",
+        "reason": "Issue 关注的是语义正确性（能重构出组合值），而不是固定的输出格式。断言生成的字符串包含有效的标志名且不包含 `[None]` 更稳定。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "修复后序列化组合 flags 的确切输出格式是什么？是 `re.RegexFlag['UNICODE'] | re.RegexFlag['IGNORECASE']` 还是其他形式？",
+    "除了 re.RegexFlag，其他自定义的 IntFlag 枚举是否也会受到影响？",
+    "EnumSerializer.serialize 方法内部在访问 .name 失败时，当前是抛出异常还是返回 `[None]`？"
+  ],
+  "raw": {
+    "issue_summary": "EnumSerializer 无法序列化组合的 Enum flags（多个标志位 OR 运算的结果），导致迁移文件生成错误。",
+    "trigger_condition": {
+      "text": "创建一个模型字段，其 default 值为一个组合的 Enum flags（例如 re.UNICODE | re.IGNORECASE），然后对该字段进行序列化（例如生成迁移文件）。",
+      "evidence": [
+        "Issue 描述中给出了示例：`regex_flags = models.IntegerField(default=re.UNICODE | re.IGNORECASE)`",
+        "Issue 提到当没有单个枚举项对应给定值时，EnumSerializer 会失败。",
+        "相关测试 1 和 2 展示了序列化单个枚举值作为 default 的正常情况。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "序列化组合的 Enum flags 时，生成的迁移文件中 default 值不正确，例如 `default=re.RegexFlag[None]`，而不是能重构出原始组合值的表达式。",
+      "symptom_type": "serialization_error",
+      "evidence": [
+        "Issue 描述：`This is turned into a migration with: default=re.RegexFlag[None]`",
+        "Issue 解释原因：`if there is no single item for the given value, then there is no such name.`"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "EnumSerializer 应该能够正确序列化组合的 Enum flags，生成一个能通过 OR 运算重构出原始组合值的表达式。",
+      "evidence": [
+        "Issue 建议的修复方向：`In that case, we can use enum._decompose to obtain a list of names, and create an expression to create the enum value by \"ORing\" the items together.`"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "django.db.migrations.serializer.EnumSerializer.serialize",
+        "kind": "method",
+        "source_path": "django/db/migrations/serializer.py",
+        "reason": "Issue 直接指出 EnumSerializer 在处理组合 flags 时有问题，这是负责序列化枚举的核心方法。"
+      },
+      {
+        "name": "django.db.migrations.writer.MigrationWriter.serialize",
+        "kind": "function",
+        "source_path": "",
+        "reason": "相关测试中多次使用此函数来序列化对象（包括字段和验证器），是触发序列化流程的入口。"
+      },
+      {
+        "name": "django.db.models.IntegerField",
+        "kind": "class",
+        "source_path": "django/forms/fields.py",
+        "reason": "Issue 示例和多个相关测试中使用 IntegerField 来承载枚举默认值。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/migrations/serializer.py",
+        "object": "EnumSerializer.serialize",
+        "lines": "124-131",
+        "reason": "源码片段 2 显示当前实现直接使用 `self.value.name`，当 value 是组合 flags 时，`self.value` 可能没有对应的 `.name` 属性，导致序列化失败。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_serialize_enum_flags",
+        "test_file": "tests/migrations/test_writer.py",
+        "why_relevant": "该测试专门测试 IntFlagEnum 的序列化，包括作为 IntegerField 的 default 值。这与 Issue 场景高度相似，但只测试了单个枚举值（A, B），没有测试组合值（A|B）。",
+        "reusable_parts": [
+          "测试类 WriterTests",
+          "assertSerializedResultEqual 和 assertSerializedEqual 的断言风格",
+          "使用 MigrationWriter.serialize 序列化字段的模式",
+          "IntFlagEnum 的定义（可能在同一个文件）"
+        ],
+        "possible_gap": "该测试只验证了单个枚举标志的序列化，没有验证组合标志（OR 运算）的序列化，这正是 Issue 报告的问题。"
+      },
+      {
+        "test_name": "test_serialize_enums",
+        "test_file": "tests/migrations/test_writer.py",
+        "why_relevant": "该测试广泛测试了各种枚举类型（包括 IntEnum）作为模型字段 default 和 choices 的序列化，展示了序列化输出的格式。",
+        "reusable_parts": [
+          "创建带 default 和 choices 的模型字段的模式",
+          "序列化字段并检查字符串输出的方法",
+          "对不同枚举类型的处理"
+        ],
+        "possible_gap": "同样，没有测试组合的枚举标志。"
+      },
+      {
+        "test_name": "test_serialize_class_based_validators",
+        "test_file": "tests/migrations/test_writer.py",
+        "why_relevant": "该测试中有一个子案例序列化了带有 `flags=re.RegexFlag['DOTALL']` 的 RegexValidator，展示了 re.RegexFlag 枚举的序列化，并且使用了 `re.RegexFlag['DOTALL']` 的表示法。",
+        "reusable_parts": [
+          "使用 re.RegexFlag 枚举",
+          "序列化包含 flags 参数的对象的模式"
+        ],
+        "possible_gap": "该测试使用的是单个标志 `re.S`，而不是组合标志。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试中使用单个枚举值作为 default，例如 `default=IntFlagEnum.A` 或 `default=re.RegexFlag['DOTALL']`。",
+        "target_pattern": "使用组合的枚举标志作为 default，例如 `default=IntFlagEnum.A | IntFlagEnum.B` 或 `default=re.UNICODE | re.IGNORECASE`。",
+        "reason": "Issue 明确指出当 default 值是组合 flags（没有对应单个 name）时，序列化会失败。将输入从单个值变异为组合值，可以触发缺陷路径。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "serialization",
+        "expression_hint": "MigrationWriter.serialize(field)[0] 生成的字符串表示，特别是 default=... 部分。",
+        "reason": "Issue 的核心错误是序列化输出不正确（生成 `re.RegexFlag[None]`）。观察序列化后的字符串可以直接判断是否触发了缺陷。"
+      },
+      {
+        "kind": "exception",
+        "expression_hint": "在序列化过程中是否抛出异常（如 AttributeError 当访问 .name 失败时）。",
+        "reason": "如果 EnumSerializer 无法处理组合值，可能在尝试访问 `.name` 属性时失败。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "序列化组合 Enum flags 生成的 default 表达式应能正确重构原始值，不应包含 `[None]`，而应包含通过 OR 连接的有效标志名。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的、具体的序列化字符串相等，因为修复后的确切格式可能变化（例如使用 `|` 还是 `+`）。",
+        "reason": "Issue 关注的是语义正确性（能重构出组合值），而不是固定的输出格式。断言生成的字符串包含有效的标志名且不包含 `[None]` 更稳定。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 re 模块和 django.db.models。可能需要定义一个 IntFlag 枚举或使用 Python 标准库的 enum.IntFlag（如 re.RegexFlag）。",
+        "source": "issue|retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试应继承自 SimpleTestCase（如相关测试所示），并使用 MigrationWriter.serialize 进行序列化。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "修复后序列化组合 flags 的确切输出格式是什么？是 `re.RegexFlag['UNICODE'] | re.RegexFlag['IGNORECASE']` 还是其他形式？",
+      "除了 re.RegexFlag，其他自定义的 IntFlag 枚举是否也会受到影响？",
+      "EnumSerializer.serialize 方法内部在访问 .name 失败时，当前是抛出异常还是返回 `[None]`？"
+    ]
+  }
+}

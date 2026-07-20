@@ -1,0 +1,350 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "pytest-dev__pytest-7168",
+  "issue_summary": "当对象的 __repr__ 方法抛出异常时，pytest 内部处理过程中出现 INTERNALERROR 而非正常测试失败。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用 testdir fixture 来创建和运行临时测试文件，这是 pytest 测试套件中测试自身行为的标准方式。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要导入 pytest 以使用相关功能，但测试文件本身由 testdir.makepyfile 生成，通常不需要在测试种子代码中显式导入。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_raise_assertion_error_raisin_repr",
+        "test_file": "testing/test_assertion.py",
+        "why_relevant": "该测试直接涉及在测试失败报告过程中，对象的 __repr__ 方法抛出异常的场景，与 Issue 的核心触发条件高度相似。",
+        "reusable_parts": [
+          "使用 testdir fixture 创建临时测试文件",
+          "在测试文件中定义 __repr__ 抛出异常的类",
+          "使用 runpytest 执行测试并检查输出",
+          "断言输出包含特定片段（如 <unprintable ...>）"
+        ],
+        "possible_gap": "该测试中 __repr__ 抛出的是普通 Exception，且对象没有定义 __getattribute__。Issue 中的类同时定义了抛出异常的 __getattribute__，且使用裸 raise 语句，可能导致对象状态更特殊，引发不同的错误路径。"
+      },
+      {
+        "test_name": "test_broken_repr",
+        "test_file": "testing/test_session.py",
+        "why_relevant": "该测试验证了当断言中对象的 __repr__ 抛出异常时，pytest 能生成包含特定标记的报告，展示了正常的处理流程。",
+        "reusable_parts": [
+          "使用 testdir.makepyfile 创建测试模块",
+          "定义 __repr__ 抛出特定异常的类",
+          "使用 inline_run 执行测试并分析结果",
+          "检查失败报告的长表示（longrepr）中是否包含预期标记"
+        ],
+        "possible_gap": "该测试场景是对象在断言比较中被隐式调用 __repr__，而 Issue 是对象在属性访问和后续错误报告过程中被调用 __repr__，调用上下文和堆栈深度可能不同。"
+      },
+      {
+        "test_name": "test_buggy_builtin_repr",
+        "test_file": "testing/io/test_saferepr.py",
+        "why_relevant": "该测试直接针对 saferepr 函数处理 __repr__ 异常的能力，而 saferepr 是 Issue 堆栈跟踪中的关键函数。",
+        "reusable_parts": [
+          "直接导入并调用 saferepr 函数",
+          "定义 __repr__ 抛出异常的类（模拟内置类型）",
+          "断言输出包含异常信息片段"
+        ],
+        "possible_gap": "这是一个单元测试，直接测试 saferepr 函数，不涉及完整的 pytest 测试运行流程（如 testdir、钩子、报告生成）。Issue 的错误发生在更复杂的集成上下文中。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "在 pytest 测试中，创建一个自定义类，其 __getattribute__ 和 __repr__ 方法都直接抛出异常（raise 不带参数），然后在该类的实例上访问属性。",
+      "evidence": [
+        "Issue 中提供的重现代码：class SomeClass: def __getattribute__(self, attr): raise; def __repr__(self): raise; def test(): SomeClass().attr",
+        "Issue 标题：INTERNALERROR when exception in __repr__"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "测试运行过程中出现 INTERNALERROR，并伴随一个长堆栈跟踪，最终指向 RuntimeError: No active exception to reraise，而非正常的测试失败报告。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的会话跟踪显示 INTERNALERROR> Traceback 和最终错误 RuntimeError: No active exception to reraise",
+        "Issue 描述表明这是一个内部错误（INTERNALERROR）"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "saferepr",
+        "kind": "function",
+        "source_path": "_pytest/_io/saferepr.py",
+        "reason": "Issue 堆栈跟踪显示错误发生在 saferepr 函数内部（_pytest/_io/saferepr.py），该函数负责安全地生成对象的字符串表示。"
+      },
+      {
+        "name": "_format_repr_exception",
+        "kind": "function",
+        "source_path": "_pytest/_io/saferepr.py",
+        "reason": "堆栈跟踪中多次调用 _format_repr_exception，它处理 __repr__ 抛出异常的情况。"
+      },
+      {
+        "name": "repr_failure",
+        "kind": "method",
+        "source_path": "_pytest/python.py",
+        "reason": "堆栈跟踪显示错误路径经过 item.repr_failure，这是生成测试失败报告的关键方法。"
+      },
+      {
+        "name": "pytest_runtest_makereport",
+        "kind": "function",
+        "source_path": "_pytest/runner.py",
+        "reason": "堆栈跟踪显示这是生成测试报告钩子的一部分，是错误传播路径的关键节点。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "_pytest/_io/saferepr.py",
+        "object": "_format_repr_exception",
+        "lines": "",
+        "reason": "堆栈跟踪显示错误发生在 _format_repr_exception 调用链中，该函数负责格式化 __repr__ 异常，可能是异常处理逻辑不完整或递归调用导致问题。"
+      },
+      {
+        "path": "_pytest/_io/saferepr.py",
+        "object": "SafeRepr.repr_instance",
+        "lines": "",
+        "reason": "堆栈跟踪显示 repr_instance 方法调用了 _format_repr_exception 和 repr(x)，可能在处理特定对象状态（如 __getattribute__ 也抛出异常）时存在缺陷。"
+      },
+      {
+        "path": "_pytest/_code/code.py",
+        "object": "FormattedExcinfo.repr_args",
+        "lines": "",
+        "reason": "堆栈跟踪显示错误路径经过 repr_args -> saferepr，可能是参数格式化流程中对异常对象的处理不完善。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "object_state",
+        "current_pattern": "相似测试中定义的类通常只重写 __repr__ 来抛出异常。",
+        "target_pattern": "定义的类需要同时重写 __getattribute__ 和 __repr__，且都使用裸 raise 语句（raise 不带参数）。",
+        "reason": "Issue 的重现代码表明，同时存在抛出异常的 __getattribute__ 可能影响了对象在错误报告过程中的状态或属性访问，与仅 __repr__ 异常的场景不同，可能触发了更深层的错误处理路径。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "相似测试中，__repr__ 异常通常在断言失败（AssertionError）或 locals 显示时被触发。",
+        "target_pattern": "__repr__ 异常需要在测试函数执行过程中（如属性访问）触发，并经过 pytest 的错误报告链（repr_failure, saferepr 等）处理。",
+        "reason": "Issue 的堆栈跟踪显示错误发生在 pytest 内部报告生成流程中（call_and_report -> repr_failure -> saferepr），而不是在直接的断言比较中。需要构造一个能进入此流程的测试场景。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "当测试中对象的 __repr__ 方法抛出异常时，pytest 应能优雅地处理此异常，将其捕获并报告为正常的测试失败（例如显示 <unprintable ...> 或类似标记），而不是引发内部错误导致测试会话崩溃。",
+      "evidence": [
+        "相关测试 1 (test_raise_assertion_error_raisin_repr) 显示，当 AssertionError 的参数对象的 __repr__ 抛出异常时，pytest 输出 <unprintable AssertionError object>，测试正常失败。",
+        "相关测试 2 (test_broken_repr_with_showlocals_verbose) 和 3 (test_broken_repr) 显示，当断言中对象的 __repr__ 抛出异常时，pytest 会生成包含 [SomeError() raised in repr()] 标记的报告，测试正常失败。",
+        "相关测试 4 (test_buggy_builtin_repr) 和 5 (test_repr_local_with_error) 也展示了 saferepr 和 FormattedExcinfo 对 __repr__ 异常的处理。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "测试运行结果（result）中是否出现 INTERNALERROR 或 session.exitstatus 异常。",
+        "reason": "Issue 的核心现象是出现 INTERNALERROR 导致测试会话异常终止，而非正常失败。观测此点可直接判断缺陷是否被触发。"
+      },
+      {
+        "kind": "repr",
+        "expression_hint": "失败测试报告（如 reprec.listoutcomes()[2][0].longrepr）的内容，特别是其中对问题对象的表示（是否包含 <unprintable> 或 [raised in repr()] 标记）。",
+        "reason": "正常行为下，pytest 应能处理 __repr__ 异常并生成包含安全标记的报告。观测报告内容可以判断处理流程是否正常。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "在 saferepr 或 _format_repr_exception 函数内部，传入的 obj 的状态（如是否有 __getattribute__ 方法、当前异常上下文）。",
+        "reason": "Issue 的最终错误是 RuntimeError: No active exception to reraise，表明在裸 raise 时没有活跃异常。观测对象状态和异常上下文有助于理解缺陷条件。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "测试运行应正常完成（无 INTERNALERROR），且测试失败报告应包含对 __repr__ 异常的安全处理标记。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "断言完整的错误消息字符串或堆栈跟踪的精确行号，因为这些可能在修复中改变。",
+        "reason": "修复的目标是消除 INTERNALERROR，使测试会话正常结束。因此，断言输出中不包含 'INTERNALERROR' 是稳定且与 Issue 对齐的目标。同时，可以辅助断言报告包含预期的安全标记（如 'raised in repr()'），但这不是核心缺陷症状。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "裸 raise 语句（raise 不带参数）在 __getattribute__ 和 __repr__ 中的具体作用，以及它如何与 pytest 的错误报告上下文交互导致 'No active exception to reraise'。",
+    "__getattribute__ 抛出异常是否是触发缺陷的必要条件，还是仅 __repr__ 异常在特定调用链下就足够。",
+    "saferepr 和 _format_repr_exception 函数内部处理递归或异常上下文的具体逻辑缺陷在哪里。"
+  ],
+  "raw": {
+    "issue_summary": "当对象的 __repr__ 方法抛出异常时，pytest 内部处理过程中出现 INTERNALERROR 而非正常测试失败。",
+    "trigger_condition": {
+      "text": "在 pytest 测试中，创建一个自定义类，其 __getattribute__ 和 __repr__ 方法都直接抛出异常（raise 不带参数），然后在该类的实例上访问属性。",
+      "evidence": [
+        "Issue 中提供的重现代码：class SomeClass: def __getattribute__(self, attr): raise; def __repr__(self): raise; def test(): SomeClass().attr",
+        "Issue 标题：INTERNALERROR when exception in __repr__"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "测试运行过程中出现 INTERNALERROR，并伴随一个长堆栈跟踪，最终指向 RuntimeError: No active exception to reraise，而非正常的测试失败报告。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的会话跟踪显示 INTERNALERROR> Traceback 和最终错误 RuntimeError: No active exception to reraise",
+        "Issue 描述表明这是一个内部错误（INTERNALERROR）"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "当测试中对象的 __repr__ 方法抛出异常时，pytest 应能优雅地处理此异常，将其捕获并报告为正常的测试失败（例如显示 <unprintable ...> 或类似标记），而不是引发内部错误导致测试会话崩溃。",
+      "evidence": [
+        "相关测试 1 (test_raise_assertion_error_raisin_repr) 显示，当 AssertionError 的参数对象的 __repr__ 抛出异常时，pytest 输出 <unprintable AssertionError object>，测试正常失败。",
+        "相关测试 2 (test_broken_repr_with_showlocals_verbose) 和 3 (test_broken_repr) 显示，当断言中对象的 __repr__ 抛出异常时，pytest 会生成包含 [SomeError() raised in repr()] 标记的报告，测试正常失败。",
+        "相关测试 4 (test_buggy_builtin_repr) 和 5 (test_repr_local_with_error) 也展示了 saferepr 和 FormattedExcinfo 对 __repr__ 异常的处理。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "saferepr",
+        "kind": "function",
+        "source_path": "_pytest/_io/saferepr.py",
+        "reason": "Issue 堆栈跟踪显示错误发生在 saferepr 函数内部（_pytest/_io/saferepr.py），该函数负责安全地生成对象的字符串表示。"
+      },
+      {
+        "name": "_format_repr_exception",
+        "kind": "function",
+        "source_path": "_pytest/_io/saferepr.py",
+        "reason": "堆栈跟踪中多次调用 _format_repr_exception，它处理 __repr__ 抛出异常的情况。"
+      },
+      {
+        "name": "repr_failure",
+        "kind": "method",
+        "source_path": "_pytest/python.py",
+        "reason": "堆栈跟踪显示错误路径经过 item.repr_failure，这是生成测试失败报告的关键方法。"
+      },
+      {
+        "name": "pytest_runtest_makereport",
+        "kind": "function",
+        "source_path": "_pytest/runner.py",
+        "reason": "堆栈跟踪显示这是生成测试报告钩子的一部分，是错误传播路径的关键节点。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "_pytest/_io/saferepr.py",
+        "object": "_format_repr_exception",
+        "lines": "",
+        "reason": "堆栈跟踪显示错误发生在 _format_repr_exception 调用链中，该函数负责格式化 __repr__ 异常，可能是异常处理逻辑不完整或递归调用导致问题。"
+      },
+      {
+        "path": "_pytest/_io/saferepr.py",
+        "object": "SafeRepr.repr_instance",
+        "lines": "",
+        "reason": "堆栈跟踪显示 repr_instance 方法调用了 _format_repr_exception 和 repr(x)，可能在处理特定对象状态（如 __getattribute__ 也抛出异常）时存在缺陷。"
+      },
+      {
+        "path": "_pytest/_code/code.py",
+        "object": "FormattedExcinfo.repr_args",
+        "lines": "",
+        "reason": "堆栈跟踪显示错误路径经过 repr_args -> saferepr，可能是参数格式化流程中对异常对象的处理不完善。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_raise_assertion_error_raisin_repr",
+        "test_file": "testing/test_assertion.py",
+        "why_relevant": "该测试直接涉及在测试失败报告过程中，对象的 __repr__ 方法抛出异常的场景，与 Issue 的核心触发条件高度相似。",
+        "reusable_parts": [
+          "使用 testdir fixture 创建临时测试文件",
+          "在测试文件中定义 __repr__ 抛出异常的类",
+          "使用 runpytest 执行测试并检查输出",
+          "断言输出包含特定片段（如 <unprintable ...>）"
+        ],
+        "possible_gap": "该测试中 __repr__ 抛出的是普通 Exception，且对象没有定义 __getattribute__。Issue 中的类同时定义了抛出异常的 __getattribute__，且使用裸 raise 语句，可能导致对象状态更特殊，引发不同的错误路径。"
+      },
+      {
+        "test_name": "test_broken_repr",
+        "test_file": "testing/test_session.py",
+        "why_relevant": "该测试验证了当断言中对象的 __repr__ 抛出异常时，pytest 能生成包含特定标记的报告，展示了正常的处理流程。",
+        "reusable_parts": [
+          "使用 testdir.makepyfile 创建测试模块",
+          "定义 __repr__ 抛出特定异常的类",
+          "使用 inline_run 执行测试并分析结果",
+          "检查失败报告的长表示（longrepr）中是否包含预期标记"
+        ],
+        "possible_gap": "该测试场景是对象在断言比较中被隐式调用 __repr__，而 Issue 是对象在属性访问和后续错误报告过程中被调用 __repr__，调用上下文和堆栈深度可能不同。"
+      },
+      {
+        "test_name": "test_buggy_builtin_repr",
+        "test_file": "testing/io/test_saferepr.py",
+        "why_relevant": "该测试直接针对 saferepr 函数处理 __repr__ 异常的能力，而 saferepr 是 Issue 堆栈跟踪中的关键函数。",
+        "reusable_parts": [
+          "直接导入并调用 saferepr 函数",
+          "定义 __repr__ 抛出异常的类（模拟内置类型）",
+          "断言输出包含异常信息片段"
+        ],
+        "possible_gap": "这是一个单元测试，直接测试 saferepr 函数，不涉及完整的 pytest 测试运行流程（如 testdir、钩子、报告生成）。Issue 的错误发生在更复杂的集成上下文中。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "object_state",
+        "current_pattern": "相似测试中定义的类通常只重写 __repr__ 来抛出异常。",
+        "target_pattern": "定义的类需要同时重写 __getattribute__ 和 __repr__，且都使用裸 raise 语句（raise 不带参数）。",
+        "reason": "Issue 的重现代码表明，同时存在抛出异常的 __getattribute__ 可能影响了对象在错误报告过程中的状态或属性访问，与仅 __repr__ 异常的场景不同，可能触发了更深层的错误处理路径。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "相似测试中，__repr__ 异常通常在断言失败（AssertionError）或 locals 显示时被触发。",
+        "target_pattern": "__repr__ 异常需要在测试函数执行过程中（如属性访问）触发，并经过 pytest 的错误报告链（repr_failure, saferepr 等）处理。",
+        "reason": "Issue 的堆栈跟踪显示错误发生在 pytest 内部报告生成流程中（call_and_report -> repr_failure -> saferepr），而不是在直接的断言比较中。需要构造一个能进入此流程的测试场景。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "测试运行结果（result）中是否出现 INTERNALERROR 或 session.exitstatus 异常。",
+        "reason": "Issue 的核心现象是出现 INTERNALERROR 导致测试会话异常终止，而非正常失败。观测此点可直接判断缺陷是否被触发。"
+      },
+      {
+        "kind": "repr",
+        "expression_hint": "失败测试报告（如 reprec.listoutcomes()[2][0].longrepr）的内容，特别是其中对问题对象的表示（是否包含 <unprintable> 或 [raised in repr()] 标记）。",
+        "reason": "正常行为下，pytest 应能处理 __repr__ 异常并生成包含安全标记的报告。观测报告内容可以判断处理流程是否正常。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "在 saferepr 或 _format_repr_exception 函数内部，传入的 obj 的状态（如是否有 __getattribute__ 方法、当前异常上下文）。",
+        "reason": "Issue 的最终错误是 RuntimeError: No active exception to reraise，表明在裸 raise 时没有活跃异常。观测对象状态和异常上下文有助于理解缺陷条件。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "测试运行应正常完成（无 INTERNALERROR），且测试失败报告应包含对 __repr__ 异常的安全处理标记。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "断言完整的错误消息字符串或堆栈跟踪的精确行号，因为这些可能在修复中改变。",
+        "reason": "修复的目标是消除 INTERNALERROR，使测试会话正常结束。因此，断言输出中不包含 'INTERNALERROR' 是稳定且与 Issue 对齐的目标。同时，可以辅助断言报告包含预期的安全标记（如 'raised in repr()'），但这不是核心缺陷症状。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用 testdir fixture 来创建和运行临时测试文件，这是 pytest 测试套件中测试自身行为的标准方式。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要导入 pytest 以使用相关功能，但测试文件本身由 testdir.makepyfile 生成，通常不需要在测试种子代码中显式导入。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "裸 raise 语句（raise 不带参数）在 __getattribute__ 和 __repr__ 中的具体作用，以及它如何与 pytest 的错误报告上下文交互导致 'No active exception to reraise'。",
+      "__getattribute__ 抛出异常是否是触发缺陷的必要条件，还是仅 __repr__ 异常在特定调用链下就足够。",
+      "saferepr 和 _format_repr_exception 函数内部处理递归或异常上下文的具体逻辑缺陷在哪里。"
+    ]
+  }
+}

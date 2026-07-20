@@ -1,0 +1,196 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-13043",
+  "issue_summary": "decompose() 函数在 separate=True 时返回的列表顺序是任意的，导致测试失败。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要从 sympy.abc 导入符号（如 x, y），并导入 decompose 函数。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_decompose",
+        "test_file": "sympy/integrals/tests/test_intpoly.py",
+        "why_relevant": "它直接测试 decompose 函数，包括 separate=True 的情况，并包含多个断言，可作为起点。",
+        "reusable_parts": [
+          "imports (如 from sympy.abc import x, y)",
+          "decompose 函数的调用模式",
+          "assert 风格"
+        ],
+        "possible_gap": "现有测试断言了特定顺序，但该顺序可能依赖于字典迭代顺序，因此测试本身可能不稳定或已假设了某种顺序。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "调用 decompose(expr, separate=True)，其中 expr 是一个包含多个单项式的多项式。",
+      "evidence": [
+        "Issue 描述：'decompose() function, with separate=True, returns `list(poly_dict.values())`, which is ordered arbitrarily.'",
+        "源码片段 1 第 59 行：'if separate: return list(poly_dict.values())'"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "decompose(expr, separate=True) 返回的列表顺序不稳定，导致依赖于该顺序的测试失败。",
+      "symptom_type": "wrong_order",
+      "evidence": [
+        "Issue 描述：'This is causing test failures for me after some changes to the core.'",
+        "相关测试 1 中 assert 语句依赖于列表的特定顺序，例如 '[3, y, x**3, 4*x, 9*x**2, x*y**2]'。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "decompose",
+        "kind": "function",
+        "source_path": "sympy/integrals/intpoly.py",
+        "reason": "Issue 直接报告此函数在 separate=True 时的问题。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/integrals/intpoly.py",
+        "object": "decompose",
+        "lines": "538-597",
+        "reason": "函数在 separate=True 时返回 `list(poly_dict.values())`，而 poly_dict 是一个字典，其 values() 顺序在 Python 中（特定版本前）是任意的。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "测试中使用相对简单的多项式，如 x**2 + y。",
+        "target_pattern": "使用包含更多单项式、且单项式在字典中可能以不同顺序出现的多项式。",
+        "reason": "更复杂的输入可能更容易暴露字典 values() 顺序的任意性。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "decompose(expr, separate=True) 返回的单项式列表应具有确定、稳定的顺序。",
+      "evidence": [
+        "Issue 提问：'It should be sorted somehow...'",
+        "相关测试 1 中的 assert 语句暗示了期望的顺序（例如按常数、y、x**3、4*x、9*x**2、x*y**2 排列）。"
+      ],
+      "confidence": "medium"
+    },
+    "observation_points": [
+      {
+        "kind": "order",
+        "expression_hint": "decompose(expr, separate=True) 的返回值列表。",
+        "reason": "Issue 的核心是返回列表的顺序问题，观察列表元素的顺序是关键。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证 decompose(expr, separate=True) 返回的列表包含所有正确的单项式，且顺序是确定、稳定的（例如排序后）。",
+        "preferred_assertion_style": "order_equals",
+        "avoid": "断言与特定字典迭代顺序完全相同的列表，除非该顺序已被保证。",
+        "reason": "Issue 要求顺序稳定，断言排序后的列表或使用集合比较内容，再断言顺序一致性更稳定。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "Issue 中提到的 'some changes to the core' 具体是什么？",
+    "期望的确定顺序是什么（例如按度数字典序、按单项式某种规范形式排序）？Issue 未明确。",
+    "现有测试 test_decompose 中的顺序断言是否已经是期望的稳定顺序，还是恰好与某个 Python 版本的字典顺序一致？"
+  ],
+  "raw": {
+    "issue_summary": "decompose() 函数在 separate=True 时返回的列表顺序是任意的，导致测试失败。",
+    "trigger_condition": {
+      "text": "调用 decompose(expr, separate=True)，其中 expr 是一个包含多个单项式的多项式。",
+      "evidence": [
+        "Issue 描述：'decompose() function, with separate=True, returns `list(poly_dict.values())`, which is ordered arbitrarily.'",
+        "源码片段 1 第 59 行：'if separate: return list(poly_dict.values())'"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "decompose(expr, separate=True) 返回的列表顺序不稳定，导致依赖于该顺序的测试失败。",
+      "symptom_type": "wrong_order",
+      "evidence": [
+        "Issue 描述：'This is causing test failures for me after some changes to the core.'",
+        "相关测试 1 中 assert 语句依赖于列表的特定顺序，例如 '[3, y, x**3, 4*x, 9*x**2, x*y**2]'。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "decompose(expr, separate=True) 返回的单项式列表应具有确定、稳定的顺序。",
+      "evidence": [
+        "Issue 提问：'It should be sorted somehow...'",
+        "相关测试 1 中的 assert 语句暗示了期望的顺序（例如按常数、y、x**3、4*x、9*x**2、x*y**2 排列）。"
+      ],
+      "confidence": "medium"
+    },
+    "target_apis": [
+      {
+        "name": "decompose",
+        "kind": "function",
+        "source_path": "sympy/integrals/intpoly.py",
+        "reason": "Issue 直接报告此函数在 separate=True 时的问题。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/integrals/intpoly.py",
+        "object": "decompose",
+        "lines": "538-597",
+        "reason": "函数在 separate=True 时返回 `list(poly_dict.values())`，而 poly_dict 是一个字典，其 values() 顺序在 Python 中（特定版本前）是任意的。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_decompose",
+        "test_file": "sympy/integrals/tests/test_intpoly.py",
+        "why_relevant": "它直接测试 decompose 函数，包括 separate=True 的情况，并包含多个断言，可作为起点。",
+        "reusable_parts": [
+          "imports (如 from sympy.abc import x, y)",
+          "decompose 函数的调用模式",
+          "assert 风格"
+        ],
+        "possible_gap": "现有测试断言了特定顺序，但该顺序可能依赖于字典迭代顺序，因此测试本身可能不稳定或已假设了某种顺序。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "测试中使用相对简单的多项式，如 x**2 + y。",
+        "target_pattern": "使用包含更多单项式、且单项式在字典中可能以不同顺序出现的多项式。",
+        "reason": "更复杂的输入可能更容易暴露字典 values() 顺序的任意性。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "order",
+        "expression_hint": "decompose(expr, separate=True) 的返回值列表。",
+        "reason": "Issue 的核心是返回列表的顺序问题，观察列表元素的顺序是关键。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证 decompose(expr, separate=True) 返回的列表包含所有正确的单项式，且顺序是确定、稳定的（例如排序后）。",
+        "preferred_assertion_style": "order_equals",
+        "avoid": "断言与特定字典迭代顺序完全相同的列表，除非该顺序已被保证。",
+        "reason": "Issue 要求顺序稳定，断言排序后的列表或使用集合比较内容，再断言顺序一致性更稳定。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要从 sympy.abc 导入符号（如 x, y），并导入 decompose 函数。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "Issue 中提到的 'some changes to the core' 具体是什么？",
+      "期望的确定顺序是什么（例如按度数字典序、按单项式某种规范形式排序）？Issue 未明确。",
+      "现有测试 test_decompose 中的顺序断言是否已经是期望的稳定顺序，还是恰好与某个 Python 版本的字典顺序一致？"
+    ]
+  }
+}

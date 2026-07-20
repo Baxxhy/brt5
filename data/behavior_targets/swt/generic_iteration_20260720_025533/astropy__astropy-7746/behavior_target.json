@@ -1,0 +1,306 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "astropy__astropy-7746",
+  "issue_summary": "当向 WCS 转换方法传递空列表/数组时，会抛出 InconsistentAxisTypesError 异常，而不是返回空列表/数组。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要一个有效的 WCS 对象。可以使用一个简单的 FITS 文件头或直接构造 WCS 对象并设置其属性。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要导入 numpy 和 pytest。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_shape_mismatch",
+        "test_file": "astropy/wcs/tests/test_wcs.py",
+        "why_relevant": "该测试验证了当坐标数组形状不匹配时，wcs_pix2world 会抛出 ValueError。它展示了如何构造 WCS 对象、调用 wcs_pix2world 以及捕获和断言异常。",
+        "reusable_parts": [
+          "WCS 对象构造 (w = wcs.WCS(naxis=2))",
+          "调用 wcs_pix2world",
+          "使用 pytest.raises 捕获异常"
+        ],
+        "possible_gap": "该测试使用随机数据，关注的是形状不匹配的错误，而不是空数组输入。它没有测试空数组的情况。"
+      },
+      {
+        "test_name": "test_3d_shapes",
+        "test_file": "astropy/wcs/tests/test_wcs.py",
+        "why_relevant": "该测试验证了 wcs_pix2world 对不同形状输入的处理，并检查了输出形状。它展示了如何调用 wcs_pix2world 的两种参数形式。",
+        "reusable_parts": [
+          "WCS 对象构造 (w = wcs.WCS(naxis=3))",
+          "使用随机数据",
+          "调用 wcs_pix2world 的两种形式",
+          "断言输出形状"
+        ],
+        "possible_gap": "该测试使用随机非空数据，没有测试空数组输入。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "调用 WCS 对象的 wcs_pix2world 方法，并传入两个空列表作为像素坐标参数和一个原点参数（例如 0）。",
+      "evidence": [
+        "Issue 中的代码示例：`wcs.wcs_pix2world([], [], 0)`"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "抛出 InconsistentAxisTypesError 异常，错误信息为 'ncoord and/or nelem inconsistent with the wcsprm.'。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误堆栈显示 InconsistentAxisTypesError 来自 wcsp2s() 函数。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "WCS.wcs_pix2world",
+        "kind": "method",
+        "source_path": "astropy/wcs/wcs.py",
+        "reason": "Issue 中触发错误的直接方法调用。"
+      },
+      {
+        "name": "WCS._array_converter",
+        "kind": "method",
+        "source_path": "astropy/wcs/wcs.py",
+        "reason": "wcs_pix2world 内部调用了此方法，负责处理输入数组的转换逻辑。"
+      },
+      {
+        "name": "WCS._return_list_of_arrays",
+        "kind": "function",
+        "source_path": "astropy/wcs/wcs.py",
+        "reason": "_array_converter 内部的嵌套函数，负责处理多个数组参数的情况，Issue 中的调用路径经过此处。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "astropy/wcs/wcs.py",
+        "object": "WCS._array_converter",
+        "lines": "1208-1276",
+        "reason": "该方法负责将输入参数分派给 _return_list_of_arrays 或 _return_single_array。当传入空列表时，可能未正确处理空数组的广播或传递给底层 func 的方式。"
+      },
+      {
+        "path": "astropy/wcs/wcs.py",
+        "object": "WCS._return_list_of_arrays",
+        "lines": "1214-1231",
+        "reason": "该函数处理多个数组参数的情况。当传入空列表时，`np.broadcast_arrays` 和 `np.hstack` 的行为可能导致传递给底层 `func` 的 `xy` 数组形状与底层 WCS 库的预期不符。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用随机生成的、形状匹配的非空 NumPy 数组作为输入。",
+        "target_pattern": "使用空列表 `[]` 作为 wcs_pix2world 的坐标参数。",
+        "reason": "Issue 表明空列表输入会触发异常，而现有测试没有覆盖此边界情况。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "相似测试中通常为每个坐标轴传递一个数组（例如 `x, y, origin`）。",
+        "target_pattern": "为每个坐标轴传递一个空列表（例如 `[], [], origin`）。",
+        "reason": "Issue 中的调用形式是传递多个参数（每个轴一个），且参数为空列表。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "当传入空列表/数组时，方法应返回空列表/数组，而不是抛出异常。",
+      "evidence": [
+        "Issue 描述：'The following should not fail but instead should return empty lists/arrays:'"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 `wcs.wcs_pix2world([], [], 0)` 时是否抛出 InconsistentAxisTypesError 或任何其他异常。",
+        "reason": "Issue 的核心是异常被错误地抛出。观察异常类型和消息可以确认缺陷是否被触发。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "调用 `wcs.wcs_pix2world([], [], 0)` 后的返回值（如果未抛出异常）。",
+        "reason": "修复后，方法应返回空列表/数组。观察返回值可以验证预期行为。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "调用 `wcs.wcs_pix2world([], [], 0)` 后返回值的类型（例如 list, np.ndarray）。",
+        "reason": "帮助理解修复后返回的数据结构。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当传入空列表时，wcs_pix2world 不应抛出异常，并应返回一个空数组或空列表。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串，因为底层库的错误信息可能变化。",
+        "reason": "Issue 明确指出不应失败。因此，断言不应引发异常是核心。修复后，可以进一步断言返回值是空的。"
+      },
+      {
+        "assertion_goal": "如果修复后返回空数组，其长度应为 0。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言返回数组的精确数据类型或内存布局。",
+        "reason": "验证返回结果确实是空的，符合预期行为。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "底层 WCSLIB 库（wcsp2s 函数）对空输入的确切要求是什么？",
+    "修复后，返回值的具体类型和形状是什么？是空列表、空元组还是空 NumPy 数组？",
+    "除了 wcs_pix2world，其他转换方法（如 wcs_world2pix, all_pix2world）是否也存在相同问题？"
+  ],
+  "raw": {
+    "issue_summary": "当向 WCS 转换方法传递空列表/数组时，会抛出 InconsistentAxisTypesError 异常，而不是返回空列表/数组。",
+    "trigger_condition": {
+      "text": "调用 WCS 对象的 wcs_pix2world 方法，并传入两个空列表作为像素坐标参数和一个原点参数（例如 0）。",
+      "evidence": [
+        "Issue 中的代码示例：`wcs.wcs_pix2world([], [], 0)`"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "抛出 InconsistentAxisTypesError 异常，错误信息为 'ncoord and/or nelem inconsistent with the wcsprm.'。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误堆栈显示 InconsistentAxisTypesError 来自 wcsp2s() 函数。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "当传入空列表/数组时，方法应返回空列表/数组，而不是抛出异常。",
+      "evidence": [
+        "Issue 描述：'The following should not fail but instead should return empty lists/arrays:'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "WCS.wcs_pix2world",
+        "kind": "method",
+        "source_path": "astropy/wcs/wcs.py",
+        "reason": "Issue 中触发错误的直接方法调用。"
+      },
+      {
+        "name": "WCS._array_converter",
+        "kind": "method",
+        "source_path": "astropy/wcs/wcs.py",
+        "reason": "wcs_pix2world 内部调用了此方法，负责处理输入数组的转换逻辑。"
+      },
+      {
+        "name": "WCS._return_list_of_arrays",
+        "kind": "function",
+        "source_path": "astropy/wcs/wcs.py",
+        "reason": "_array_converter 内部的嵌套函数，负责处理多个数组参数的情况，Issue 中的调用路径经过此处。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "astropy/wcs/wcs.py",
+        "object": "WCS._array_converter",
+        "lines": "1208-1276",
+        "reason": "该方法负责将输入参数分派给 _return_list_of_arrays 或 _return_single_array。当传入空列表时，可能未正确处理空数组的广播或传递给底层 func 的方式。"
+      },
+      {
+        "path": "astropy/wcs/wcs.py",
+        "object": "WCS._return_list_of_arrays",
+        "lines": "1214-1231",
+        "reason": "该函数处理多个数组参数的情况。当传入空列表时，`np.broadcast_arrays` 和 `np.hstack` 的行为可能导致传递给底层 `func` 的 `xy` 数组形状与底层 WCS 库的预期不符。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_shape_mismatch",
+        "test_file": "astropy/wcs/tests/test_wcs.py",
+        "why_relevant": "该测试验证了当坐标数组形状不匹配时，wcs_pix2world 会抛出 ValueError。它展示了如何构造 WCS 对象、调用 wcs_pix2world 以及捕获和断言异常。",
+        "reusable_parts": [
+          "WCS 对象构造 (w = wcs.WCS(naxis=2))",
+          "调用 wcs_pix2world",
+          "使用 pytest.raises 捕获异常"
+        ],
+        "possible_gap": "该测试使用随机数据，关注的是形状不匹配的错误，而不是空数组输入。它没有测试空数组的情况。"
+      },
+      {
+        "test_name": "test_3d_shapes",
+        "test_file": "astropy/wcs/tests/test_wcs.py",
+        "why_relevant": "该测试验证了 wcs_pix2world 对不同形状输入的处理，并检查了输出形状。它展示了如何调用 wcs_pix2world 的两种参数形式。",
+        "reusable_parts": [
+          "WCS 对象构造 (w = wcs.WCS(naxis=3))",
+          "使用随机数据",
+          "调用 wcs_pix2world 的两种形式",
+          "断言输出形状"
+        ],
+        "possible_gap": "该测试使用随机非空数据，没有测试空数组输入。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用随机生成的、形状匹配的非空 NumPy 数组作为输入。",
+        "target_pattern": "使用空列表 `[]` 作为 wcs_pix2world 的坐标参数。",
+        "reason": "Issue 表明空列表输入会触发异常，而现有测试没有覆盖此边界情况。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "相似测试中通常为每个坐标轴传递一个数组（例如 `x, y, origin`）。",
+        "target_pattern": "为每个坐标轴传递一个空列表（例如 `[], [], origin`）。",
+        "reason": "Issue 中的调用形式是传递多个参数（每个轴一个），且参数为空列表。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 `wcs.wcs_pix2world([], [], 0)` 时是否抛出 InconsistentAxisTypesError 或任何其他异常。",
+        "reason": "Issue 的核心是异常被错误地抛出。观察异常类型和消息可以确认缺陷是否被触发。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "调用 `wcs.wcs_pix2world([], [], 0)` 后的返回值（如果未抛出异常）。",
+        "reason": "修复后，方法应返回空列表/数组。观察返回值可以验证预期行为。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "调用 `wcs.wcs_pix2world([], [], 0)` 后返回值的类型（例如 list, np.ndarray）。",
+        "reason": "帮助理解修复后返回的数据结构。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当传入空列表时，wcs_pix2world 不应抛出异常，并应返回一个空数组或空列表。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串，因为底层库的错误信息可能变化。",
+        "reason": "Issue 明确指出不应失败。因此，断言不应引发异常是核心。修复后，可以进一步断言返回值是空的。"
+      },
+      {
+        "assertion_goal": "如果修复后返回空数组，其长度应为 0。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言返回数组的精确数据类型或内存布局。",
+        "reason": "验证返回结果确实是空的，符合预期行为。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要一个有效的 WCS 对象。可以使用一个简单的 FITS 文件头或直接构造 WCS 对象并设置其属性。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要导入 numpy 和 pytest。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "底层 WCSLIB 库（wcsp2s 函数）对空输入的确切要求是什么？",
+      "修复后，返回值的具体类型和形状是什么？是空列表、空元组还是空 NumPy 数组？",
+      "除了 wcs_pix2world，其他转换方法（如 wcs_world2pix, all_pix2world）是否也存在相同问题？"
+    ]
+  }
+}

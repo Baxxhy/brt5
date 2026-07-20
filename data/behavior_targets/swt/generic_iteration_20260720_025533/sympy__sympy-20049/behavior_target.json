@@ -1,0 +1,324 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-20049",
+  "issue_summary": "Point.vel() 方法在位置向量已定义的情况下无法自动计算速度，而 ReferenceFrame.ang_vel_in() 在方向已定义时可以自动计算角速度，两者行为不一致。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy.physics.mechanics 相关模块（通常作为 me），以及 sympy。测试可能是一个独立的函数，不需要特定的 TestCase 类。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要使用 dynamicsymbols 创建时间变量，用于构造依赖于时间的位置向量。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_point_funcs",
+        "test_file": "sympy/physics/vector/tests/test_point.py",
+        "why_relevant": "该测试包含了 Point、ReferenceFrame、dynamicsymbols 的创建，以及 set_pos、set_vel、vel 等方法的调用，与 Issue 场景高度相关。",
+        "reusable_parts": [
+          "imports (dynamicsymbols, ReferenceFrame, Point)",
+          "对象构造模式 (N = ReferenceFrame('N'); O = Point('O'); P = O.locatenew(...))",
+          "使用 dynamicsymbols 创建时间变量",
+          "调用 set_vel 和 vel 进行断言"
+        ],
+        "possible_gap": "该测试在调用 vel 之前总是先显式调用 set_vel 来定义速度。它没有测试仅通过 set_pos 定义位置后，vel 方法是否能自动计算速度的场景。这正是 Issue 所报告的问题。"
+      },
+      {
+        "test_name": "test_point_v2pt_theorys",
+        "test_file": "sympy/physics/vector/tests/test_point.py",
+        "why_relevant": "该测试使用了 orientnew 创建有相对方向的参考帧，并测试了 v2pt_theory 方法，该方法涉及点在不同帧中的速度计算理论。",
+        "reusable_parts": [
+          "使用 orientnew 创建相关参考帧的模式 (B = N.orientnew('B', 'Axis', [q, N.z]))",
+          "Point 的创建和定位",
+          "对速度计算结果的断言风格"
+        ],
+        "possible_gap": "该测试主要关注 v2pt_theory 方法，而不是直接测试 Point.vel 方法。它也没有测试仅通过 set_pos 而不 set_vel 的场景。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "创建两个参考帧 A 和 B，其中 B 相对于 A 有方向定义（通过 orientnew）。创建两个点 P 和 Q，通过 set_pos 定义 Q 相对于 P 的位置向量 r（该向量依赖于时间变量 q）。然后调用 Q.vel(A) 请求 Q 在参考帧 A 中的速度。",
+      "evidence": [
+        "Issue 中的代码示例：A = me.ReferenceFrame('A'); q = me.dynamicsymbols('q'); B = A.orientnew('B', 'Axis', (q, A.x)); P = me.Point('P'); Q = me.Point('Q'); r = q*A.x + 2*q*A.y; Q.set_pos(P, r); Q.vel(A)"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 Q.vel(A) 时抛出 ValueError: 'Velocity of point Q has not been defined in ReferenceFrame A'。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误堆栈：ValueError: Velocity of point Q has not been defined in ReferenceFrame A",
+        "源码片段 4 (Point.vel 方法) 第 453-455 行：if not (frame in self._vel_dict): raise ValueError(...)"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "sympy.physics.mechanics.ReferenceFrame.orientnew",
+        "kind": "method",
+        "source_path": "sympy/physics/vector/frame.py",
+        "reason": "用于创建具有相对方向的新参考帧，这是 Issue 中设置场景的第一步。"
+      },
+      {
+        "name": "sympy.physics.mechanics.Point.set_pos",
+        "kind": "method",
+        "source_path": "sympy/physics/vector/point.py",
+        "reason": "用于定义点之间的相对位置向量，这是触发条件的关键操作。"
+      },
+      {
+        "name": "sympy.physics.mechanics.Point.vel",
+        "kind": "method",
+        "source_path": "sympy/physics/vector/point.py",
+        "reason": "这是触发缺陷的直接 API 调用，其当前实现在位置向量已定义时无法自动计算速度。"
+      },
+      {
+        "name": "sympy.physics.vector.dynamicsymbols",
+        "kind": "function",
+        "source_path": "sympy/physics/vector/functions.py",
+        "reason": "用于创建时间相关的符号，是构造依赖于时间的位置向量所必需的。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/physics/vector/point.py",
+        "object": "Point.vel",
+        "lines": "499-524",
+        "reason": "vel 方法仅检查 self._vel_dict 中是否已预先存储了速度，如果没有则直接抛出异常。它没有尝试利用已存储的位置信息（self._pos_dict）和已知的参考帧关系来自动计算速度。这与 ReferenceFrame.ang_vel_in 的行为形成对比。"
+      },
+      {
+        "path": "sympy/physics/vector/point.py",
+        "object": "Point.set_pos",
+        "lines": "339-368",
+        "reason": "set_pos 方法存储了位置信息（self._pos_dict），但可能没有建立足够的信息来支持后续的自动速度计算，或者 vel 方法没有利用这些信息。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "call_chain",
+        "current_pattern": "在相关测试中，调用 point.vel(frame) 之前，总是先显式调用 point.set_vel(frame, value) 来定义速度。",
+        "target_pattern": "在调用 point.vel(frame) 之前，只调用 point.set_pos(other_point, time_dependent_vector) 来定义位置，而不调用 set_vel。",
+        "reason": "Issue 表明，当仅通过 set_pos 定义了依赖于时间的位置向量时，vel 方法应该能够自动计算导数。移除 set_vel 调用正是触发缺陷路径的关键变异。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "测试中的位置向量通常是常量（如 10 * B.x）或简单的时间函数，但速度已通过 set_vel 显式设置。",
+        "target_pattern": "位置向量应是一个显式依赖于 dynamicsymbols 的表达式（如 q*A.x + 2*q*A.y），且该点在该参考帧中的速度未通过 set_vel 显式设置。",
+        "reason": "为了测试自动速度计算，位置向量必须显式依赖于时间，并且该点在目标帧中的速度状态应为“未定义”。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "当点 Q 相对于点 P 的位置向量 r 已通过 set_pos 定义，且 r 是时间的函数时，调用 Q.vel(A) 应能自动计算 r 在参考帧 A 中对时间的导数（即 r.dt(A)），并返回该速度向量，而不需要预先显式调用 set_vel。",
+      "evidence": [
+        "Issue 中作者给出的期望结果：'The expected result of the `Q.vel(A)` should be:' 后接 r.dt(A) 的输出：q'*A.x + 2*q'*A.y",
+        "Issue 中作者陈述：'I think that this is possible. ... we should try to implement it because it is confusing why this works for orientations and not positions.'"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 Q.vel(A) 时是否抛出 ValueError 及其消息。",
+        "reason": "当前缺陷的直接表现就是抛出 ValueError。修复后，该调用应正常返回一个速度向量。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "Q.vel(A) 的返回值，应为一个 Vector 对象。可以观察其表达式是否等于 r.dt(A) 的计算结果。",
+        "reason": "修复后的正确行为是返回一个计算出的速度向量。需要验证该向量是否正确。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "在调用 Q.vel(A) 前后，检查 Q._vel_dict 的内容，特别是键 A 对应的值。",
+        "reason": "vel 方法可能通过计算填充 _vel_dict，或者保持原状。这有助于理解实现机制。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "在仅通过 set_pos 定义了时间相关位置向量的情况下，调用 point.vel(frame) 应成功返回一个速度向量，且该向量等于位置向量在该帧中对时间的导数。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的、未经简化的符号表达式字符串相等，因为符号化简可能导致形式不同。应使用 SymPy 的 == 进行符号相等比较。",
+        "reason": "核心语义是计算出的速度在数学上等于位置向量的时间导数。使用符号相等比较可以容忍表达式形式上的差异。"
+      },
+      {
+        "assertion_goal": "调用 point.vel(frame) 不应抛出 ValueError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "避免断言具体的异常消息字符串，除非消息是功能的一部分。",
+        "reason": "当前缺陷行为是抛出异常。在修复后的测试中，我们可以断言不抛出异常（或者在新测试中，我们可以断言旧版本会抛出异常）。但根据规则9，对于修复后的正向行为，不应建议 raises。因此，此提示更适用于验证当前缺陷的测试。对于生成修复后的测试，主要使用上面的 equals 断言。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "Point.vel 方法是否应该（或能够）在所有情况下都自动计算速度，还是仅在特定条件下（例如，位置向量仅依赖于一个点的相对位置且该点速度已知）？Issue 中的例子是一个简单链（P 速度未知，但位置向量直接表达在 A 中）。",
+    "自动计算速度的具体算法和实现位置可能在哪里？除了修改 Point.vel，是否还需要修改 set_pos 或其他方法来存储必要信息？",
+    "如果点 P 本身在参考帧 A 中有速度，那么 Q.vel(A) 的自动计算是否应该考虑 P 的速度（即使用速度叠加定理）？还是只计算相对速度？Issue 中的例子 P 的速度未定义，所以期望结果只是 r.dt(A)。",
+    "修复后的实现是否会缓存计算出的速度到 _vel_dict 中，还是每次调用都重新计算？"
+  ],
+  "raw": {
+    "issue_summary": "Point.vel() 方法在位置向量已定义的情况下无法自动计算速度，而 ReferenceFrame.ang_vel_in() 在方向已定义时可以自动计算角速度，两者行为不一致。",
+    "trigger_condition": {
+      "text": "创建两个参考帧 A 和 B，其中 B 相对于 A 有方向定义（通过 orientnew）。创建两个点 P 和 Q，通过 set_pos 定义 Q 相对于 P 的位置向量 r（该向量依赖于时间变量 q）。然后调用 Q.vel(A) 请求 Q 在参考帧 A 中的速度。",
+      "evidence": [
+        "Issue 中的代码示例：A = me.ReferenceFrame('A'); q = me.dynamicsymbols('q'); B = A.orientnew('B', 'Axis', (q, A.x)); P = me.Point('P'); Q = me.Point('Q'); r = q*A.x + 2*q*A.y; Q.set_pos(P, r); Q.vel(A)"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 Q.vel(A) 时抛出 ValueError: 'Velocity of point Q has not been defined in ReferenceFrame A'。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误堆栈：ValueError: Velocity of point Q has not been defined in ReferenceFrame A",
+        "源码片段 4 (Point.vel 方法) 第 453-455 行：if not (frame in self._vel_dict): raise ValueError(...)"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "当点 Q 相对于点 P 的位置向量 r 已通过 set_pos 定义，且 r 是时间的函数时，调用 Q.vel(A) 应能自动计算 r 在参考帧 A 中对时间的导数（即 r.dt(A)），并返回该速度向量，而不需要预先显式调用 set_vel。",
+      "evidence": [
+        "Issue 中作者给出的期望结果：'The expected result of the `Q.vel(A)` should be:' 后接 r.dt(A) 的输出：q'*A.x + 2*q'*A.y",
+        "Issue 中作者陈述：'I think that this is possible. ... we should try to implement it because it is confusing why this works for orientations and not positions.'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "sympy.physics.mechanics.ReferenceFrame.orientnew",
+        "kind": "method",
+        "source_path": "sympy/physics/vector/frame.py",
+        "reason": "用于创建具有相对方向的新参考帧，这是 Issue 中设置场景的第一步。"
+      },
+      {
+        "name": "sympy.physics.mechanics.Point.set_pos",
+        "kind": "method",
+        "source_path": "sympy/physics/vector/point.py",
+        "reason": "用于定义点之间的相对位置向量，这是触发条件的关键操作。"
+      },
+      {
+        "name": "sympy.physics.mechanics.Point.vel",
+        "kind": "method",
+        "source_path": "sympy/physics/vector/point.py",
+        "reason": "这是触发缺陷的直接 API 调用，其当前实现在位置向量已定义时无法自动计算速度。"
+      },
+      {
+        "name": "sympy.physics.vector.dynamicsymbols",
+        "kind": "function",
+        "source_path": "sympy/physics/vector/functions.py",
+        "reason": "用于创建时间相关的符号，是构造依赖于时间的位置向量所必需的。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/physics/vector/point.py",
+        "object": "Point.vel",
+        "lines": "499-524",
+        "reason": "vel 方法仅检查 self._vel_dict 中是否已预先存储了速度，如果没有则直接抛出异常。它没有尝试利用已存储的位置信息（self._pos_dict）和已知的参考帧关系来自动计算速度。这与 ReferenceFrame.ang_vel_in 的行为形成对比。"
+      },
+      {
+        "path": "sympy/physics/vector/point.py",
+        "object": "Point.set_pos",
+        "lines": "339-368",
+        "reason": "set_pos 方法存储了位置信息（self._pos_dict），但可能没有建立足够的信息来支持后续的自动速度计算，或者 vel 方法没有利用这些信息。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_point_funcs",
+        "test_file": "sympy/physics/vector/tests/test_point.py",
+        "why_relevant": "该测试包含了 Point、ReferenceFrame、dynamicsymbols 的创建，以及 set_pos、set_vel、vel 等方法的调用，与 Issue 场景高度相关。",
+        "reusable_parts": [
+          "imports (dynamicsymbols, ReferenceFrame, Point)",
+          "对象构造模式 (N = ReferenceFrame('N'); O = Point('O'); P = O.locatenew(...))",
+          "使用 dynamicsymbols 创建时间变量",
+          "调用 set_vel 和 vel 进行断言"
+        ],
+        "possible_gap": "该测试在调用 vel 之前总是先显式调用 set_vel 来定义速度。它没有测试仅通过 set_pos 定义位置后，vel 方法是否能自动计算速度的场景。这正是 Issue 所报告的问题。"
+      },
+      {
+        "test_name": "test_point_v2pt_theorys",
+        "test_file": "sympy/physics/vector/tests/test_point.py",
+        "why_relevant": "该测试使用了 orientnew 创建有相对方向的参考帧，并测试了 v2pt_theory 方法，该方法涉及点在不同帧中的速度计算理论。",
+        "reusable_parts": [
+          "使用 orientnew 创建相关参考帧的模式 (B = N.orientnew('B', 'Axis', [q, N.z]))",
+          "Point 的创建和定位",
+          "对速度计算结果的断言风格"
+        ],
+        "possible_gap": "该测试主要关注 v2pt_theory 方法，而不是直接测试 Point.vel 方法。它也没有测试仅通过 set_pos 而不 set_vel 的场景。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "call_chain",
+        "current_pattern": "在相关测试中，调用 point.vel(frame) 之前，总是先显式调用 point.set_vel(frame, value) 来定义速度。",
+        "target_pattern": "在调用 point.vel(frame) 之前，只调用 point.set_pos(other_point, time_dependent_vector) 来定义位置，而不调用 set_vel。",
+        "reason": "Issue 表明，当仅通过 set_pos 定义了依赖于时间的位置向量时，vel 方法应该能够自动计算导数。移除 set_vel 调用正是触发缺陷路径的关键变异。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "测试中的位置向量通常是常量（如 10 * B.x）或简单的时间函数，但速度已通过 set_vel 显式设置。",
+        "target_pattern": "位置向量应是一个显式依赖于 dynamicsymbols 的表达式（如 q*A.x + 2*q*A.y），且该点在该参考帧中的速度未通过 set_vel 显式设置。",
+        "reason": "为了测试自动速度计算，位置向量必须显式依赖于时间，并且该点在目标帧中的速度状态应为“未定义”。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 Q.vel(A) 时是否抛出 ValueError 及其消息。",
+        "reason": "当前缺陷的直接表现就是抛出 ValueError。修复后，该调用应正常返回一个速度向量。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "Q.vel(A) 的返回值，应为一个 Vector 对象。可以观察其表达式是否等于 r.dt(A) 的计算结果。",
+        "reason": "修复后的正确行为是返回一个计算出的速度向量。需要验证该向量是否正确。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "在调用 Q.vel(A) 前后，检查 Q._vel_dict 的内容，特别是键 A 对应的值。",
+        "reason": "vel 方法可能通过计算填充 _vel_dict，或者保持原状。这有助于理解实现机制。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "在仅通过 set_pos 定义了时间相关位置向量的情况下，调用 point.vel(frame) 应成功返回一个速度向量，且该向量等于位置向量在该帧中对时间的导数。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的、未经简化的符号表达式字符串相等，因为符号化简可能导致形式不同。应使用 SymPy 的 == 进行符号相等比较。",
+        "reason": "核心语义是计算出的速度在数学上等于位置向量的时间导数。使用符号相等比较可以容忍表达式形式上的差异。"
+      },
+      {
+        "assertion_goal": "调用 point.vel(frame) 不应抛出 ValueError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "避免断言具体的异常消息字符串，除非消息是功能的一部分。",
+        "reason": "当前缺陷行为是抛出异常。在修复后的测试中，我们可以断言不抛出异常（或者在新测试中，我们可以断言旧版本会抛出异常）。但根据规则9，对于修复后的正向行为，不应建议 raises。因此，此提示更适用于验证当前缺陷的测试。对于生成修复后的测试，主要使用上面的 equals 断言。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy.physics.mechanics 相关模块（通常作为 me），以及 sympy。测试可能是一个独立的函数，不需要特定的 TestCase 类。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要使用 dynamicsymbols 创建时间变量，用于构造依赖于时间的位置向量。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "Point.vel 方法是否应该（或能够）在所有情况下都自动计算速度，还是仅在特定条件下（例如，位置向量仅依赖于一个点的相对位置且该点速度已知）？Issue 中的例子是一个简单链（P 速度未知，但位置向量直接表达在 A 中）。",
+      "自动计算速度的具体算法和实现位置可能在哪里？除了修改 Point.vel，是否还需要修改 set_pos 或其他方法来存储必要信息？",
+      "如果点 P 本身在参考帧 A 中有速度，那么 Q.vel(A) 的自动计算是否应该考虑 P 的速度（即使用速度叠加定理）？还是只计算相对速度？Issue 中的例子 P 的速度未定义，所以期望结果只是 r.dt(A)。",
+      "修复后的实现是否会缓存计算出的速度到 _vel_dict 中，还是每次调用都重新计算？"
+    ]
+  }
+}

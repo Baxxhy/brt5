@@ -1,0 +1,320 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-12236",
+  "issue_summary": "apart 方法在特定符号表达式上返回错误结果。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 中的 symbols, apart。可能需要在测试类中定义符号 a 和 t 并附加假设。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可以放在现有的 test_partfrac.py 文件中，遵循其现有的导入和断言风格。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_apart",
+        "test_file": "sympy/polys/tests/test_partfrac.py",
+        "why_relevant": "它直接测试 apart 函数的基本功能，包含符号和多项式分解。",
+        "reusable_parts": [
+          "from sympy import apart, symbols, ...",
+          "assert apart(f, x) == g 的断言风格。",
+          "使用 symbols 创建符号。"
+        ],
+        "possible_gap": "现有测试用例可能不包含 Issue 中这种带符号系数和特定约束的复杂表达式结构。"
+      },
+      {
+        "test_name": "test_apart_symbolic",
+        "test_file": "sympy/polys/tests/test_partfrac.py",
+        "why_relevant": "它测试了 apart 处理带符号参数（如 a, b, c）的表达式，与 Issue 中涉及符号 a 的情况类似。",
+        "reusable_parts": [
+          "使用多个符号（a, b, c, x）构造表达式。",
+          "assert apart(f/g, x) == ... 的复杂等式断言。"
+        ],
+        "possible_gap": "测试中的符号没有附加 real=True 或 negative=False 等假设，且表达式结构不同。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "对表达式 a * (-t + (-t + 1) * (2 * t - 1)) / (2 * t - 1) 调用 apart(t)，其中 a 和 t 是带约束的符号（real=True, negative=False）。",
+      "evidence": [
+        "Issue 中 In[4] 定义了 bug 表达式，In[8] 调用了 bug.apart(t)。",
+        "Issue 中 In[2] 和 In[3] 定义了符号 a 和 t 及其约束。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "bug.apart(t) 返回 -a*t，而 bug.subs(a, 1).apart(t) 返回 -t + 1/2 - 1/(2*(2*t - 1))。两者结果不一致，且前者结果明显不正确。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中 Out[8] 显示 bug.apart(t) 结果为 -a*t。",
+        "Issue 中 Out[7] 显示 bug.subs(a, 1).apart(t) 结果为 -t + 1/2 - 1/(2*(2*t - 1))。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "apart",
+        "kind": "function",
+        "source_path": "sympy/polys/__init__.py",
+        "reason": "Issue 中直接调用了 apart 方法，且源码片段显示 Expr.apart 委托给 sympy.polys.apart。"
+      },
+      {
+        "name": "Expr.apart",
+        "kind": "method",
+        "source_path": "sympy/core/expr.py",
+        "reason": "Issue 中 bug.apart(t) 是在表达式上调用的方法，源码片段 2 显示了其定义。"
+      },
+      {
+        "name": "Expr.subs",
+        "kind": "method",
+        "source_path": "sympy/core/basic.py",
+        "reason": "Issue 中使用了 subs 方法将 a 替换为 1，以对比结果。"
+      },
+      {
+        "name": "symbols",
+        "kind": "function",
+        "source_path": "sympy/core/symbol.py",
+        "reason": "Issue 中用于创建符号 a 和 t。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/polys/partfrac.py",
+        "object": "apart",
+        "lines": "",
+        "reason": "apart 函数是实际执行部分分式分解的地方，错误结果可能源于处理带约束符号或表达式结构时的逻辑缺陷。"
+      },
+      {
+        "path": "sympy/core/expr.py",
+        "object": "Expr.apart",
+        "lines": "3075-3078",
+        "reason": "这是 Issue 中调用的方法入口，可能涉及参数传递或预处理。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试中使用相对简单的有理函数，如 (x**2 + 1)/(x + 1) 或 1/((x + a)*(x + b))。",
+        "target_pattern": "使用 Issue 中的表达式：a * (-t + (-t + 1) * (2 * t - 1)) / (2 * t - 1)，其中符号带有假设（real=True, negative=False）。",
+        "reason": "Issue 表明缺陷可能由特定的表达式结构和符号假设触发。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "测试中 apart 调用通常只传递变量 x 作为参数。",
+        "target_pattern": "对表达式调用 apart(t)，其中 t 是带约束的符号。",
+        "reason": "Issue 显示 bug.apart(t) 和 bug.subs(a, 1).apart(t) 结果不同，表明 apart 在处理带其他符号的表达式时可能有问题。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "bug.apart(t) 的结果应与 bug.subs(a, 1).apart(t) 乘以 a 的结果一致，即正确执行部分分式分解。",
+      "evidence": [
+        "Issue 中 bug.subs(a, 1).apart(t) 给出了一个看似合理的分解结果。",
+        "根据 apart 函数的数学语义，对线性因子 a 的提取不应影响对 t 的分解。"
+      ],
+      "confidence": "medium"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "apart_result = expr.apart(t)",
+        "reason": "直接观察 apart 方法的返回值，与预期结果或 subs 后的结果进行比较。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "subs_result = expr.subs(a, 1).apart(t)",
+        "reason": "观察替换 a=1 后的 apart 结果，作为正确行为的参考。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "type(apart_result)",
+        "reason": "检查返回对象的类型，确保是有效的表达式类型。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "bug.apart(t) 应等于 bug.subs(a, 1).apart(t) * a（在数学等价意义上）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免直接比较完整的字符串表示，因为表达式化简可能有多种等价形式。",
+        "reason": "Issue 的核心是 apart 结果在有无符号系数 a 时不一致，断言应验证其数学等价性。"
+      },
+      {
+        "assertion_goal": "apart 结果应是一个正确的部分分式分解，分母应包含 (2*t - 1) 的因子。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "避免断言具体的、可能随化简变化的系数数值。",
+        "reason": "可以验证结果中是否包含预期的分母因子，这是一个稳定的语义特征。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "缺陷是否只与符号 a 的存在有关，还是与符号 t 的约束（negative=False）有关？",
+    "apart 函数内部在处理带假设的符号时，具体的错误逻辑在哪里？",
+    "除了等式断言，是否还有其他更稳定的方式（如展开后比较）来验证 apart 结果的正确性？"
+  ],
+  "raw": {
+    "issue_summary": "apart 方法在特定符号表达式上返回错误结果。",
+    "trigger_condition": {
+      "text": "对表达式 a * (-t + (-t + 1) * (2 * t - 1)) / (2 * t - 1) 调用 apart(t)，其中 a 和 t 是带约束的符号（real=True, negative=False）。",
+      "evidence": [
+        "Issue 中 In[4] 定义了 bug 表达式，In[8] 调用了 bug.apart(t)。",
+        "Issue 中 In[2] 和 In[3] 定义了符号 a 和 t 及其约束。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "bug.apart(t) 返回 -a*t，而 bug.subs(a, 1).apart(t) 返回 -t + 1/2 - 1/(2*(2*t - 1))。两者结果不一致，且前者结果明显不正确。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中 Out[8] 显示 bug.apart(t) 结果为 -a*t。",
+        "Issue 中 Out[7] 显示 bug.subs(a, 1).apart(t) 结果为 -t + 1/2 - 1/(2*(2*t - 1))。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "bug.apart(t) 的结果应与 bug.subs(a, 1).apart(t) 乘以 a 的结果一致，即正确执行部分分式分解。",
+      "evidence": [
+        "Issue 中 bug.subs(a, 1).apart(t) 给出了一个看似合理的分解结果。",
+        "根据 apart 函数的数学语义，对线性因子 a 的提取不应影响对 t 的分解。"
+      ],
+      "confidence": "medium"
+    },
+    "target_apis": [
+      {
+        "name": "apart",
+        "kind": "function",
+        "source_path": "sympy/polys/__init__.py",
+        "reason": "Issue 中直接调用了 apart 方法，且源码片段显示 Expr.apart 委托给 sympy.polys.apart。"
+      },
+      {
+        "name": "Expr.apart",
+        "kind": "method",
+        "source_path": "sympy/core/expr.py",
+        "reason": "Issue 中 bug.apart(t) 是在表达式上调用的方法，源码片段 2 显示了其定义。"
+      },
+      {
+        "name": "Expr.subs",
+        "kind": "method",
+        "source_path": "sympy/core/basic.py",
+        "reason": "Issue 中使用了 subs 方法将 a 替换为 1，以对比结果。"
+      },
+      {
+        "name": "symbols",
+        "kind": "function",
+        "source_path": "sympy/core/symbol.py",
+        "reason": "Issue 中用于创建符号 a 和 t。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/polys/partfrac.py",
+        "object": "apart",
+        "lines": "",
+        "reason": "apart 函数是实际执行部分分式分解的地方，错误结果可能源于处理带约束符号或表达式结构时的逻辑缺陷。"
+      },
+      {
+        "path": "sympy/core/expr.py",
+        "object": "Expr.apart",
+        "lines": "3075-3078",
+        "reason": "这是 Issue 中调用的方法入口，可能涉及参数传递或预处理。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_apart",
+        "test_file": "sympy/polys/tests/test_partfrac.py",
+        "why_relevant": "它直接测试 apart 函数的基本功能，包含符号和多项式分解。",
+        "reusable_parts": [
+          "from sympy import apart, symbols, ...",
+          "assert apart(f, x) == g 的断言风格。",
+          "使用 symbols 创建符号。"
+        ],
+        "possible_gap": "现有测试用例可能不包含 Issue 中这种带符号系数和特定约束的复杂表达式结构。"
+      },
+      {
+        "test_name": "test_apart_symbolic",
+        "test_file": "sympy/polys/tests/test_partfrac.py",
+        "why_relevant": "它测试了 apart 处理带符号参数（如 a, b, c）的表达式，与 Issue 中涉及符号 a 的情况类似。",
+        "reusable_parts": [
+          "使用多个符号（a, b, c, x）构造表达式。",
+          "assert apart(f/g, x) == ... 的复杂等式断言。"
+        ],
+        "possible_gap": "测试中的符号没有附加 real=True 或 negative=False 等假设，且表达式结构不同。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试中使用相对简单的有理函数，如 (x**2 + 1)/(x + 1) 或 1/((x + a)*(x + b))。",
+        "target_pattern": "使用 Issue 中的表达式：a * (-t + (-t + 1) * (2 * t - 1)) / (2 * t - 1)，其中符号带有假设（real=True, negative=False）。",
+        "reason": "Issue 表明缺陷可能由特定的表达式结构和符号假设触发。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "测试中 apart 调用通常只传递变量 x 作为参数。",
+        "target_pattern": "对表达式调用 apart(t)，其中 t 是带约束的符号。",
+        "reason": "Issue 显示 bug.apart(t) 和 bug.subs(a, 1).apart(t) 结果不同，表明 apart 在处理带其他符号的表达式时可能有问题。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "apart_result = expr.apart(t)",
+        "reason": "直接观察 apart 方法的返回值，与预期结果或 subs 后的结果进行比较。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "subs_result = expr.subs(a, 1).apart(t)",
+        "reason": "观察替换 a=1 后的 apart 结果，作为正确行为的参考。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "type(apart_result)",
+        "reason": "检查返回对象的类型，确保是有效的表达式类型。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "bug.apart(t) 应等于 bug.subs(a, 1).apart(t) * a（在数学等价意义上）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免直接比较完整的字符串表示，因为表达式化简可能有多种等价形式。",
+        "reason": "Issue 的核心是 apart 结果在有无符号系数 a 时不一致，断言应验证其数学等价性。"
+      },
+      {
+        "assertion_goal": "apart 结果应是一个正确的部分分式分解，分母应包含 (2*t - 1) 的因子。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "避免断言具体的、可能随化简变化的系数数值。",
+        "reason": "可以验证结果中是否包含预期的分母因子，这是一个稳定的语义特征。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 中的 symbols, apart。可能需要在测试类中定义符号 a 和 t 并附加假设。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可以放在现有的 test_partfrac.py 文件中，遵循其现有的导入和断言风格。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "缺陷是否只与符号 a 的存在有关，还是与符号 t 的约束（negative=False）有关？",
+      "apart 函数内部在处理带假设的符号时，具体的错误逻辑在哪里？",
+      "除了等式断言，是否还有其他更稳定的方式（如展开后比较）来验证 apart 结果的正确性？"
+    ]
+  }
+}

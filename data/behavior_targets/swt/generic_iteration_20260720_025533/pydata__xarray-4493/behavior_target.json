@@ -1,0 +1,288 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "pydata__xarray-4493",
+  "issue_summary": "使用 DataSet.update 更新分块 dask DataArray 时，DataArray 被提前计算，导致分块属性丢失。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 dask.array 并创建分块数组。可能需要类似 DaskTestCase 的测试基类或 fixture 来管理 dask 上下文。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试构造应使用 `xr.DataArray(da_array).chunk()` 或类似方式创建分块 DataArray。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestDataset.test_update",
+        "test_file": "xarray/tests/test_dataset.py",
+        "why_relevant": "直接测试了 Dataset.update 方法的基本功能，包括变量更新和原地操作。",
+        "reusable_parts": [
+          "Dataset 构造",
+          "update 方法调用",
+          "assert_identical 断言风格"
+        ],
+        "possible_gap": "现有测试使用普通 numpy 数组，没有测试使用分块 dask DataArray 的情况。"
+      },
+      {
+        "test_name": "TestDataArrayAndDataset.test_lazy_dataset",
+        "test_file": "xarray/tests/test_dask.py",
+        "why_relevant": "测试了 Dataset 可以包含 lazy dask array，验证了预期的正确行为。",
+        "reusable_parts": [
+          "DaskTestCase 或相关 fixture",
+          "使用 dask.array 构造 DataArray",
+          "检查 `isinstance(lazy_ds.foo.variable.data, da.Array)` 的断言模式"
+        ],
+        "possible_gap": "该测试只验证了构造时的惰性，没有测试 update 操作后的惰性保持。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "对一个包含分块 dask DataArray 的 Dataset 调用 update 方法，传入一个包含该 DataArray 切片或其他分块数组的映射。",
+      "evidence": [
+        "Issue 中 MCVE 显示：ds.update(update_dict) 后，foo 不再是分块数组。",
+        "Issue 中第二个例子显示：使用 (('x', 'y'), ds.a) 形式构造 Dataset 时，ds2.a.data 变为 numpy.ndarray。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "更新后，原本是 dask.array.core.Array 类型的数据变成了 numpy.ndarray 类型，分块属性丢失，导致提前计算。",
+      "symptom_type": "wrong_type",
+      "evidence": [
+        "Issue 中：`type(ds2.a.data)` 输出 `numpy.ndarray`。",
+        "Issue 中：`ds # now foo is no longer chunked`。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "xarray.Dataset.update",
+        "kind": "method",
+        "source_path": "xarray/core/dataset.py",
+        "reason": "Issue 直接由调用此方法触发，源码片段 4 显示了其实现。"
+      },
+      {
+        "name": "xarray.Dataset",
+        "kind": "class",
+        "source_path": "xarray/core/dataset.py",
+        "reason": "Issue 涉及 Dataset 的构造和更新行为。"
+      },
+      {
+        "name": "xarray.DataArray",
+        "kind": "class",
+        "source_path": "xarray/core/dataarray.py",
+        "reason": "Issue 的核心是关于 DataArray 的数据类型（dask vs numpy）在 Dataset 操作中的保持。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "xarray/core/dataset.py",
+        "object": "update",
+        "lines": "3883-3910",
+        "reason": "Issue 直接由调用此方法触发，其内部可能调用了导致数据提前计算的逻辑。"
+      },
+      {
+        "path": "xarray/core/dataset.py",
+        "object": "dataset_update_method",
+        "lines": "",
+        "reason": "update 方法调用了 `dataset_update_method`，这可能是实际执行合并和类型转换的函数。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "test_update 中使用普通 numpy 数组或 Variable 作为 update 的输入。",
+        "target_pattern": "使用分块 dask DataArray 或其切片作为 update 的输入值。",
+        "reason": "Issue 表明当 update 的输入是分块 dask DataArray 时，会触发提前计算。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "test_lazy_dataset 中 Dataset 在构造后即包含 lazy array。",
+        "target_pattern": "先构造包含 lazy array 的 Dataset，然后对其调用 update 方法。",
+        "reason": "需要测试 update 操作对已有 lazy 数据的影响，而不仅仅是初始构造。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "对包含分块 dask DataArray 的 Dataset 进行 update 操作后，DataArray 应保持其分块（lazy）属性，数据类型仍为 dask.array.core.Array。",
+      "evidence": [
+        "Issue 中用户期望：'The chunked DataArray should still be chunked after the update'。",
+        "相关测试 test_lazy_dataset 表明 Dataset 可以包含 lazy dask array。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "type",
+        "expression_hint": "type(ds['foo'].data) 或 isinstance(ds['foo'].data, da.Array)",
+        "reason": "Issue 的核心症状是数据类型从 dask.array 变为 numpy.ndarray。"
+      },
+      {
+        "kind": "repr",
+        "expression_hint": "repr(ds) 或 ds['foo']._repr_inline_()",
+        "reason": "Dataset 或 DataArray 的 repr 可能指示数据是 'dask.array' 还是已经计算。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "update 操作后，Dataset 中相关变量的数据应保持为 dask.array.core.Array 类型。",
+        "preferred_assertion_style": "isinstance",
+        "avoid": "断言完整的 repr 字符串或精确的数组值相等，因为这些可能涉及计算。",
+        "reason": "直接检查数据类型是否保持惰性，与 Issue 描述的预期行为一致。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "bug 的确切位置是在 update 方法内部，还是在它调用的某个合并/对齐函数中？",
+    "是否所有形式的 update 输入（如 DataArray、Variable、(dims, array) 元组）都会触发此问题？",
+    "除了 update，Dataset 构造函数中指定维度名的形式是否共享相同的缺陷逻辑？"
+  ],
+  "raw": {
+    "issue_summary": "使用 DataSet.update 更新分块 dask DataArray 时，DataArray 被提前计算，导致分块属性丢失。",
+    "trigger_condition": {
+      "text": "对一个包含分块 dask DataArray 的 Dataset 调用 update 方法，传入一个包含该 DataArray 切片或其他分块数组的映射。",
+      "evidence": [
+        "Issue 中 MCVE 显示：ds.update(update_dict) 后，foo 不再是分块数组。",
+        "Issue 中第二个例子显示：使用 (('x', 'y'), ds.a) 形式构造 Dataset 时，ds2.a.data 变为 numpy.ndarray。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "更新后，原本是 dask.array.core.Array 类型的数据变成了 numpy.ndarray 类型，分块属性丢失，导致提前计算。",
+      "symptom_type": "wrong_type",
+      "evidence": [
+        "Issue 中：`type(ds2.a.data)` 输出 `numpy.ndarray`。",
+        "Issue 中：`ds # now foo is no longer chunked`。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "对包含分块 dask DataArray 的 Dataset 进行 update 操作后，DataArray 应保持其分块（lazy）属性，数据类型仍为 dask.array.core.Array。",
+      "evidence": [
+        "Issue 中用户期望：'The chunked DataArray should still be chunked after the update'。",
+        "相关测试 test_lazy_dataset 表明 Dataset 可以包含 lazy dask array。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "xarray.Dataset.update",
+        "kind": "method",
+        "source_path": "xarray/core/dataset.py",
+        "reason": "Issue 直接由调用此方法触发，源码片段 4 显示了其实现。"
+      },
+      {
+        "name": "xarray.Dataset",
+        "kind": "class",
+        "source_path": "xarray/core/dataset.py",
+        "reason": "Issue 涉及 Dataset 的构造和更新行为。"
+      },
+      {
+        "name": "xarray.DataArray",
+        "kind": "class",
+        "source_path": "xarray/core/dataarray.py",
+        "reason": "Issue 的核心是关于 DataArray 的数据类型（dask vs numpy）在 Dataset 操作中的保持。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "xarray/core/dataset.py",
+        "object": "update",
+        "lines": "3883-3910",
+        "reason": "Issue 直接由调用此方法触发，其内部可能调用了导致数据提前计算的逻辑。"
+      },
+      {
+        "path": "xarray/core/dataset.py",
+        "object": "dataset_update_method",
+        "lines": "",
+        "reason": "update 方法调用了 `dataset_update_method`，这可能是实际执行合并和类型转换的函数。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestDataset.test_update",
+        "test_file": "xarray/tests/test_dataset.py",
+        "why_relevant": "直接测试了 Dataset.update 方法的基本功能，包括变量更新和原地操作。",
+        "reusable_parts": [
+          "Dataset 构造",
+          "update 方法调用",
+          "assert_identical 断言风格"
+        ],
+        "possible_gap": "现有测试使用普通 numpy 数组，没有测试使用分块 dask DataArray 的情况。"
+      },
+      {
+        "test_name": "TestDataArrayAndDataset.test_lazy_dataset",
+        "test_file": "xarray/tests/test_dask.py",
+        "why_relevant": "测试了 Dataset 可以包含 lazy dask array，验证了预期的正确行为。",
+        "reusable_parts": [
+          "DaskTestCase 或相关 fixture",
+          "使用 dask.array 构造 DataArray",
+          "检查 `isinstance(lazy_ds.foo.variable.data, da.Array)` 的断言模式"
+        ],
+        "possible_gap": "该测试只验证了构造时的惰性，没有测试 update 操作后的惰性保持。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "test_update 中使用普通 numpy 数组或 Variable 作为 update 的输入。",
+        "target_pattern": "使用分块 dask DataArray 或其切片作为 update 的输入值。",
+        "reason": "Issue 表明当 update 的输入是分块 dask DataArray 时，会触发提前计算。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "test_lazy_dataset 中 Dataset 在构造后即包含 lazy array。",
+        "target_pattern": "先构造包含 lazy array 的 Dataset，然后对其调用 update 方法。",
+        "reason": "需要测试 update 操作对已有 lazy 数据的影响，而不仅仅是初始构造。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "type",
+        "expression_hint": "type(ds['foo'].data) 或 isinstance(ds['foo'].data, da.Array)",
+        "reason": "Issue 的核心症状是数据类型从 dask.array 变为 numpy.ndarray。"
+      },
+      {
+        "kind": "repr",
+        "expression_hint": "repr(ds) 或 ds['foo']._repr_inline_()",
+        "reason": "Dataset 或 DataArray 的 repr 可能指示数据是 'dask.array' 还是已经计算。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "update 操作后，Dataset 中相关变量的数据应保持为 dask.array.core.Array 类型。",
+        "preferred_assertion_style": "isinstance",
+        "avoid": "断言完整的 repr 字符串或精确的数组值相等，因为这些可能涉及计算。",
+        "reason": "直接检查数据类型是否保持惰性，与 Issue 描述的预期行为一致。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 dask.array 并创建分块数组。可能需要类似 DaskTestCase 的测试基类或 fixture 来管理 dask 上下文。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试构造应使用 `xr.DataArray(da_array).chunk()` 或类似方式创建分块 DataArray。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "bug 的确切位置是在 update 方法内部，还是在它调用的某个合并/对齐函数中？",
+      "是否所有形式的 update 输入（如 DataArray、Variable、(dims, array) 元组）都会触发此问题？",
+      "除了 update，Dataset 构造函数中指定维度名的形式是否共享相同的缺陷逻辑？"
+    ]
+  }
+}

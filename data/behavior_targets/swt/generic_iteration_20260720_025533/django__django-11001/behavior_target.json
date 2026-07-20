@@ -1,0 +1,290 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-11001",
+  "issue_summary": "SQLCompiler.get_order_by() 在处理多行 RawSQL 时错误地移除了重复的 order_by 子句，因为它只比较了 SQL 的最后一行。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要一个 Django TestCase 和至少一个模型（如 Issue 中的 MyModel）来创建 QuerySet。可能需要设置数据库并创建一些测试数据。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要直接访问 SQLCompiler 实例，可以通过 QuerySet.query.get_compiler(using) 获得。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_order_by_f_expression_duplicates",
+        "test_file": "tests/ordering/tests.py",
+        "why_relevant": "它测试了 order_by 子句去重功能，并检查生成的 SQL 片段。",
+        "reusable_parts": [
+          "OrderingTests 测试类",
+          "使用 F() 表达式和 order_by()",
+          "通过检查 SQL 字符串中特定片段的数量来断言",
+          "assertQuerysetEqual 的使用"
+        ],
+        "possible_gap": "它测试的是 F() 表达式，而不是 RawSQL 表达式，并且 SQL 是单行的。它没有测试多行 SQL 字符串导致去重逻辑出错的情况。"
+      },
+      {
+        "test_name": "test_rawsql_group_by_collapse",
+        "test_file": "tests/annotations/tests.py",
+        "why_relevant": "它使用了 RawSQL 并涉及查询编译器的 group_by 处理，与 SQLCompiler 相关。",
+        "reusable_parts": [
+          "NonAggregateAnnotationTestCase 测试类",
+          "RawSQL 的构造和使用",
+          "通过 get_compiler().pre_sql_setup() 访问编译器内部"
+        ],
+        "possible_gap": "它测试的是 group_by 而不是 order_by，并且没有涉及多行 SQL 字符串。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用包含多行 RawSQL 表达式的 order_by()，并且不同的 RawSQL 具有相同的最后一行（例如相同的 'else null end'）。",
+      "evidence": [
+        "Issue 描述：'I'm using expressions written as multiline RawSQLs, which are similar but not the same.'",
+        "Issue 示例：三个 RawSQL 中，第二个和第三个的最后一行都是 'else null end'。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "生成的 SQL 查询缺少预期的 order_by 子句，导致排序不正确。",
+      "symptom_type": "wrong_sql",
+      "evidence": [
+        "Issue 描述：'Second RawSQL with a else null end part is removed from query.'",
+        "Issue 描述：'only the first clasue is returing from SQLCompiler.get_order_by().'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "SQLCompiler.get_order_by",
+        "kind": "method",
+        "source_path": "django/db/models/sql/compiler.py",
+        "reason": "Issue 明确指出 bug 位于此方法中，它负责生成 ORDER BY 子句并错误地移除了重复项。"
+      },
+      {
+        "name": "RawSQL",
+        "kind": "class",
+        "source_path": "django/db/models/expressions.py",
+        "reason": "Issue 中触发 bug 的 order_by 子句使用了 RawSQL 表达式。"
+      },
+      {
+        "name": "QuerySet.order_by",
+        "kind": "method",
+        "source_path": "",
+        "reason": "这是用户调用的 API，用于设置查询排序。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/models/sql/compiler.py",
+        "object": "SQLCompiler.get_order_by",
+        "lines": "252-362",
+        "reason": "Issue 描述和源码片段 2 显示，该方法使用正则表达式 self.ordering_parts 从 SQL 字符串中提取 without_ordering 部分，以检测重复项。对于多行 SQL，正则表达式可能只匹配最后一行。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "使用单行 SQL 字符串或 F() 表达式的 order_by 子句。",
+        "target_pattern": "使用包含多行 SQL 字符串的 RawSQL 表达式的 order_by 子句，并且让不同的 RawSQL 具有相同的最后一行。",
+        "reason": "Issue 表明，当 SQL 字符串包含换行符时，正则表达式 self.ordering_parts.search(sql) 可能只匹配最后一行，导致错误地将不同的子句识别为重复项。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "直接调用 QuerySet.order_by() 并检查最终查询结果。",
+        "target_pattern": "在调用 order_by() 后，检查 SQLCompiler.get_order_by() 返回的中间结果或最终生成的 SQL 字符串。",
+        "reason": "Bug 发生在 SQLCompiler.get_order_by() 内部，直接检查其输出或生成的 SQL 能更精确地观察到子句是否被错误移除。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "即使 RawSQL 表达式是多行的，并且某些行内容相同，只要整个 SQL 表达式不同，所有 order_by 子句都应被保留在生成的 SQL 中。",
+      "evidence": [
+        "Issue 描述：'The bug filed here is about wrong identification of duplicates (because it compares only last line of SQL passed to order by clause).'",
+        "Issue 描述：'The fun thing is that the issue can be solved by workaround by adding a space or any other char to the last line.'"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "sql",
+        "expression_hint": "SQLCompiler.get_order_by() 返回的 result 列表的长度，或最终 as_sql() 生成的 SQL 字符串中的 ORDER BY 片段。",
+        "reason": "Issue 的核心是某些 order_by 子句被错误移除，因此观察生成的 SQL 或中间结果列表可以确认是否所有子句都被保留。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "SQLCompiler.get_order_by() 方法内部 seen 集合的内容，特别是 without_ordering 的值。",
+        "reason": "Bug 是由于 without_ordering 计算错误导致 seen 集合错误地认为子句重复。观察这些值可以确认正则表达式匹配是否准确。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "传递给 order_by() 的 RawSQL 表达式的数量应与最终生成的 SQL 中 ORDER BY 子句的数量一致。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的、具体的 SQL 字符串相等，因为 SQL 格式化（如空格、换行）可能变化。",
+        "reason": "Issue 是关于子句被错误移除，因此断言数量相等是稳定且直接相关的。"
+      },
+      {
+        "assertion_goal": "生成的 SQL 应包含所有预期的排序条件片段。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言 SQL 字符串的精确顺序或完整 repr。",
+        "reason": "可以检查 SQL 中是否包含每个 RawSQL 的核心部分（如 'case when'），以确保它们没有被整体丢弃。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "self.ordering_parts 正则表达式的确切定义和它在多行字符串上的匹配行为。",
+    "SQLCompiler.get_order_by() 中 without_ordering 的计算是否总是受换行符影响，还是仅在特定正则表达式模式下。",
+    "是否还有其他因素（如参数哈希 params_hash）会影响重复检测。"
+  ],
+  "raw": {
+    "issue_summary": "SQLCompiler.get_order_by() 在处理多行 RawSQL 时错误地移除了重复的 order_by 子句，因为它只比较了 SQL 的最后一行。",
+    "trigger_condition": {
+      "text": "使用包含多行 RawSQL 表达式的 order_by()，并且不同的 RawSQL 具有相同的最后一行（例如相同的 'else null end'）。",
+      "evidence": [
+        "Issue 描述：'I'm using expressions written as multiline RawSQLs, which are similar but not the same.'",
+        "Issue 示例：三个 RawSQL 中，第二个和第三个的最后一行都是 'else null end'。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "生成的 SQL 查询缺少预期的 order_by 子句，导致排序不正确。",
+      "symptom_type": "wrong_sql",
+      "evidence": [
+        "Issue 描述：'Second RawSQL with a else null end part is removed from query.'",
+        "Issue 描述：'only the first clasue is returing from SQLCompiler.get_order_by().'"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "即使 RawSQL 表达式是多行的，并且某些行内容相同，只要整个 SQL 表达式不同，所有 order_by 子句都应被保留在生成的 SQL 中。",
+      "evidence": [
+        "Issue 描述：'The bug filed here is about wrong identification of duplicates (because it compares only last line of SQL passed to order by clause).'",
+        "Issue 描述：'The fun thing is that the issue can be solved by workaround by adding a space or any other char to the last line.'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "SQLCompiler.get_order_by",
+        "kind": "method",
+        "source_path": "django/db/models/sql/compiler.py",
+        "reason": "Issue 明确指出 bug 位于此方法中，它负责生成 ORDER BY 子句并错误地移除了重复项。"
+      },
+      {
+        "name": "RawSQL",
+        "kind": "class",
+        "source_path": "django/db/models/expressions.py",
+        "reason": "Issue 中触发 bug 的 order_by 子句使用了 RawSQL 表达式。"
+      },
+      {
+        "name": "QuerySet.order_by",
+        "kind": "method",
+        "source_path": "",
+        "reason": "这是用户调用的 API，用于设置查询排序。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/models/sql/compiler.py",
+        "object": "SQLCompiler.get_order_by",
+        "lines": "252-362",
+        "reason": "Issue 描述和源码片段 2 显示，该方法使用正则表达式 self.ordering_parts 从 SQL 字符串中提取 without_ordering 部分，以检测重复项。对于多行 SQL，正则表达式可能只匹配最后一行。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_order_by_f_expression_duplicates",
+        "test_file": "tests/ordering/tests.py",
+        "why_relevant": "它测试了 order_by 子句去重功能，并检查生成的 SQL 片段。",
+        "reusable_parts": [
+          "OrderingTests 测试类",
+          "使用 F() 表达式和 order_by()",
+          "通过检查 SQL 字符串中特定片段的数量来断言",
+          "assertQuerysetEqual 的使用"
+        ],
+        "possible_gap": "它测试的是 F() 表达式，而不是 RawSQL 表达式，并且 SQL 是单行的。它没有测试多行 SQL 字符串导致去重逻辑出错的情况。"
+      },
+      {
+        "test_name": "test_rawsql_group_by_collapse",
+        "test_file": "tests/annotations/tests.py",
+        "why_relevant": "它使用了 RawSQL 并涉及查询编译器的 group_by 处理，与 SQLCompiler 相关。",
+        "reusable_parts": [
+          "NonAggregateAnnotationTestCase 测试类",
+          "RawSQL 的构造和使用",
+          "通过 get_compiler().pre_sql_setup() 访问编译器内部"
+        ],
+        "possible_gap": "它测试的是 group_by 而不是 order_by，并且没有涉及多行 SQL 字符串。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "使用单行 SQL 字符串或 F() 表达式的 order_by 子句。",
+        "target_pattern": "使用包含多行 SQL 字符串的 RawSQL 表达式的 order_by 子句，并且让不同的 RawSQL 具有相同的最后一行。",
+        "reason": "Issue 表明，当 SQL 字符串包含换行符时，正则表达式 self.ordering_parts.search(sql) 可能只匹配最后一行，导致错误地将不同的子句识别为重复项。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "直接调用 QuerySet.order_by() 并检查最终查询结果。",
+        "target_pattern": "在调用 order_by() 后，检查 SQLCompiler.get_order_by() 返回的中间结果或最终生成的 SQL 字符串。",
+        "reason": "Bug 发生在 SQLCompiler.get_order_by() 内部，直接检查其输出或生成的 SQL 能更精确地观察到子句是否被错误移除。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "sql",
+        "expression_hint": "SQLCompiler.get_order_by() 返回的 result 列表的长度，或最终 as_sql() 生成的 SQL 字符串中的 ORDER BY 片段。",
+        "reason": "Issue 的核心是某些 order_by 子句被错误移除，因此观察生成的 SQL 或中间结果列表可以确认是否所有子句都被保留。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "SQLCompiler.get_order_by() 方法内部 seen 集合的内容，特别是 without_ordering 的值。",
+        "reason": "Bug 是由于 without_ordering 计算错误导致 seen 集合错误地认为子句重复。观察这些值可以确认正则表达式匹配是否准确。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "传递给 order_by() 的 RawSQL 表达式的数量应与最终生成的 SQL 中 ORDER BY 子句的数量一致。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的、具体的 SQL 字符串相等，因为 SQL 格式化（如空格、换行）可能变化。",
+        "reason": "Issue 是关于子句被错误移除，因此断言数量相等是稳定且直接相关的。"
+      },
+      {
+        "assertion_goal": "生成的 SQL 应包含所有预期的排序条件片段。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言 SQL 字符串的精确顺序或完整 repr。",
+        "reason": "可以检查 SQL 中是否包含每个 RawSQL 的核心部分（如 'case when'），以确保它们没有被整体丢弃。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要一个 Django TestCase 和至少一个模型（如 Issue 中的 MyModel）来创建 QuerySet。可能需要设置数据库并创建一些测试数据。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要直接访问 SQLCompiler 实例，可以通过 QuerySet.query.get_compiler(using) 获得。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "self.ordering_parts 正则表达式的确切定义和它在多行字符串上的匹配行为。",
+      "SQLCompiler.get_order_by() 中 without_ordering 的计算是否总是受换行符影响，还是仅在特定正则表达式模式下。",
+      "是否还有其他因素（如参数哈希 params_hash）会影响重复检测。"
+    ]
+  }
+}

@@ -1,0 +1,292 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "pylint-dev__pylint-7993",
+  "issue_summary": "使用自定义花括号的 msg-template 时，Pylint 错误地解析模板并产生不完整的输出。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用类似相关测试中的 linter fixture 和 StringIO 来捕获输出。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要导入 pytest 和 warnings 模块来处理警告。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_template_option_non_existing",
+        "test_file": "tests/reporters/unittest_reporting.py",
+        "why_relevant": "它测试了 msg-template 选项对未知参数的处理，并检查了 UserWarning，这与 Issue 中观察到的警告类似。",
+        "reusable_parts": [
+          "使用 StringIO 捕获输出",
+          "设置 linter.config.msg_template",
+          "使用 pytest.warns 捕获 UserWarning",
+          "使用 linter.add_message 生成消息"
+        ],
+        "possible_gap": "该测试使用简单的未知参数名（如 a_new_option），而不是 Issue 中复杂的包含花括号的模板字符串。"
+      },
+      {
+        "test_name": "test_template_option",
+        "test_file": "tests/reporters/unittest_reporting.py",
+        "why_relevant": "它测试了 msg-template 选项的基本功能，展示了如何设置模板和验证输出。",
+        "reusable_parts": [
+          "linter 和 output 的 setup",
+          "linter.config.msg_template 赋值",
+          "linter.add_message 调用",
+          "output.getvalue() 断言"
+        ],
+        "possible_gap": "它使用简单的模板，不涉及嵌套花括号或 JSON 样式的键。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用包含自定义花括号（如 {{ \"Category\": \"{category}\" }}）的 --msg-template 参数运行 pylint。",
+      "evidence": [
+        "Issue 中的命令：pylint test.py --msg-template='{{ \"Category\": \"{category}\" }}'",
+        "Issue 描述：在 pylint 1.7 中工作，但在 pylint 2.12.2 中失败。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "Pylint 发出 UserWarning，警告不识别参数 '{ \"Category\"'，并且输出被截断为 \" }\"，而不是完整的 JSON 对象。",
+      "symptom_type": "warning",
+      "evidence": [
+        "Issue 输出：UserWarning: Don't recognize the argument '{ \"Category\"' in the --msg-template.",
+        "Issue 输出：输出行显示为 \" }\"。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "pylint.lint.PyLinter",
+        "kind": "class",
+        "source_path": "",
+        "reason": "相关测试中用于设置 msg-template 和添加消息的核心类。"
+      },
+      {
+        "name": "pylint.reporters.text.TextReporter",
+        "kind": "class",
+        "source_path": "",
+        "reason": "Issue 中警告来自 text.py，且测试中涉及 reporter 输出。"
+      },
+      {
+        "name": "linter.config.msg_template",
+        "kind": "config",
+        "source_path": "",
+        "reason": "Issue 和测试中用于设置消息模板的配置选项。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "pylint/reporters/text.py",
+        "object": "TextReporter",
+        "lines": "",
+        "reason": "Issue 中的警告来自 text.py 第 206 行，表明模板解析逻辑可能在此。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "测试中使用的简单模板，如 \"{msg_id}:{line:03d}\" 或包含未知但简单的参数名。",
+        "target_pattern": "包含外部花括号和内部 JSON 键的模板，如 \"{{ \\\"Category\\\": \\\"{category}\\\" }}\"。",
+        "reason": "Issue 表明，当模板包含自定义花括号（可能被误解析为模板参数分隔符）时，会触发错误解析和警告。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "在测试中直接设置 linter.config.msg_template 为一个字符串。",
+        "target_pattern": "设置 linter.config.msg_template 为 Issue 中给出的复杂字符串。",
+        "reason": "直接复制 Issue 中的触发配置是复现缺陷的最直接方式。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "Pylint 应正确解析包含自定义花括号的 msg-template，并输出完整的格式化字符串，例如 { \"Category\": \"convention\" }。",
+      "evidence": [
+        "Issue 中的预期行为：\"Expect the dictionary to print out with `\"Category\"` as the key.\"",
+        "Issue 中 pylint 1.7 的工作示例输出。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "warning",
+        "expression_hint": "使用 warnings.catch_warnings 或 pytest.warns 捕获 UserWarning 及其消息内容。",
+        "reason": "Issue 中明确出现了关于不识别参数的 UserWarning，这是错误症状的关键部分。"
+      },
+      {
+        "kind": "file_output",
+        "expression_hint": "output.getvalue() 或 output.getvalue().split('\\n') 以检查实际输出行。",
+        "reason": "Issue 显示了不完整的输出（\" }\"），需要观察实际输出是否被截断。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证输出包含完整的预期字符串片段，如 \"Category\" 键和正确的值（如 \"convention\"）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "避免对完整输出字符串进行精确相等断言，因为 Issue 未提供所有行的精确完整输出。",
+        "reason": "Issue 的预期是输出字典，因此断言输出包含关键部分（如键名）比完全匹配更稳定。"
+      },
+      {
+        "assertion_goal": "验证没有发出关于不识别 '{ \"Category\"' 的 UserWarning，或者警告内容正确（修复后）。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "避免断言警告的精确计数或顺序，除非 Issue 明确指定。",
+        "reason": "修复后，模板应被正确解析，不应出现错误警告。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "msg-template 解析器中处理花括号的确切逻辑和错误位置。",
+    "修复后的确切完整输出格式（Issue 只给出了旧版本的工作示例）。",
+    "除了警告和截断输出外，是否还有其他副作用。"
+  ],
+  "raw": {
+    "issue_summary": "使用自定义花括号的 msg-template 时，Pylint 错误地解析模板并产生不完整的输出。",
+    "trigger_condition": {
+      "text": "使用包含自定义花括号（如 {{ \"Category\": \"{category}\" }}）的 --msg-template 参数运行 pylint。",
+      "evidence": [
+        "Issue 中的命令：pylint test.py --msg-template='{{ \"Category\": \"{category}\" }}'",
+        "Issue 描述：在 pylint 1.7 中工作，但在 pylint 2.12.2 中失败。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "Pylint 发出 UserWarning，警告不识别参数 '{ \"Category\"'，并且输出被截断为 \" }\"，而不是完整的 JSON 对象。",
+      "symptom_type": "warning",
+      "evidence": [
+        "Issue 输出：UserWarning: Don't recognize the argument '{ \"Category\"' in the --msg-template.",
+        "Issue 输出：输出行显示为 \" }\"。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "Pylint 应正确解析包含自定义花括号的 msg-template，并输出完整的格式化字符串，例如 { \"Category\": \"convention\" }。",
+      "evidence": [
+        "Issue 中的预期行为：\"Expect the dictionary to print out with `\"Category\"` as the key.\"",
+        "Issue 中 pylint 1.7 的工作示例输出。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "pylint.lint.PyLinter",
+        "kind": "class",
+        "source_path": "",
+        "reason": "相关测试中用于设置 msg-template 和添加消息的核心类。"
+      },
+      {
+        "name": "pylint.reporters.text.TextReporter",
+        "kind": "class",
+        "source_path": "",
+        "reason": "Issue 中警告来自 text.py，且测试中涉及 reporter 输出。"
+      },
+      {
+        "name": "linter.config.msg_template",
+        "kind": "config",
+        "source_path": "",
+        "reason": "Issue 和测试中用于设置消息模板的配置选项。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "pylint/reporters/text.py",
+        "object": "TextReporter",
+        "lines": "",
+        "reason": "Issue 中的警告来自 text.py 第 206 行，表明模板解析逻辑可能在此。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_template_option_non_existing",
+        "test_file": "tests/reporters/unittest_reporting.py",
+        "why_relevant": "它测试了 msg-template 选项对未知参数的处理，并检查了 UserWarning，这与 Issue 中观察到的警告类似。",
+        "reusable_parts": [
+          "使用 StringIO 捕获输出",
+          "设置 linter.config.msg_template",
+          "使用 pytest.warns 捕获 UserWarning",
+          "使用 linter.add_message 生成消息"
+        ],
+        "possible_gap": "该测试使用简单的未知参数名（如 a_new_option），而不是 Issue 中复杂的包含花括号的模板字符串。"
+      },
+      {
+        "test_name": "test_template_option",
+        "test_file": "tests/reporters/unittest_reporting.py",
+        "why_relevant": "它测试了 msg-template 选项的基本功能，展示了如何设置模板和验证输出。",
+        "reusable_parts": [
+          "linter 和 output 的 setup",
+          "linter.config.msg_template 赋值",
+          "linter.add_message 调用",
+          "output.getvalue() 断言"
+        ],
+        "possible_gap": "它使用简单的模板，不涉及嵌套花括号或 JSON 样式的键。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "测试中使用的简单模板，如 \"{msg_id}:{line:03d}\" 或包含未知但简单的参数名。",
+        "target_pattern": "包含外部花括号和内部 JSON 键的模板，如 \"{{ \\\"Category\\\": \\\"{category}\\\" }}\"。",
+        "reason": "Issue 表明，当模板包含自定义花括号（可能被误解析为模板参数分隔符）时，会触发错误解析和警告。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "在测试中直接设置 linter.config.msg_template 为一个字符串。",
+        "target_pattern": "设置 linter.config.msg_template 为 Issue 中给出的复杂字符串。",
+        "reason": "直接复制 Issue 中的触发配置是复现缺陷的最直接方式。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "warning",
+        "expression_hint": "使用 warnings.catch_warnings 或 pytest.warns 捕获 UserWarning 及其消息内容。",
+        "reason": "Issue 中明确出现了关于不识别参数的 UserWarning，这是错误症状的关键部分。"
+      },
+      {
+        "kind": "file_output",
+        "expression_hint": "output.getvalue() 或 output.getvalue().split('\\n') 以检查实际输出行。",
+        "reason": "Issue 显示了不完整的输出（\" }\"），需要观察实际输出是否被截断。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证输出包含完整的预期字符串片段，如 \"Category\" 键和正确的值（如 \"convention\"）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "避免对完整输出字符串进行精确相等断言，因为 Issue 未提供所有行的精确完整输出。",
+        "reason": "Issue 的预期是输出字典，因此断言输出包含关键部分（如键名）比完全匹配更稳定。"
+      },
+      {
+        "assertion_goal": "验证没有发出关于不识别 '{ \"Category\"' 的 UserWarning，或者警告内容正确（修复后）。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "避免断言警告的精确计数或顺序，除非 Issue 明确指定。",
+        "reason": "修复后，模板应被正确解析，不应出现错误警告。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用类似相关测试中的 linter fixture 和 StringIO 来捕获输出。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要导入 pytest 和 warnings 模块来处理警告。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "msg-template 解析器中处理花括号的确切逻辑和错误位置。",
+      "修复后的确切完整输出格式（Issue 只给出了旧版本的工作示例）。",
+      "除了警告和截断输出外，是否还有其他副作用。"
+    ]
+  }
+}

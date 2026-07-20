@@ -1,0 +1,348 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "astropy__astropy-14365",
+  "issue_summary": "ascii.qdp 格式解析器对 QDP 文件中的命令大小写敏感，而 QDP 本身是大小写不敏感的，导致小写命令（如 'read serr'）无法被识别。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用 tmp_path fixture 创建临时 QDP 文件，或将 QDP 内容作为字符串直接传递给 Table.read。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要导入 ascii、Table、numpy 和 pytest。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要处理 UserWarning（如 'table_id not specified'）。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_read_example",
+        "test_file": "astropy/io/ascii/tests/test_qdp.py",
+        "why_relevant": "该测试演示了如何使用 Table.read 和 ascii.read 读取 QDP 格式数据，包含了完整的读取流程和断言模式。",
+        "reusable_parts": [
+          "imports (ascii, Table, np)",
+          "使用 Table.read 和 format='ascii.qdp' 的调用方式",
+          "使用 assert np.allclose 进行数值比较",
+          "处理 masked 和 NaN 值的断言模式"
+        ],
+        "possible_gap": "测试中使用的 QDP 命令都是大写的（如 'READ TERR 1'），没有测试小写命令的情况。"
+      },
+      {
+        "test_name": "test_read_write_simple",
+        "test_file": "astropy/io/ascii/tests/test_qdp.py",
+        "why_relevant": "该测试演示了从文件读取 QDP 数据，并处理了相关的警告，与 Issue 中从文件读取的场景一致。",
+        "reusable_parts": [
+          "使用 tmp_path fixture 创建临时文件",
+          "Table.read 从文件读取",
+          "处理 UserWarning 的断言",
+          "数值列的比较断言"
+        ],
+        "possible_gap": "测试写入的文件使用的是默认（可能大写）的命令格式，没有测试读取包含小写命令的外部文件。"
+      },
+      {
+        "test_name": "test_roundtrip_example",
+        "test_file": "astropy/io/ascii/tests/test_qdp.py",
+        "why_relevant": "该测试涉及读取包含 QDP 命令的字符串，并进行了写入和再读取的往返测试，展示了命令解析的上下文。",
+        "reusable_parts": [
+          "将 QDP 内容作为字符串传递给 Table.read",
+          "使用 err_specs 参数",
+          "列迭代比较的断言模式"
+        ],
+        "possible_gap": "测试中的 QDP 命令字符串也是大写的。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用 Table.read 读取一个包含小写 QDP 命令（如 'read serr 1 2'）的文件，格式指定为 'ascii.qdp'。",
+      "evidence": [
+        "Issue 中提供了具体的 QDP 文件内容：'read serr 1 2' 和 '1 0.5 1 0.5'。",
+        "Issue 中描述了复现步骤：Table.read('test.qdp',format='ascii.qdp')。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "解析器抛出 ValueError: Unrecognized QDP line: read serr 1 2。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误堆栈显示：raise ValueError(f'Unrecognized QDP line: {line}')。",
+        "Issue 中明确描述了崩溃和异常信息。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "Table.read",
+        "kind": "method",
+        "source_path": "astropy/table/table.py",
+        "reason": "Issue 中用户通过 Table.read 触发缺陷，这是读取 QDP 文件的主要入口。"
+      },
+      {
+        "name": "_read_table_qdp",
+        "kind": "function",
+        "source_path": "astropy/io/ascii/qdp.py",
+        "reason": "源码片段 2 显示 QDP.read 方法调用了 _read_table_qdp，这是实际解析 QDP 文件的核心函数。"
+      },
+      {
+        "name": "ascii.read",
+        "kind": "function",
+        "source_path": "astropy/io/ascii/connect.py",
+        "reason": "相关测试中使用了 ascii.read 来读取 QDP 格式，这是 Table.read 的底层实现之一。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "astropy/io/ascii/qdp.py",
+        "object": "_read_table_qdp",
+        "lines": "",
+        "reason": "Issue 描述 ascii.qdp 格式解析器假设命令是大写的，而 _read_table_qdp 是解析 QDP 文件的主要函数，很可能包含命令识别逻辑。"
+      },
+      {
+        "path": "astropy/io/ascii/qdp.py",
+        "object": "QDP.read",
+        "lines": "630-637",
+        "reason": "源码片段 2 显示 QDP.read 方法调用了 _read_table_qdp，是缺陷触发的必经路径。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "测试中 QDP 命令字符串使用大写，如 'READ TERR 1'、'READ SERR 3'。",
+        "target_pattern": "将 QDP 命令字符串改为小写，如 'read serr 1 2'。",
+        "reason": "Issue 明确指出缺陷在于解析器对命令大小写敏感，而 QDP 本身不敏感。使用小写命令应触发缺陷路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "测试中 QDP 内容通常包含多行、多表、注释和复杂数据。",
+        "target_pattern": "使用 Issue 中提供的极简 QDP 文件内容：仅包含 'read serr 1 2' 命令和一行数据。",
+        "reason": "Issue 的复现案例非常简单，聚焦于命令解析失败，简化输入有助于隔离问题。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "Table.read 应能成功解析包含小写 QDP 命令的文件，并正确读取数据（包括错误列）。",
+      "evidence": [
+        "Issue 的 'Expected behavior' 部分说明：'The following qdp file should read into a `Table` with errors, rather than crashing.'",
+        "Issue 提到 QDP 本身是大小写不敏感的：'QDP itself is not case sensitive'。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 Table.read(...) 时是否抛出 ValueError，以及异常消息是否包含 'Unrecognized QDP line'。",
+        "reason": "Issue 中观察到的直接错误现象就是 ValueError 异常，这是判断缺陷是否触发的关键。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "如果解析成功，返回的 Table 对象是否包含预期的列（例如错误列 'col1_serr' 和 'col2_serr'）。",
+        "reason": "修复后，读取应成功并正确解析错误规范，返回包含相应列的 Table。"
+      },
+      {
+        "kind": "warning",
+        "expression_hint": "调用 Table.read 时是否产生 'table_id not specified' 等预期的警告。",
+        "reason": "相关测试显示读取 QDP 文件时可能产生警告，观测警告有助于理解解析流程。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证 Table.read 能够成功解析包含小写 'read serr' 命令的 QDP 内容，不抛出 ValueError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串，因为消息格式可能在修复中微调。",
+        "reason": "当前缺陷表现为抛出异常，修复后应不再抛出。使用 pytest.raises 上下文管理器并断言没有异常是直接验证方式。"
+      },
+      {
+        "assertion_goal": "验证成功读取后，返回的 Table 对象具有正确的形状和列（例如，因为 'read serr 1 2'，应有两列数据及对应的对称误差列）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言列名的精确字符串，因为列名生成逻辑可能独立于命令大小写问题。",
+        "reason": "修复的核心是命令被识别，进而数据被正确解析。断言列数或特定列的存在可以验证解析成功。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "除了 'read serr'，是否还有其他 QDP 命令（如 'read terr', 'no'）也存在大小写敏感问题？",
+    "命令识别是在 _read_table_qdp 的哪个具体子函数或行号中进行的？",
+    "修复方案是统一将命令转换为大写进行比较，还是改为大小写不敏感的比较？",
+    "列名生成逻辑（如添加 '_serr' 后缀）是否依赖于命令的大小写？"
+  ],
+  "raw": {
+    "issue_summary": "ascii.qdp 格式解析器对 QDP 文件中的命令大小写敏感，而 QDP 本身是大小写不敏感的，导致小写命令（如 'read serr'）无法被识别。",
+    "trigger_condition": {
+      "text": "使用 Table.read 读取一个包含小写 QDP 命令（如 'read serr 1 2'）的文件，格式指定为 'ascii.qdp'。",
+      "evidence": [
+        "Issue 中提供了具体的 QDP 文件内容：'read serr 1 2' 和 '1 0.5 1 0.5'。",
+        "Issue 中描述了复现步骤：Table.read('test.qdp',format='ascii.qdp')。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "解析器抛出 ValueError: Unrecognized QDP line: read serr 1 2。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误堆栈显示：raise ValueError(f'Unrecognized QDP line: {line}')。",
+        "Issue 中明确描述了崩溃和异常信息。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "Table.read 应能成功解析包含小写 QDP 命令的文件，并正确读取数据（包括错误列）。",
+      "evidence": [
+        "Issue 的 'Expected behavior' 部分说明：'The following qdp file should read into a `Table` with errors, rather than crashing.'",
+        "Issue 提到 QDP 本身是大小写不敏感的：'QDP itself is not case sensitive'。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "Table.read",
+        "kind": "method",
+        "source_path": "astropy/table/table.py",
+        "reason": "Issue 中用户通过 Table.read 触发缺陷，这是读取 QDP 文件的主要入口。"
+      },
+      {
+        "name": "_read_table_qdp",
+        "kind": "function",
+        "source_path": "astropy/io/ascii/qdp.py",
+        "reason": "源码片段 2 显示 QDP.read 方法调用了 _read_table_qdp，这是实际解析 QDP 文件的核心函数。"
+      },
+      {
+        "name": "ascii.read",
+        "kind": "function",
+        "source_path": "astropy/io/ascii/connect.py",
+        "reason": "相关测试中使用了 ascii.read 来读取 QDP 格式，这是 Table.read 的底层实现之一。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "astropy/io/ascii/qdp.py",
+        "object": "_read_table_qdp",
+        "lines": "",
+        "reason": "Issue 描述 ascii.qdp 格式解析器假设命令是大写的，而 _read_table_qdp 是解析 QDP 文件的主要函数，很可能包含命令识别逻辑。"
+      },
+      {
+        "path": "astropy/io/ascii/qdp.py",
+        "object": "QDP.read",
+        "lines": "630-637",
+        "reason": "源码片段 2 显示 QDP.read 方法调用了 _read_table_qdp，是缺陷触发的必经路径。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_read_example",
+        "test_file": "astropy/io/ascii/tests/test_qdp.py",
+        "why_relevant": "该测试演示了如何使用 Table.read 和 ascii.read 读取 QDP 格式数据，包含了完整的读取流程和断言模式。",
+        "reusable_parts": [
+          "imports (ascii, Table, np)",
+          "使用 Table.read 和 format='ascii.qdp' 的调用方式",
+          "使用 assert np.allclose 进行数值比较",
+          "处理 masked 和 NaN 值的断言模式"
+        ],
+        "possible_gap": "测试中使用的 QDP 命令都是大写的（如 'READ TERR 1'），没有测试小写命令的情况。"
+      },
+      {
+        "test_name": "test_read_write_simple",
+        "test_file": "astropy/io/ascii/tests/test_qdp.py",
+        "why_relevant": "该测试演示了从文件读取 QDP 数据，并处理了相关的警告，与 Issue 中从文件读取的场景一致。",
+        "reusable_parts": [
+          "使用 tmp_path fixture 创建临时文件",
+          "Table.read 从文件读取",
+          "处理 UserWarning 的断言",
+          "数值列的比较断言"
+        ],
+        "possible_gap": "测试写入的文件使用的是默认（可能大写）的命令格式，没有测试读取包含小写命令的外部文件。"
+      },
+      {
+        "test_name": "test_roundtrip_example",
+        "test_file": "astropy/io/ascii/tests/test_qdp.py",
+        "why_relevant": "该测试涉及读取包含 QDP 命令的字符串，并进行了写入和再读取的往返测试，展示了命令解析的上下文。",
+        "reusable_parts": [
+          "将 QDP 内容作为字符串传递给 Table.read",
+          "使用 err_specs 参数",
+          "列迭代比较的断言模式"
+        ],
+        "possible_gap": "测试中的 QDP 命令字符串也是大写的。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "测试中 QDP 命令字符串使用大写，如 'READ TERR 1'、'READ SERR 3'。",
+        "target_pattern": "将 QDP 命令字符串改为小写，如 'read serr 1 2'。",
+        "reason": "Issue 明确指出缺陷在于解析器对命令大小写敏感，而 QDP 本身不敏感。使用小写命令应触发缺陷路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "测试中 QDP 内容通常包含多行、多表、注释和复杂数据。",
+        "target_pattern": "使用 Issue 中提供的极简 QDP 文件内容：仅包含 'read serr 1 2' 命令和一行数据。",
+        "reason": "Issue 的复现案例非常简单，聚焦于命令解析失败，简化输入有助于隔离问题。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 Table.read(...) 时是否抛出 ValueError，以及异常消息是否包含 'Unrecognized QDP line'。",
+        "reason": "Issue 中观察到的直接错误现象就是 ValueError 异常，这是判断缺陷是否触发的关键。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "如果解析成功，返回的 Table 对象是否包含预期的列（例如错误列 'col1_serr' 和 'col2_serr'）。",
+        "reason": "修复后，读取应成功并正确解析错误规范，返回包含相应列的 Table。"
+      },
+      {
+        "kind": "warning",
+        "expression_hint": "调用 Table.read 时是否产生 'table_id not specified' 等预期的警告。",
+        "reason": "相关测试显示读取 QDP 文件时可能产生警告，观测警告有助于理解解析流程。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证 Table.read 能够成功解析包含小写 'read serr' 命令的 QDP 内容，不抛出 ValueError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串，因为消息格式可能在修复中微调。",
+        "reason": "当前缺陷表现为抛出异常，修复后应不再抛出。使用 pytest.raises 上下文管理器并断言没有异常是直接验证方式。"
+      },
+      {
+        "assertion_goal": "验证成功读取后，返回的 Table 对象具有正确的形状和列（例如，因为 'read serr 1 2'，应有两列数据及对应的对称误差列）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言列名的精确字符串，因为列名生成逻辑可能独立于命令大小写问题。",
+        "reason": "修复的核心是命令被识别，进而数据被正确解析。断言列数或特定列的存在可以验证解析成功。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用 tmp_path fixture 创建临时 QDP 文件，或将 QDP 内容作为字符串直接传递给 Table.read。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要导入 ascii、Table、numpy 和 pytest。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要处理 UserWarning（如 'table_id not specified'）。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "除了 'read serr'，是否还有其他 QDP 命令（如 'read terr', 'no'）也存在大小写敏感问题？",
+      "命令识别是在 _read_table_qdp 的哪个具体子函数或行号中进行的？",
+      "修复方案是统一将命令转换为大写进行比较，还是改为大小写不敏感的比较？",
+      "列名生成逻辑（如添加 '_serr' 后缀）是否依赖于命令的大小写？"
+    ]
+  }
+}

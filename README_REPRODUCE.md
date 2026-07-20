@@ -80,10 +80,31 @@ Do not put that file in the repository, even when the repository is private.
 
 ## 4. Run the full and ablation experiments
 
+The repository contains the frozen 276-instance BehaviorTarget version from
+`p0_simple_llm_selector_swt_generic_iteration_20260720_025533`:
+
+```bash
+BEHAVIOR_CACHE=data/behavior_targets/swt/generic_iteration_20260720_025533
+
+# Optional independent integrity check before a run.
+conda run -n icore python scripts/validate_behavior_target_cache.py \
+  --cache-dir "$BEHAVIOR_CACHE" \
+  --instances-path data/issues/swt276_issues.json \
+  --dataset-mode swt \
+  --code-retrieval-path retrieval_results/code/code_retrieval_results_gpt.json \
+  --test-retrieval-path retrieval_results/test/icore/gpt/related_tests.json
+```
+
+Pass `--behavior-target-cache "$BEHAVIOR_CACHE"` to reuse this exact version.
+The launcher validates all 276 targets and their dataset/retrieval hashes, then
+skips IssueRewrite. If the option is omitted, the launcher performs
+IssueRewrite and generates a new BehaviorTarget version for that run.
+
 ```bash
 # Full B*=<Environment, Trigger, Assertion>
 bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --behavior-target on
+  --dataset swt --behavior-target on \
+  --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # w/o Behavior Target
 bash scripts/run_p0_simple_llm_selector_full.sh \
@@ -91,28 +112,37 @@ bash scripts/run_p0_simple_llm_selector_full.sh \
 
 # w/o Mutation
 bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --mutation off
+  --dataset swt --mutation off \
+  --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # Generic Iteration (w/o specialized feedback)
 bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --specialized-feedback off
+  --dataset swt --specialized-feedback off \
+  --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # w/o Environment Feedback
 bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --environment-feedback off
+  --dataset swt --environment-feedback off \
+  --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # w/o Trigger Feedback
 bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --trigger-feedback off
+  --dataset swt --trigger-feedback off \
+  --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # w/o Assertion Feedback
 bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --assertion-feedback off
+  --dataset swt --assertion-feedback off \
+  --behavior-target-cache "$BEHAVIOR_CACHE"
 ```
 
 At most one component may be `off` in a command. Every ablation runs formal
 F2P only and keeps the complete dataset denominator; the all-on full method
 also runs the benchmark-specific coverage metric.
+
+`w/o Behavior Target` is the only experiment that must not receive
+`--behavior-target-cache`, because consuming the cache would invalidate that
+ablation. The launcher rejects that combination.
 
 The launcher uses the repository location dynamically. Generation runs in the
 `icore` framework environment; every benchmark project runs in its own

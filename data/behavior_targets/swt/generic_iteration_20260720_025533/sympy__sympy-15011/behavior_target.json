@@ -1,0 +1,272 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-15011",
+  "issue_summary": "lambdify 函数在处理包含花括号的 MatrixSymbol 名称时，即使设置了 dummify=True 也会抛出 SyntaxError。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 及相关模块（如 `sympy as sy`, `MatrixSymbol`, `symbols`）。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能不需要外部依赖或复杂 fixture，可以在简单的函数测试中完成。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_dummification",
+        "test_file": "sympy/utilities/tests/test_lambdify.py",
+        "why_relevant": "该测试专门验证 lambdify 对无效 Python 变量名（如包含反斜杠的符号）的 dummify 功能。",
+        "reusable_parts": [
+          "导入模式（如 `from sympy import symbols, Function`）",
+          "使用 `lambdify` 和 `assert` 验证函数调用结果",
+          "使用 `raises(SyntaxError, ...)` 来断言某些输入会失败"
+        ],
+        "possible_gap": "该测试使用普通 Symbol 和 Function，没有测试 MatrixSymbol 对象，也没有测试名称包含花括号的情况。"
+      },
+      {
+        "test_name": "test_python_keywords",
+        "test_file": "sympy/utilities/tests/test_lambdify.py",
+        "why_relevant": "该测试验证 lambdify 能处理 Python 关键字作为符号名，通过自动 dummify 生成有效函数。",
+        "reusable_parts": [
+          "使用 `symbols('if')` 创建特殊名称符号",
+          "调用 `lambdify` 并断言函数执行结果"
+        ],
+        "possible_gap": "该测试只针对普通 Symbol，不涉及 MatrixSymbol，且名称是关键字而非花括号。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用 lambdify 函数，其参数是一个名称包含花括号（如 `{v}`）的 MatrixSymbol 对象，无论 dummify 参数是否为 True。",
+      "evidence": [
+        "Issue 中显示 `curlyv = sy.MatrixSymbol(\"{v}\", 2, 1)` 和 `sy.lambdify(curlyv, curlyv)` 或 `sy.lambdify(curlyv, curlyv, dummify=True)` 会触发错误。",
+        "相关测试 1 和 3 表明 lambdify 通常会对无效的 Python 变量名进行 dummify 替换以避免语法错误。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 lambdify 时抛出 SyntaxError。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中明确指出 `curlyVectorId = sy.lambdify(curlyv, curlyv)` 和 `curlyVectorIdDummified = sy.lambdify(curlyv, curlyv, dummify=True)` 会给出 `SyntaxError`。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "lambdify",
+        "kind": "function",
+        "source_path": "sympy/utilities/lambdify.py",
+        "reason": "Issue 的核心是 lambdify 函数在处理特定输入时的行为。"
+      },
+      {
+        "name": "MatrixSymbol",
+        "kind": "class",
+        "source_path": "sympy/matrices/expressions/matexpr.py",
+        "reason": "Issue 中触发问题的输入对象是 MatrixSymbol 的实例。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/utilities/lambdify.py",
+        "object": "lambdify",
+        "lines": "",
+        "reason": "Issue 直接指向 lambdify 函数的行为。相关测试也集中在该文件的测试中。"
+      },
+      {
+        "path": "sympy/matrices/expressions/matexpr.py",
+        "object": "MatrixSymbol",
+        "lines": "",
+        "reason": "问题涉及 MatrixSymbol 对象的名称属性处理，可能与 lambdify 内部如何获取或转换其名称有关。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用普通 Symbol（如 `symbols(r'\\alpha')` 或 `symbols('if')`）作为 lambdify 的输入。",
+        "target_pattern": "使用名称包含花括号的 MatrixSymbol（如 `MatrixSymbol('{v}', 2, 1)`）作为 lambdify 的输入。",
+        "reason": "Issue 表明问题特定于 MatrixSymbol 名称包含花括号的组合，这是当前测试未覆盖的输入模式。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "相似测试中可能未显式设置 `dummify` 参数，或仅对普通 Symbol 测试其默认/显式行为。",
+        "target_pattern": "对问题输入同时测试 `dummify=False`（默认）和 `dummify=True` 两种情况。",
+        "reason": "Issue 显示即使 `dummify=True` 也无法避免 SyntaxError，这与 dummify 的设计预期相悖，需要验证。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "lambdify 函数应能正确处理名称包含花括号的 MatrixSymbol 对象，通过 dummify 机制生成有效的 Python 函数，而不抛出 SyntaxError。",
+      "evidence": [
+        "Issue 中提到 `dummify=True` 参数的存在，暗示其设计目的是处理无效的变量名。",
+        "相关测试 1 和 3 展示了 lambdify 对包含反斜杠或 Python 关键字的符号名称成功进行 dummify 并生成可执行函数。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 `lambdify(curlyv, curlyv)` 或 `lambdify(curlyv, curlyv, dummify=True)` 时是否抛出 SyntaxError 及其详细信息。",
+        "reason": "Issue 的核心错误现象是 SyntaxError，直接观测此异常是判断问题是否触发的关键。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "如果 lambdify 调用成功，观察返回的函数对象，并尝试调用它（如 `f(某个矩阵)`），检查其行为。",
+        "reason": "修复后，lambdify 应返回一个可调用的函数，观测其能否被成功调用和执行有助于验证预期行为。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证对名称包含花括号的 MatrixSymbol 调用 lambdify（无论 dummify 参数如何）不会抛出 SyntaxError，并能生成一个可调用的函数。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的错误消息字符串，因为具体语法错误信息可能因 Python 版本或实现细节而变化。",
+        "reason": "Issue 的核心是避免 SyntaxError。使用 `pytest.raises(SyntaxError)` 的否定形式（即断言不抛出）或直接调用 lambdify 并验证其返回类型为可调用对象，是稳定且与 Issue 对齐的断言方式。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "lambdify 内部处理 MatrixSymbol 名称的具体代码路径和 dummify 逻辑的交互细节。",
+    "除了花括号，是否还有其他特殊字符组合在 MatrixSymbol 名称中会导致类似问题。",
+    "修复后，生成的函数在调用时对输入矩阵的具体行为（如维度匹配）是否需要额外验证，但 Issue 未提及此方面问题。"
+  ],
+  "raw": {
+    "issue_summary": "lambdify 函数在处理包含花括号的 MatrixSymbol 名称时，即使设置了 dummify=True 也会抛出 SyntaxError。",
+    "trigger_condition": {
+      "text": "使用 lambdify 函数，其参数是一个名称包含花括号（如 `{v}`）的 MatrixSymbol 对象，无论 dummify 参数是否为 True。",
+      "evidence": [
+        "Issue 中显示 `curlyv = sy.MatrixSymbol(\"{v}\", 2, 1)` 和 `sy.lambdify(curlyv, curlyv)` 或 `sy.lambdify(curlyv, curlyv, dummify=True)` 会触发错误。",
+        "相关测试 1 和 3 表明 lambdify 通常会对无效的 Python 变量名进行 dummify 替换以避免语法错误。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 lambdify 时抛出 SyntaxError。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中明确指出 `curlyVectorId = sy.lambdify(curlyv, curlyv)` 和 `curlyVectorIdDummified = sy.lambdify(curlyv, curlyv, dummify=True)` 会给出 `SyntaxError`。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "lambdify 函数应能正确处理名称包含花括号的 MatrixSymbol 对象，通过 dummify 机制生成有效的 Python 函数，而不抛出 SyntaxError。",
+      "evidence": [
+        "Issue 中提到 `dummify=True` 参数的存在，暗示其设计目的是处理无效的变量名。",
+        "相关测试 1 和 3 展示了 lambdify 对包含反斜杠或 Python 关键字的符号名称成功进行 dummify 并生成可执行函数。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "lambdify",
+        "kind": "function",
+        "source_path": "sympy/utilities/lambdify.py",
+        "reason": "Issue 的核心是 lambdify 函数在处理特定输入时的行为。"
+      },
+      {
+        "name": "MatrixSymbol",
+        "kind": "class",
+        "source_path": "sympy/matrices/expressions/matexpr.py",
+        "reason": "Issue 中触发问题的输入对象是 MatrixSymbol 的实例。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/utilities/lambdify.py",
+        "object": "lambdify",
+        "lines": "",
+        "reason": "Issue 直接指向 lambdify 函数的行为。相关测试也集中在该文件的测试中。"
+      },
+      {
+        "path": "sympy/matrices/expressions/matexpr.py",
+        "object": "MatrixSymbol",
+        "lines": "",
+        "reason": "问题涉及 MatrixSymbol 对象的名称属性处理，可能与 lambdify 内部如何获取或转换其名称有关。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_dummification",
+        "test_file": "sympy/utilities/tests/test_lambdify.py",
+        "why_relevant": "该测试专门验证 lambdify 对无效 Python 变量名（如包含反斜杠的符号）的 dummify 功能。",
+        "reusable_parts": [
+          "导入模式（如 `from sympy import symbols, Function`）",
+          "使用 `lambdify` 和 `assert` 验证函数调用结果",
+          "使用 `raises(SyntaxError, ...)` 来断言某些输入会失败"
+        ],
+        "possible_gap": "该测试使用普通 Symbol 和 Function，没有测试 MatrixSymbol 对象，也没有测试名称包含花括号的情况。"
+      },
+      {
+        "test_name": "test_python_keywords",
+        "test_file": "sympy/utilities/tests/test_lambdify.py",
+        "why_relevant": "该测试验证 lambdify 能处理 Python 关键字作为符号名，通过自动 dummify 生成有效函数。",
+        "reusable_parts": [
+          "使用 `symbols('if')` 创建特殊名称符号",
+          "调用 `lambdify` 并断言函数执行结果"
+        ],
+        "possible_gap": "该测试只针对普通 Symbol，不涉及 MatrixSymbol，且名称是关键字而非花括号。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用普通 Symbol（如 `symbols(r'\\alpha')` 或 `symbols('if')`）作为 lambdify 的输入。",
+        "target_pattern": "使用名称包含花括号的 MatrixSymbol（如 `MatrixSymbol('{v}', 2, 1)`）作为 lambdify 的输入。",
+        "reason": "Issue 表明问题特定于 MatrixSymbol 名称包含花括号的组合，这是当前测试未覆盖的输入模式。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "相似测试中可能未显式设置 `dummify` 参数，或仅对普通 Symbol 测试其默认/显式行为。",
+        "target_pattern": "对问题输入同时测试 `dummify=False`（默认）和 `dummify=True` 两种情况。",
+        "reason": "Issue 显示即使 `dummify=True` 也无法避免 SyntaxError，这与 dummify 的设计预期相悖，需要验证。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 `lambdify(curlyv, curlyv)` 或 `lambdify(curlyv, curlyv, dummify=True)` 时是否抛出 SyntaxError 及其详细信息。",
+        "reason": "Issue 的核心错误现象是 SyntaxError，直接观测此异常是判断问题是否触发的关键。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "如果 lambdify 调用成功，观察返回的函数对象，并尝试调用它（如 `f(某个矩阵)`），检查其行为。",
+        "reason": "修复后，lambdify 应返回一个可调用的函数，观测其能否被成功调用和执行有助于验证预期行为。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证对名称包含花括号的 MatrixSymbol 调用 lambdify（无论 dummify 参数如何）不会抛出 SyntaxError，并能生成一个可调用的函数。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的错误消息字符串，因为具体语法错误信息可能因 Python 版本或实现细节而变化。",
+        "reason": "Issue 的核心是避免 SyntaxError。使用 `pytest.raises(SyntaxError)` 的否定形式（即断言不抛出）或直接调用 lambdify 并验证其返回类型为可调用对象，是稳定且与 Issue 对齐的断言方式。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 及相关模块（如 `sympy as sy`, `MatrixSymbol`, `symbols`）。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能不需要外部依赖或复杂 fixture，可以在简单的函数测试中完成。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "lambdify 内部处理 MatrixSymbol 名称的具体代码路径和 dummify 逻辑的交互细节。",
+      "除了花括号，是否还有其他特殊字符组合在 MatrixSymbol 名称中会导致类似问题。",
+      "修复后，生成的函数在调用时对输入矩阵的具体行为（如维度匹配）是否需要额外验证，但 Issue 未提及此方面问题。"
+    ]
+  }
+}

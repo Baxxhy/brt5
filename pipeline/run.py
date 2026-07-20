@@ -13,6 +13,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from ..core.ablation import AblationConfig, ablation_signature_from_summary
+from ..core.behavior_target_cache import (
+    behavior_cache_source_signature,
+    validate_behavior_target_cache,
+)
 from ..core.config import (
     DEFAULT_MAX_FEEDBACK_ROUNDS,
     DEFAULT_MAX_TOKENS,
@@ -52,6 +56,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test_retrieval_path", required=True)
     parser.add_argument("--repo_root_base", required=True)
     parser.add_argument("--output_dir", required=True)
+    parser.add_argument(
+        "--behavior-target-cache",
+        "--behavior_target_cache",
+        dest="behavior_target_cache",
+        default="",
+        help=(
+            "Explicit frozen BehaviorTarget cache. The manifest, dataset, "
+            "retrieval inputs, instance set, and per-file hashes are validated "
+            "before generation. If omitted, the launcher regenerates targets."
+        ),
+    )
     parser.add_argument("--model", default="deepseek-v3")
     parser.add_argument("--api_key", default=None)
     parser.add_argument("--base_url", default=None)
@@ -153,11 +168,52 @@ def ablation_config_from_args(args: argparse.Namespace) -> AblationConfig:
 
 
 def resume_matches_ablation(
-    summary: dict, ablation_config: AblationConfig
+    summary: dict,
+    ablation_config: AblationConfig,
+    behavior_target_source_signature: str = "",
 ) -> bool:
-    """Only reuse an instance produced under the exact same ablation signature."""
+    """Only reuse output from the same ablation and frozen behavior source."""
 
-    return ablation_signature_from_summary(summary) == ablation_config.signature
+    if ablation_signature_from_summary(summary) != ablation_config.signature:
+        return False
+    if behavior_target_source_signature:
+        return (
+            summary.get("behavior_target_source_signature")
+            == behavior_target_source_signature
+        )
+    return True
+
+
+def configure_behavior_target_source(args: argparse.Namespace) -> dict:
+    """Resolve an explicit cache or describe the launcher's regenerated source."""
+
+    raw_cache = str(args.behavior_target_cache or "").strip()
+    if raw_cache and not args.enable_behavior_target:
+        raise ValueError(
+            "--behavior-target-cache cannot be combined with --behavior-target off"
+        )
+    if not args.enable_behavior_target:
+        return {
+            "mode": "disabled",
+            "cache_id": "",
+            "source_signature": "behavior_target_disabled",
+        }
+    if not raw_cache:
+        return {
+            "mode": "regenerated",
+            "cache_id": "",
+            "source_signature": "",
+        }
+    provenance = validate_behavior_target_cache(
+        raw_cache,
+        args.instances_path,
+        dataset_mode=args.dataset_mode,
+        code_retrieval_path=args.code_retrieval_path,
+        test_retrieval_path=args.test_retrieval_path,
+    )
+    os.environ["BRT4_BEHAVIOR_CACHE_DIR"] = provenance["cache_path"]
+    provenance["source_signature"] = behavior_cache_source_signature(provenance)
+    return provenance
 
 
 def configure_runtime_contract(args: argparse.Namespace) -> dict:
@@ -271,7 +327,9 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
             previous = json.loads(summary_path.read_text(encoding="utf-8"))
             previous_status = previous.get("status")
             previous_signature_matches = resume_matches_ablation(
-                previous, ablation_config
+                previous,
+                ablation_config,
+                args.behavior_target_source_signature,
             )
         except (OSError, ValueError, TypeError):
             previous_status = "ERROR"
@@ -334,7 +392,17 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
                 enable_behavior_target=args.enable_behavior_target,
                 ablation_config=ablation_config,
             )
-        return {"instance_id": instance_id, "status": result.status, "summary": result.to_dict()}
+        result_payload = result.to_dict()
+        result_payload["behavior_target_source"] = args.behavior_target_source
+        result_payload[
+            "behavior_target_source_signature"
+        ] = args.behavior_target_source_signature
+        safe_json_dump(result_payload, str(summary_path))
+        return {
+            "instance_id": instance_id,
+            "status": result.status,
+            "summary": result_payload,
+        }
     except Exception as exc:  # noqa: BLE001
         ensure_dir(out_dir)
         err = {
@@ -347,6 +415,10 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
             "observation_oracle_enabled": args.enable_observation_oracle,
             "strict_verifier_enabled": args.enable_strict_semantic_verifier,
             "behavior_target_enabled": args.enable_behavior_target,
+            "behavior_target_source": args.behavior_target_source,
+            "behavior_target_source_signature": (
+                args.behavior_target_source_signature
+            ),
             "method_variant": ablation_config.method_variant,
             "ablation_id": ablation_config.ablation_id,
             "ablation_signature": ablation_config.signature,
@@ -425,11 +497,23 @@ def main() -> None:
         ablation_config = ablation_config_from_args(args)
     except ValueError as exc:
         parser.error(str(exc))
+    try:
+        behavior_target_source = configure_behavior_target_source(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    args.behavior_target_source = behavior_target_source
+    args.behavior_target_source_signature = str(
+        behavior_target_source.get("source_signature") or ""
+    )
     ensure_dir(args.output_dir)
     safe_json_dump(
         {
             "dataset_mode": args.dataset_mode,
             "patch_cov_enabled": ablation_config.compute_patch_coverage,
+            "behavior_target_source": behavior_target_source,
+            "behavior_target_source_signature": (
+                args.behavior_target_source_signature
+            ),
             **ablation_config.to_dict(),
         },
         str(Path(args.output_dir) / "run_config.json"),
@@ -497,6 +581,10 @@ def main() -> None:
             "enable_observation_oracle": args.enable_observation_oracle,
             "enable_strict_semantic_verifier": args.enable_strict_semantic_verifier,
             "enable_behavior_target": args.enable_behavior_target,
+            "behavior_target_source": behavior_target_source,
+            "behavior_target_source_signature": (
+                args.behavior_target_source_signature
+            ),
             "method_variant": ablation_config.method_variant,
             "ablation_id": ablation_config.ablation_id,
             "ablation_signature": ablation_config.signature,

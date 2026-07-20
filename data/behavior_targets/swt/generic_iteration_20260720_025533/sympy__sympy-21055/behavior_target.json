@@ -1,0 +1,308 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-21055",
+  "issue_summary": "refine() 函数无法根据假设条件简化 Piecewise 表达式中的复杂参数（如 arg(a) 和 Abs(arg(a))）。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 中的 refine, Integral, sin, exp, oo, var, Q, Piecewise, Abs, arg。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在类似现有测试文件（sympy/assumptions/tests/test_refine.py）的上下文中运行。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_Piecewise",
+        "test_file": "sympy/assumptions/tests/test_refine.py",
+        "why_relevant": "该测试直接验证 refine 对 Piecewise 表达式的简化，包含条件和假设的使用。",
+        "reusable_parts": [
+          "imports (refine, Piecewise, Q)",
+          "assert 风格：比较 refine 结果与期望值。"
+        ],
+        "possible_gap": "现有测试使用简单条件（如 x < 0），未测试 Piecewise 条件中包含复杂函数（如 Abs(arg(a))）且依赖假设进行简化的场景。"
+      },
+      {
+        "test_name": "test_Abs",
+        "test_file": "sympy/assumptions/tests/test_refine.py",
+        "why_relevant": "该测试验证 refine 对 Abs 的简化，与 Issue 中 Abs(arg(a)) 相关。",
+        "reusable_parts": [
+          "imports (refine, Abs, Q)",
+          "assert 风格：比较 refine 结果与期望值。"
+        ],
+        "possible_gap": "现有测试未将 Abs 与 arg 函数结合，也未在 Piecewise 条件上下文中测试。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "对包含 Piecewise 的表达式（例如 Integral.doit() 的结果）调用 refine()，并传入关于符号的假设（如 Q.positive(a)），该假设应能简化 Piecewise 条件中的 Abs(arg(a)) 和 arg(a)。",
+      "evidence": [
+        "Issue 中展示了 refine(J.doit(), Q.positive(a)) 未简化，而 refine(abs(a), Q.positive(a)) 和 refine(arg(a), Q.positive(a)) 也未能简化。",
+        "相关测试 test_Piecewise 展示了 refine 对 Piecewise 和简单条件的工作方式。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "refine() 调用后，Piecewise 表达式保持不变，其条件中的 Abs(arg(a)) 和 arg(a) 未被简化，尽管假设 Q.positive(a) 应能推导出 arg(a) = 0 且 Abs(arg(a)) = 0。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中 refine(J.doit(), Q.positive(a)) 返回的 Piecewise 与 J.doit() 相同。",
+        "Issue 中 refine(arg(a), Q.positive(a)) 返回 arg(a)，未简化为 0。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "refine",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 的核心是 refine() 函数的行为。"
+      },
+      {
+        "name": "Piecewise",
+        "kind": "class",
+        "source_path": "sympy/functions/elementary/piecewise.py",
+        "reason": "Issue 中 refine 的目标表达式是 Piecewise 类型。"
+      },
+      {
+        "name": "Q.positive",
+        "kind": "function",
+        "source_path": "sympy/assumptions/ask.py",
+        "reason": "Issue 中使用的假设条件。"
+      },
+      {
+        "name": "Integral.doit",
+        "kind": "method",
+        "source_path": "sympy/integrals/integrals.py",
+        "reason": "Issue 中产生待 refine 的 Piecewise 表达式的源头。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/assumptions/refine.py",
+        "object": "refine 函数或相关的 handler",
+        "lines": "",
+        "reason": "refine 函数负责根据假设简化表达式，可能缺少对 Piecewise 内部条件中 Abs(arg(...)) 和 arg(...) 的处理逻辑。"
+      },
+      {
+        "path": "sympy/functions/elementary/piecewise.py",
+        "object": "Piecewise",
+        "lines": "",
+        "reason": "Piecewise 是 refine 的目标，其条件简化可能涉及内部处理。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "test_Piecewise 中使用简单条件（如 x < 0）和简单假设（如 Q.is_true(x < 0)）。",
+        "target_pattern": "使用包含复杂函数（如 Abs(arg(a))）的 Piecewise 条件，并应用能简化这些函数的假设（如 Q.positive(a)）。",
+        "reason": "Issue 表明 refine 无法处理 Piecewise 条件中的复杂参数简化，变异输入可触发此缺陷路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "test_Abs 中直接对 Abs(x) 应用 refine 和假设。",
+        "target_pattern": "对 Piecewise 表达式应用 refine，该表达式的条件中包含 Abs(arg(a))。",
+        "reason": "将 Abs 的测试上下文嵌入到 Piecewise 中，模拟 Issue 中 Integral.doit() 返回的表达式结构。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "在假设 Q.positive(a) 下，refine() 应能简化 Piecewise 条件中的 Abs(arg(a)) 和 arg(a)，使得条件 2*Abs(arg(a)) < pi 被简化为 True，从而 Piecewise 返回简化后的表达式 1/(a**2 + 1)。",
+      "evidence": [
+        "Issue 中用户期望 refine() 能“recognize that argument functions simplify for real numbers”。",
+        "相关测试 test_Abs 展示了 refine(Abs(x), Q.positive(x)) == x，表明 refine 应能根据假设简化 Abs。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "refine(Piecewise(...), Q.positive(a)) 的返回值，特别是其条件部分是否被简化。",
+        "reason": "Issue 的核心错误是返回值未简化，观察返回值可直接判断缺陷是否触发。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "refine(arg(a), Q.positive(a)) 的返回值，是否仍为 arg(a) 或简化为 0。",
+        "reason": "Issue 显示 arg(a) 未被简化，观察此结果可辅助定位 refine 对 arg 的处理问题。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "在假设 Q.positive(a) 下，refine 应简化 Piecewise 表达式，使其条件部分被满足，从而返回简化后的表达式（如 1/(a**2 + 1)）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的 Piecewise 字符串表示，因为内部条件简化可能涉及符号顺序等无关细节。",
+        "reason": "Issue 期望 refine 后得到简化结果，而非保持原 Piecewise 结构。"
+      },
+      {
+        "assertion_goal": "refine(arg(a), Q.positive(a)) 应返回 0。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言返回值的完整类型或 repr，除非必要。",
+        "reason": "根据数学定义，正实数的辐角为 0。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "refine 函数内部处理 Piecewise 条件的具体逻辑和 handler 调用顺序。",
+    "arg 和 Abs(arg) 的简化规则是否已在 refine 的 handler 中定义但未被正确触发。",
+    "除了 Piecewise 条件外，refine 是否还应处理其他包含复杂参数的表达式结构。"
+  ],
+  "raw": {
+    "issue_summary": "refine() 函数无法根据假设条件简化 Piecewise 表达式中的复杂参数（如 arg(a) 和 Abs(arg(a))）。",
+    "trigger_condition": {
+      "text": "对包含 Piecewise 的表达式（例如 Integral.doit() 的结果）调用 refine()，并传入关于符号的假设（如 Q.positive(a)），该假设应能简化 Piecewise 条件中的 Abs(arg(a)) 和 arg(a)。",
+      "evidence": [
+        "Issue 中展示了 refine(J.doit(), Q.positive(a)) 未简化，而 refine(abs(a), Q.positive(a)) 和 refine(arg(a), Q.positive(a)) 也未能简化。",
+        "相关测试 test_Piecewise 展示了 refine 对 Piecewise 和简单条件的工作方式。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "refine() 调用后，Piecewise 表达式保持不变，其条件中的 Abs(arg(a)) 和 arg(a) 未被简化，尽管假设 Q.positive(a) 应能推导出 arg(a) = 0 且 Abs(arg(a)) = 0。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中 refine(J.doit(), Q.positive(a)) 返回的 Piecewise 与 J.doit() 相同。",
+        "Issue 中 refine(arg(a), Q.positive(a)) 返回 arg(a)，未简化为 0。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "在假设 Q.positive(a) 下，refine() 应能简化 Piecewise 条件中的 Abs(arg(a)) 和 arg(a)，使得条件 2*Abs(arg(a)) < pi 被简化为 True，从而 Piecewise 返回简化后的表达式 1/(a**2 + 1)。",
+      "evidence": [
+        "Issue 中用户期望 refine() 能“recognize that argument functions simplify for real numbers”。",
+        "相关测试 test_Abs 展示了 refine(Abs(x), Q.positive(x)) == x，表明 refine 应能根据假设简化 Abs。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "refine",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 的核心是 refine() 函数的行为。"
+      },
+      {
+        "name": "Piecewise",
+        "kind": "class",
+        "source_path": "sympy/functions/elementary/piecewise.py",
+        "reason": "Issue 中 refine 的目标表达式是 Piecewise 类型。"
+      },
+      {
+        "name": "Q.positive",
+        "kind": "function",
+        "source_path": "sympy/assumptions/ask.py",
+        "reason": "Issue 中使用的假设条件。"
+      },
+      {
+        "name": "Integral.doit",
+        "kind": "method",
+        "source_path": "sympy/integrals/integrals.py",
+        "reason": "Issue 中产生待 refine 的 Piecewise 表达式的源头。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/assumptions/refine.py",
+        "object": "refine 函数或相关的 handler",
+        "lines": "",
+        "reason": "refine 函数负责根据假设简化表达式，可能缺少对 Piecewise 内部条件中 Abs(arg(...)) 和 arg(...) 的处理逻辑。"
+      },
+      {
+        "path": "sympy/functions/elementary/piecewise.py",
+        "object": "Piecewise",
+        "lines": "",
+        "reason": "Piecewise 是 refine 的目标，其条件简化可能涉及内部处理。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_Piecewise",
+        "test_file": "sympy/assumptions/tests/test_refine.py",
+        "why_relevant": "该测试直接验证 refine 对 Piecewise 表达式的简化，包含条件和假设的使用。",
+        "reusable_parts": [
+          "imports (refine, Piecewise, Q)",
+          "assert 风格：比较 refine 结果与期望值。"
+        ],
+        "possible_gap": "现有测试使用简单条件（如 x < 0），未测试 Piecewise 条件中包含复杂函数（如 Abs(arg(a))）且依赖假设进行简化的场景。"
+      },
+      {
+        "test_name": "test_Abs",
+        "test_file": "sympy/assumptions/tests/test_refine.py",
+        "why_relevant": "该测试验证 refine 对 Abs 的简化，与 Issue 中 Abs(arg(a)) 相关。",
+        "reusable_parts": [
+          "imports (refine, Abs, Q)",
+          "assert 风格：比较 refine 结果与期望值。"
+        ],
+        "possible_gap": "现有测试未将 Abs 与 arg 函数结合，也未在 Piecewise 条件上下文中测试。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "test_Piecewise 中使用简单条件（如 x < 0）和简单假设（如 Q.is_true(x < 0)）。",
+        "target_pattern": "使用包含复杂函数（如 Abs(arg(a))）的 Piecewise 条件，并应用能简化这些函数的假设（如 Q.positive(a)）。",
+        "reason": "Issue 表明 refine 无法处理 Piecewise 条件中的复杂参数简化，变异输入可触发此缺陷路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "test_Abs 中直接对 Abs(x) 应用 refine 和假设。",
+        "target_pattern": "对 Piecewise 表达式应用 refine，该表达式的条件中包含 Abs(arg(a))。",
+        "reason": "将 Abs 的测试上下文嵌入到 Piecewise 中，模拟 Issue 中 Integral.doit() 返回的表达式结构。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "refine(Piecewise(...), Q.positive(a)) 的返回值，特别是其条件部分是否被简化。",
+        "reason": "Issue 的核心错误是返回值未简化，观察返回值可直接判断缺陷是否触发。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "refine(arg(a), Q.positive(a)) 的返回值，是否仍为 arg(a) 或简化为 0。",
+        "reason": "Issue 显示 arg(a) 未被简化，观察此结果可辅助定位 refine 对 arg 的处理问题。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "在假设 Q.positive(a) 下，refine 应简化 Piecewise 表达式，使其条件部分被满足，从而返回简化后的表达式（如 1/(a**2 + 1)）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的 Piecewise 字符串表示，因为内部条件简化可能涉及符号顺序等无关细节。",
+        "reason": "Issue 期望 refine 后得到简化结果，而非保持原 Piecewise 结构。"
+      },
+      {
+        "assertion_goal": "refine(arg(a), Q.positive(a)) 应返回 0。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言返回值的完整类型或 repr，除非必要。",
+        "reason": "根据数学定义，正实数的辐角为 0。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 中的 refine, Integral, sin, exp, oo, var, Q, Piecewise, Abs, arg。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在类似现有测试文件（sympy/assumptions/tests/test_refine.py）的上下文中运行。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "refine 函数内部处理 Piecewise 条件的具体逻辑和 handler 调用顺序。",
+      "arg 和 Abs(arg) 的简化规则是否已在 refine 的 handler 中定义但未被正确触发。",
+      "除了 Piecewise 条件外，refine 是否还应处理其他包含复杂参数的表达式结构。"
+    ]
+  }
+}

@@ -58,20 +58,6 @@ from ..core.utils import ensure_dir, safe_json_dump, write_text
 from ..validation.verifier import verify_buggy_only
 
 
-DEFAULT_BEHAVIOR_CACHE_DIRS = [
-    Path(__file__).resolve().parents[1]
-    / "results"
-    / "runs"
-    / "run_brt4_full276_20260705_141938"
-    / "generation",
-    Path(__file__).resolve().parents[1]
-    / "results"
-    / "archive"
-    / "delete_pending_20260706_001747"
-    / "outputs_brt3_flow_276_20260619_151437",
-]
-
-
 def _load_cached_behavior(context: InstanceContext, output_dir: str) -> Any:
     from ..issue.issue_rewriter import behavior_from_dict
     from ..core.utils import safe_json_load
@@ -82,7 +68,7 @@ def _load_cached_behavior(context: InstanceContext, output_dir: str) -> Any:
         Path(item)
         for item in raw_roots.split(os.pathsep)
         if item.strip()
-    ] or DEFAULT_BEHAVIOR_CACHE_DIRS
+    ]
     candidates = [local_path]
     candidates.extend(
         root / context.instance_id / "behavior_target.json"
@@ -100,6 +86,8 @@ def _load_cached_behavior(context: InstanceContext, output_dir: str) -> Any:
         "missing cached behavior_target.json; generation is configured not to "
         f"rerun issue rewrite for {context.instance_id}. Checked: "
         + ", ".join(str(path) for path in candidates)
+        + ". Use the full launcher without --behavior-target-cache to regenerate "
+        "IssueRewrite, or pass an explicit validated cache."
     )
 
 

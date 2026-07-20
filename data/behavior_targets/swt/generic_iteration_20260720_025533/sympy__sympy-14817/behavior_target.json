@@ -1,0 +1,322 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-14817",
+  "issue_summary": "使用 pprint 打印包含特殊字符 '*' 的 MatrixSymbol 的 MatAdd 表达式时，触发 SympifyError 异常。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 的 MatrixSymbol、MatAdd（或使用 '+' 运算符）、以及 pprint/pretty 相关函数。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要定义矩阵维度变量（如 n）。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_MatrixSymbol_printing",
+        "test_file": "sympy/printing/pretty/tests/test_pretty.py",
+        "why_relevant": "该测试直接测试 MatrixSymbol 的 pretty 打印，包含 MatAdd 和 MatMul 表达式。",
+        "reusable_parts": [
+          "MatrixSymbol 的导入和构造",
+          "使用 `pretty` 函数进行断言",
+          "断言风格为字符串相等"
+        ],
+        "possible_gap": "现有测试用例中的 MatrixSymbol 名称都是简单字母（如 A, B, C），没有包含特殊字符（如 '*')，因此无法触发 Issue 中的 sympify 错误。"
+      },
+      {
+        "test_name": "test_matAdd",
+        "test_file": "sympy/printing/tests/test_latex.py",
+        "why_relevant": "该测试测试 MatAdd 的 LaTeX 打印，涉及 MatrixSymbol 和算术运算。",
+        "reusable_parts": [
+          "MatrixSymbol 的导入和构造",
+          "MatAdd 表达式的构造",
+          "使用 `_print_MatAdd` 方法"
+        ],
+        "possible_gap": "测试的是 LaTeX 打印而非 pretty 打印，且 MatrixSymbol 名称也是简单字母。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用 pprint 或 pretty_print 打印一个 MatAdd 表达式，该表达式由至少一个名称包含特殊字符（如 '*'）的 MatrixSymbol 构成。",
+      "evidence": [
+        "Issue 中执行 `pprint(MatrixSymbol('x', n, n) + MatrixSymbol('y*', n, n))` 导致错误。",
+        "Issue 描述指出错误源于 `sympify` 处理来自 MatrixSymbol 的字符串参数。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "抛出 SympifyError 异常，提示无法解析字符串 'y*'，根本原因是内部语法错误：`SyntaxError: unexpected EOF while parsing`。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的完整错误堆栈显示 `sympy.core.sympify.SympifyError: Sympify of expression 'could not parse 'y*'' failed, because of exception being raised: SyntaxError: unexpected EOF while parsing`。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "pprint",
+        "kind": "function",
+        "source_path": "sympy/printing/pretty/pretty.py",
+        "reason": "Issue 中触发错误的直接调用。"
+      },
+      {
+        "name": "pretty_print",
+        "kind": "function",
+        "source_path": "sympy/printing/pretty/pretty.py",
+        "reason": "pprint 的底层实现，Issue 堆栈中涉及。"
+      },
+      {
+        "name": "_print_MatAdd",
+        "kind": "method",
+        "source_path": "sympy/printing/pretty/pretty.py",
+        "reason": "Issue 堆栈中错误发生的具体方法（第 828 行）。"
+      },
+      {
+        "name": "MatrixSymbol",
+        "kind": "class",
+        "source_path": "sympy/matrices/expressions/matexpr.py",
+        "reason": "Issue 中构造触发表达式所需的关键类。"
+      },
+      {
+        "name": "MatAdd",
+        "kind": "class",
+        "source_path": "sympy/matrices/expressions/matadd.py",
+        "reason": "Issue 中涉及的表达式类型。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/printing/pretty/pretty.py",
+        "object": "_print_MatAdd",
+        "lines": "828",
+        "reason": "Issue 堆栈显示错误发生在该方法中，具体是 `if S(item.args[0]).is_negative:` 这一行调用了 `sympify`。"
+      },
+      {
+        "path": "sympy/printing/pretty/pretty.py",
+        "object": "PrettyPrinter._print",
+        "lines": "",
+        "reason": "Issue 描述质疑代码为何假设 MatAdd 的参数具有特定形式，并省略 '+' 号，这可能涉及更广泛的打印逻辑。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用简单字母名称构造 MatrixSymbol，如 `MatrixSymbol('A', 3, 3)`。",
+        "target_pattern": "使用包含特殊字符（如 '*'）的名称构造 MatrixSymbol，如 `MatrixSymbol('y*', n, n)`。",
+        "reason": "Issue 表明当 MatrixSymbol 名称包含 '*' 时，在 pretty 打印 MatAdd 过程中会触发 sympify 解析错误。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "相似测试直接调用 `pretty(expr)` 并断言输出字符串。",
+        "target_pattern": "调用 `pprint(expr)` 或 `pretty_print(expr)`，并观察是否引发异常。",
+        "reason": "Issue 中的错误是通过 `pprint` 触发的，它内部调用 `pretty_print` 和 `_print_MatAdd`。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "pprint 应能正常打印包含特殊字符名称的 MatrixSymbol 的 MatAdd 表达式，而不引发 SympifyError。",
+      "evidence": [
+        "Issue 标题和描述暗示这是一个错误，代码不应使用 sympify 来处理来自 MatrixSymbol 的字符串参数。",
+        "相关测试 1 和 2 表明 MatAdd 和 MatrixSymbol 的打印功能是预期存在的。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 `pprint(MatrixSymbol('x', n, n) + MatrixSymbol('y*', n, n))` 时是否抛出 `SympifyError` 或 `SyntaxError`。",
+        "reason": "Issue 的核心错误现象是抛出 SympifyError，观测异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "调用 `pretty(expr)` 的返回值（字符串），观察其是否包含预期的符号名称片段。",
+        "reason": "修复后，打印输出应能正确显示包含 '*' 的符号名称，而不是因解析失败而中断。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "打印包含特殊字符名称的 MatrixSymbol 的 MatAdd 表达式时，不应引发 SympifyError 或 SyntaxError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的输出字符串相等，因为具体格式可能因修复方式而变化。",
+        "reason": "Issue 的核心是异常，因此断言不引发特定异常是稳定且与 Issue 对齐的。修复后，该调用应正常执行。"
+      },
+      {
+        "assertion_goal": "打印输出的字符串应包含 MatrixSymbol 名称中的特殊字符（如 '*'）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的、格式化的输出字符串，避免因空格、括号等无关细节导致断言脆弱。",
+        "reason": "这表明打印逻辑正确处理了符号名称，而没有错误地将其送入解析器。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "触发 bug 的确切代码路径和条件是否仅限于 MatAdd 的 pretty 打印，还是也影响其他打印方式（如 str, latex）。",
+    "除了 '*' 之外，还有哪些特殊字符会触发相同问题。",
+    "_print_MatAdd 方法中调用 sympify 的具体目的和逻辑，以及修复后的正确实现方式。"
+  ],
+  "raw": {
+    "issue_summary": "使用 pprint 打印包含特殊字符 '*' 的 MatrixSymbol 的 MatAdd 表达式时，触发 SympifyError 异常。",
+    "trigger_condition": {
+      "text": "使用 pprint 或 pretty_print 打印一个 MatAdd 表达式，该表达式由至少一个名称包含特殊字符（如 '*'）的 MatrixSymbol 构成。",
+      "evidence": [
+        "Issue 中执行 `pprint(MatrixSymbol('x', n, n) + MatrixSymbol('y*', n, n))` 导致错误。",
+        "Issue 描述指出错误源于 `sympify` 处理来自 MatrixSymbol 的字符串参数。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "抛出 SympifyError 异常，提示无法解析字符串 'y*'，根本原因是内部语法错误：`SyntaxError: unexpected EOF while parsing`。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的完整错误堆栈显示 `sympy.core.sympify.SympifyError: Sympify of expression 'could not parse 'y*'' failed, because of exception being raised: SyntaxError: unexpected EOF while parsing`。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "pprint 应能正常打印包含特殊字符名称的 MatrixSymbol 的 MatAdd 表达式，而不引发 SympifyError。",
+      "evidence": [
+        "Issue 标题和描述暗示这是一个错误，代码不应使用 sympify 来处理来自 MatrixSymbol 的字符串参数。",
+        "相关测试 1 和 2 表明 MatAdd 和 MatrixSymbol 的打印功能是预期存在的。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "pprint",
+        "kind": "function",
+        "source_path": "sympy/printing/pretty/pretty.py",
+        "reason": "Issue 中触发错误的直接调用。"
+      },
+      {
+        "name": "pretty_print",
+        "kind": "function",
+        "source_path": "sympy/printing/pretty/pretty.py",
+        "reason": "pprint 的底层实现，Issue 堆栈中涉及。"
+      },
+      {
+        "name": "_print_MatAdd",
+        "kind": "method",
+        "source_path": "sympy/printing/pretty/pretty.py",
+        "reason": "Issue 堆栈中错误发生的具体方法（第 828 行）。"
+      },
+      {
+        "name": "MatrixSymbol",
+        "kind": "class",
+        "source_path": "sympy/matrices/expressions/matexpr.py",
+        "reason": "Issue 中构造触发表达式所需的关键类。"
+      },
+      {
+        "name": "MatAdd",
+        "kind": "class",
+        "source_path": "sympy/matrices/expressions/matadd.py",
+        "reason": "Issue 中涉及的表达式类型。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/printing/pretty/pretty.py",
+        "object": "_print_MatAdd",
+        "lines": "828",
+        "reason": "Issue 堆栈显示错误发生在该方法中，具体是 `if S(item.args[0]).is_negative:` 这一行调用了 `sympify`。"
+      },
+      {
+        "path": "sympy/printing/pretty/pretty.py",
+        "object": "PrettyPrinter._print",
+        "lines": "",
+        "reason": "Issue 描述质疑代码为何假设 MatAdd 的参数具有特定形式，并省略 '+' 号，这可能涉及更广泛的打印逻辑。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_MatrixSymbol_printing",
+        "test_file": "sympy/printing/pretty/tests/test_pretty.py",
+        "why_relevant": "该测试直接测试 MatrixSymbol 的 pretty 打印，包含 MatAdd 和 MatMul 表达式。",
+        "reusable_parts": [
+          "MatrixSymbol 的导入和构造",
+          "使用 `pretty` 函数进行断言",
+          "断言风格为字符串相等"
+        ],
+        "possible_gap": "现有测试用例中的 MatrixSymbol 名称都是简单字母（如 A, B, C），没有包含特殊字符（如 '*')，因此无法触发 Issue 中的 sympify 错误。"
+      },
+      {
+        "test_name": "test_matAdd",
+        "test_file": "sympy/printing/tests/test_latex.py",
+        "why_relevant": "该测试测试 MatAdd 的 LaTeX 打印，涉及 MatrixSymbol 和算术运算。",
+        "reusable_parts": [
+          "MatrixSymbol 的导入和构造",
+          "MatAdd 表达式的构造",
+          "使用 `_print_MatAdd` 方法"
+        ],
+        "possible_gap": "测试的是 LaTeX 打印而非 pretty 打印，且 MatrixSymbol 名称也是简单字母。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用简单字母名称构造 MatrixSymbol，如 `MatrixSymbol('A', 3, 3)`。",
+        "target_pattern": "使用包含特殊字符（如 '*'）的名称构造 MatrixSymbol，如 `MatrixSymbol('y*', n, n)`。",
+        "reason": "Issue 表明当 MatrixSymbol 名称包含 '*' 时，在 pretty 打印 MatAdd 过程中会触发 sympify 解析错误。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "相似测试直接调用 `pretty(expr)` 并断言输出字符串。",
+        "target_pattern": "调用 `pprint(expr)` 或 `pretty_print(expr)`，并观察是否引发异常。",
+        "reason": "Issue 中的错误是通过 `pprint` 触发的，它内部调用 `pretty_print` 和 `_print_MatAdd`。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 `pprint(MatrixSymbol('x', n, n) + MatrixSymbol('y*', n, n))` 时是否抛出 `SympifyError` 或 `SyntaxError`。",
+        "reason": "Issue 的核心错误现象是抛出 SympifyError，观测异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "调用 `pretty(expr)` 的返回值（字符串），观察其是否包含预期的符号名称片段。",
+        "reason": "修复后，打印输出应能正确显示包含 '*' 的符号名称，而不是因解析失败而中断。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "打印包含特殊字符名称的 MatrixSymbol 的 MatAdd 表达式时，不应引发 SympifyError 或 SyntaxError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的输出字符串相等，因为具体格式可能因修复方式而变化。",
+        "reason": "Issue 的核心是异常，因此断言不引发特定异常是稳定且与 Issue 对齐的。修复后，该调用应正常执行。"
+      },
+      {
+        "assertion_goal": "打印输出的字符串应包含 MatrixSymbol 名称中的特殊字符（如 '*'）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的、格式化的输出字符串，避免因空格、括号等无关细节导致断言脆弱。",
+        "reason": "这表明打印逻辑正确处理了符号名称，而没有错误地将其送入解析器。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 的 MatrixSymbol、MatAdd（或使用 '+' 运算符）、以及 pprint/pretty 相关函数。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要定义矩阵维度变量（如 n）。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "触发 bug 的确切代码路径和条件是否仅限于 MatAdd 的 pretty 打印，还是也影响其他打印方式（如 str, latex）。",
+      "除了 '*' 之外，还有哪些特殊字符会触发相同问题。",
+      "_print_MatAdd 方法中调用 sympify 的具体目的和逻辑，以及修复后的正确实现方式。"
+    ]
+  }
+}

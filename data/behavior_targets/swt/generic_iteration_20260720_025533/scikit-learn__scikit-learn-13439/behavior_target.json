@@ -1,0 +1,282 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "scikit-learn__scikit-learn-13439",
+  "issue_summary": "Pipeline 类不支持 __len__ 方法，导致对 Pipeline 对象使用 len() 函数时出错。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sklearn.pipeline.Pipeline 以及 Issue 示例中使用的其他组件（如 sklearn.feature_selection.SelectKBest, sklearn.svm.SVC）。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 sklearn.datasets.samples_generator.make_classification 生成测试数据，但测试的核心是 Pipeline 本身，数据可能不是必需的。",
+        "source": "issue",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_pipeline_slice",
+        "test_file": "sklearn/tests/test_pipeline.py",
+        "why_relevant": "该测试涉及 Pipeline 的切片操作，并使用了 `len(pipe2)` 来断言长度，直接与 __len__ 功能相关。",
+        "reusable_parts": [
+          "Pipeline 对象的构造方式",
+          "对 Pipeline 进行切片操作的模式",
+          "使用 assert 进行长度比较的风格"
+        ],
+        "possible_gap": "该测试在断言 `len(pipe2)` 时，可能假设 Pipeline 已正确实现 __len__，因此无法直接复现当前 Issue 中 __len__ 缺失导致的错误。"
+      },
+      {
+        "test_name": "test_pipeline_index",
+        "test_file": "sklearn/tests/test_pipeline.py",
+        "why_relevant": "该测试涉及 Pipeline 的索引操作，与 __getitem__ 相关，而 Issue 中 `pipe[:len(pipe)]` 结合了切片和长度查询。",
+        "reusable_parts": [
+          "Pipeline 对象的构造方式",
+          "使用索引和键访问 Pipeline 步骤的模式",
+          "使用 assert_raises 检查错误"
+        ],
+        "possible_gap": "该测试主要关注 __getitem__ 的正确性，并未测试 __len__ 本身。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "对一个 Pipeline 对象调用内置的 len() 函数。",
+      "evidence": [
+        "Issue 中的代码示例：`len(pipe)`"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 len(pipe) 时引发错误（可能是 TypeError 或 AttributeError）。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 标题和描述指出 `pipe[:len(pipe)]` raises an error，且示例代码以 `len(pipe)` 结尾，暗示其会出错。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "sklearn.pipeline.Pipeline",
+        "kind": "class",
+        "source_path": "sklearn/pipeline.py",
+        "reason": "Issue 的核心是关于 Pipeline 类缺少 __len__ 方法。"
+      },
+      {
+        "name": "sklearn.pipeline.Pipeline.__len__",
+        "kind": "method",
+        "source_path": "sklearn/pipeline.py",
+        "reason": "这是需要实现的目标方法。"
+      },
+      {
+        "name": "sklearn.pipeline.Pipeline.__getitem__",
+        "kind": "method",
+        "source_path": "sklearn/pipeline.py",
+        "reason": "Issue 提到 `pipe[:len(pipe)]`，这依赖于 __getitem__ 和 __len__ 的配合。相关测试 test_pipeline_index 和 test_pipeline_slice 也使用了索引和切片。"
+      },
+      {
+        "name": "sklearn.pipeline.Pipeline.steps",
+        "kind": "attribute",
+        "source_path": "sklearn/pipeline.py",
+        "reason": "Pipeline 的长度应基于其 steps 属性。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/pipeline.py",
+        "object": "Pipeline",
+        "lines": "",
+        "reason": "Pipeline 类缺少 __len__ 方法的定义。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "call_chain",
+        "current_pattern": "在相关测试中，对 Pipeline 对象进行索引或切片，但可能未直接调用 len()。",
+        "target_pattern": "在测试中直接对 Pipeline 对象调用 len()。",
+        "reason": "Issue 的触发条件就是调用 len(pipe)。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "相关测试中构造了具有特定步骤的 Pipeline。",
+        "target_pattern": "构造一个与 Issue 示例类似的 Pipeline（包含 SelectKBest 和 SVC 等步骤）。",
+        "reason": "Issue 提供了具体的代码示例，使用相同的组件可能更贴近原始触发场景。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "Pipeline 对象应实现 __len__ 方法，返回其包含的步骤（steps）的数量。",
+      "evidence": [
+        "Issue 标题明确要求 \"Pipeline should implement __len__\"。相关测试 test_pipeline_slice 中使用了 `len(pipe2)`，表明期望 Pipeline 支持长度查询。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 len(pipe) 时是否引发异常（如 TypeError: object of type 'Pipeline' has no len()）。",
+        "reason": "Issue 的核心症状是调用 len() 时出错。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "如果 __len__ 被实现，len(pipe) 的返回值（应为 steps 的长度）。",
+        "reason": "用于验证修复后的正确行为。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "对 Pipeline 对象调用 len() 应返回其步骤的数量，而不引发异常。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的异常消息字符串，因为具体消息可能因Python版本而异。",
+        "reason": "修复后，len(pipe) 应返回一个整数（steps 的长度）。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "在没有修复的情况下，调用 len(pipe) 具体会引发哪种类型的异常（TypeError 还是 AttributeError）？",
+    "__len__ 方法的具体实现细节（例如，是否应直接返回 len(self.steps)）？",
+    "除了 len()，是否还有其他操作（如切片 `pipe[:len(pipe)]`）会因 __len__ 缺失而间接失败？"
+  ],
+  "raw": {
+    "issue_summary": "Pipeline 类不支持 __len__ 方法，导致对 Pipeline 对象使用 len() 函数时出错。",
+    "trigger_condition": {
+      "text": "对一个 Pipeline 对象调用内置的 len() 函数。",
+      "evidence": [
+        "Issue 中的代码示例：`len(pipe)`"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 len(pipe) 时引发错误（可能是 TypeError 或 AttributeError）。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 标题和描述指出 `pipe[:len(pipe)]` raises an error，且示例代码以 `len(pipe)` 结尾，暗示其会出错。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "Pipeline 对象应实现 __len__ 方法，返回其包含的步骤（steps）的数量。",
+      "evidence": [
+        "Issue 标题明确要求 \"Pipeline should implement __len__\"。相关测试 test_pipeline_slice 中使用了 `len(pipe2)`，表明期望 Pipeline 支持长度查询。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "sklearn.pipeline.Pipeline",
+        "kind": "class",
+        "source_path": "sklearn/pipeline.py",
+        "reason": "Issue 的核心是关于 Pipeline 类缺少 __len__ 方法。"
+      },
+      {
+        "name": "sklearn.pipeline.Pipeline.__len__",
+        "kind": "method",
+        "source_path": "sklearn/pipeline.py",
+        "reason": "这是需要实现的目标方法。"
+      },
+      {
+        "name": "sklearn.pipeline.Pipeline.__getitem__",
+        "kind": "method",
+        "source_path": "sklearn/pipeline.py",
+        "reason": "Issue 提到 `pipe[:len(pipe)]`，这依赖于 __getitem__ 和 __len__ 的配合。相关测试 test_pipeline_index 和 test_pipeline_slice 也使用了索引和切片。"
+      },
+      {
+        "name": "sklearn.pipeline.Pipeline.steps",
+        "kind": "attribute",
+        "source_path": "sklearn/pipeline.py",
+        "reason": "Pipeline 的长度应基于其 steps 属性。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/pipeline.py",
+        "object": "Pipeline",
+        "lines": "",
+        "reason": "Pipeline 类缺少 __len__ 方法的定义。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_pipeline_slice",
+        "test_file": "sklearn/tests/test_pipeline.py",
+        "why_relevant": "该测试涉及 Pipeline 的切片操作，并使用了 `len(pipe2)` 来断言长度，直接与 __len__ 功能相关。",
+        "reusable_parts": [
+          "Pipeline 对象的构造方式",
+          "对 Pipeline 进行切片操作的模式",
+          "使用 assert 进行长度比较的风格"
+        ],
+        "possible_gap": "该测试在断言 `len(pipe2)` 时，可能假设 Pipeline 已正确实现 __len__，因此无法直接复现当前 Issue 中 __len__ 缺失导致的错误。"
+      },
+      {
+        "test_name": "test_pipeline_index",
+        "test_file": "sklearn/tests/test_pipeline.py",
+        "why_relevant": "该测试涉及 Pipeline 的索引操作，与 __getitem__ 相关，而 Issue 中 `pipe[:len(pipe)]` 结合了切片和长度查询。",
+        "reusable_parts": [
+          "Pipeline 对象的构造方式",
+          "使用索引和键访问 Pipeline 步骤的模式",
+          "使用 assert_raises 检查错误"
+        ],
+        "possible_gap": "该测试主要关注 __getitem__ 的正确性，并未测试 __len__ 本身。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "call_chain",
+        "current_pattern": "在相关测试中，对 Pipeline 对象进行索引或切片，但可能未直接调用 len()。",
+        "target_pattern": "在测试中直接对 Pipeline 对象调用 len()。",
+        "reason": "Issue 的触发条件就是调用 len(pipe)。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "相关测试中构造了具有特定步骤的 Pipeline。",
+        "target_pattern": "构造一个与 Issue 示例类似的 Pipeline（包含 SelectKBest 和 SVC 等步骤）。",
+        "reason": "Issue 提供了具体的代码示例，使用相同的组件可能更贴近原始触发场景。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 len(pipe) 时是否引发异常（如 TypeError: object of type 'Pipeline' has no len()）。",
+        "reason": "Issue 的核心症状是调用 len() 时出错。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "如果 __len__ 被实现，len(pipe) 的返回值（应为 steps 的长度）。",
+        "reason": "用于验证修复后的正确行为。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "对 Pipeline 对象调用 len() 应返回其步骤的数量，而不引发异常。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的异常消息字符串，因为具体消息可能因Python版本而异。",
+        "reason": "修复后，len(pipe) 应返回一个整数（steps 的长度）。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sklearn.pipeline.Pipeline 以及 Issue 示例中使用的其他组件（如 sklearn.feature_selection.SelectKBest, sklearn.svm.SVC）。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 sklearn.datasets.samples_generator.make_classification 生成测试数据，但测试的核心是 Pipeline 本身，数据可能不是必需的。",
+        "source": "issue",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "在没有修复的情况下，调用 len(pipe) 具体会引发哪种类型的异常（TypeError 还是 AttributeError）？",
+      "__len__ 方法的具体实现细节（例如，是否应直接返回 len(self.steps)）？",
+      "除了 len()，是否还有其他操作（如切片 `pipe[:len(pipe)]`）会因 __len__ 缺失而间接失败？"
+    ]
+  }
+}

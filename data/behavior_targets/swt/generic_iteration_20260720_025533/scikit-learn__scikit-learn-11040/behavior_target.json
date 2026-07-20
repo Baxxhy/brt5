@@ -1,0 +1,290 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "scikit-learn__scikit-learn-11040",
+  "issue_summary": "NearestNeighbors 在 n_neighbors 参数为浮点数时缺少参数验证，导致内部 TypeError。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用 make_blobs 或随机数据生成样本 X，用于 fit 和 kneighbors 调用。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 pytest 的 assert_raises 或 unittest 的 assertRaises 来验证异常。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_neighbors_badargs",
+        "test_file": "sklearn/neighbors/tests/test_neighbors.py",
+        "why_relevant": "该测试专门验证 neighbors 模块中各种类对非法参数的处理，包含参数验证和抛出 ValueError 的模式。",
+        "reusable_parts": [
+          "imports (neighbors, assert_raises)",
+          "测试结构（使用 assert_raises 验证错误）",
+          "对 NearestNeighbors 等类的构造和调用模式。"
+        ],
+        "possible_gap": "该测试目前没有覆盖 n_neighbors 为浮点数的情况，只测试了 n_neighbors=-1 等整数边界值。"
+      },
+      {
+        "test_name": "test_unsupervised_inputs",
+        "test_file": "sklearn/neighbors/tests/test_neighbors.py",
+        "why_relevant": "该测试展示了 NearestNeighbors 的基本使用流程：构造、fit、kneighbors。",
+        "reusable_parts": [
+          "NearestNeighbors 对象的构造和 fit 调用",
+          "kneighbors 方法的调用",
+          "assert_array_almost_equal 断言风格。"
+        ],
+        "possible_gap": "该测试使用合法的整数 n_neighbors 参数，没有触发缺陷路径。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "创建 NearestNeighbors 对象时传入浮点数 n_neighbors 参数，或调用 kneighbors 方法时传入浮点数 n_neighbors 参数。",
+      "evidence": [
+        "Issue 中示例代码：`NearestNeighbors(n_neighbors=3.)` 和 `neighbors.kneighbors(X, n_neighbors=3.)`。",
+        "源码片段 1 中 NearestNeighbors 的 __init__ 参数 n_neighbors 类型为 int。",
+        "源码片段 3 中 kneighbors 方法的参数 n_neighbors 类型为 int。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "在 sklearn.neighbors.kd_tree.NeighborsHeap.__init__ 中抛出 TypeError: 'float' object cannot be interpreted as an integer。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误堆栈跟踪信息。",
+        "Issue 描述指出错误发生在内部，应更早被捕获。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "NearestNeighbors.__init__",
+        "kind": "method",
+        "source_path": "sklearn/neighbors/unsupervised.py",
+        "reason": "Issue 中触发 bug 的构造函数，负责接收 n_neighbors 参数。"
+      },
+      {
+        "name": "NearestNeighbors.kneighbors",
+        "kind": "method",
+        "source_path": "sklearn/neighbors/base.py",
+        "reason": "Issue 中提到的另一种触发方式，也接收 n_neighbors 参数。"
+      },
+      {
+        "name": "make_blobs",
+        "kind": "function",
+        "source_path": "sklearn/datasets/samples_generator.py",
+        "reason": "Issue 中用于生成测试数据的函数。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/neighbors/unsupervised.py",
+        "object": "NearestNeighbors.__init__",
+        "lines": "115-123",
+        "reason": "构造函数接收 n_neighbors 参数，但可能未进行类型检查就传递给父类。"
+      },
+      {
+        "path": "sklearn/neighbors/base.py",
+        "object": "KNeighborsMixin.kneighbors",
+        "lines": "273-421",
+        "reason": "kneighbors 方法接收 n_neighbors 参数，但可能未在内部使用前进行类型检查。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "argument",
+        "current_pattern": "相似测试中使用整数作为 n_neighbors 参数值，例如 `n_neighbors=1`。",
+        "target_pattern": "将 n_neighbors 参数值改为浮点数，例如 `n_neighbors=3.` 或 `n_neighbors=5.0`。",
+        "reason": "Issue 明确指出浮点数 n_neighbors 会触发内部 TypeError，而当前测试未覆盖此情况。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "在构造函数中传入 n_neighbors 参数，然后调用 fit 和 kneighbors。",
+        "target_pattern": "在构造函数中传入整数 n_neighbors，但在调用 kneighbors 方法时传入浮点数 n_neighbors 参数。",
+        "reason": "Issue 提到需要确保 `neighbors.kneighbors(X, n_neighbors=3.)` 也能正常工作或抛出合适错误。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "应在 NearestNeighbors 构造或 kneighbors 方法调用时，对 n_neighbors 参数进行类型验证，若为浮点数则抛出更清晰的错误信息（或进行整数转换）。",
+      "evidence": [
+        "Issue 描述：\"This should be caught earlier and a more helpful error message should be raised (or we could be lenient and cast to integer, but I think a better error might be better).\"",
+        "相关测试 1 (test_neighbors_badargs) 展示了参数验证和抛出 ValueError 的模式。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 `NearestNeighbors(n_neighbors=3.).fit(X)` 或 `neighbors.kneighbors(X, n_neighbors=3.)` 时捕获的异常。",
+        "reason": "Issue 的核心是异常类型和错误信息。观测是否抛出异常、异常类型是否为 TypeError 或更早的 ValueError、错误信息是否清晰。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "在构造函数或 kneighbors 方法内部，检查 `n_neighbors` 参数的类型。",
+        "reason": "缺陷根源在于参数类型未验证。观测传入参数的类型有助于理解缺陷路径。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当 n_neighbors 为浮点数时，应抛出清晰的错误（如 ValueError），而不是内部的 TypeError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串，因为 Issue 未指定精确措辞。避免断言不抛出任何异常（因为修复前会抛异常）。",
+        "reason": "Issue 期望更早、更有帮助的错误信息。使用 raises 断言可以验证异常被抛出，且可以验证异常类型（如 ValueError）。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "修复后的具体错误信息内容是什么？Issue 只建议更清晰的错误，未指定具体措辞。",
+    "修复方案是抛出 ValueError 还是进行整数转换？Issue 提到了两种可能性，但倾向于更好的错误信息。",
+    "验证点是在构造函数、fit 方法还是 kneighbors 方法中？需要进一步插桩确认。"
+  ],
+  "raw": {
+    "issue_summary": "NearestNeighbors 在 n_neighbors 参数为浮点数时缺少参数验证，导致内部 TypeError。",
+    "trigger_condition": {
+      "text": "创建 NearestNeighbors 对象时传入浮点数 n_neighbors 参数，或调用 kneighbors 方法时传入浮点数 n_neighbors 参数。",
+      "evidence": [
+        "Issue 中示例代码：`NearestNeighbors(n_neighbors=3.)` 和 `neighbors.kneighbors(X, n_neighbors=3.)`。",
+        "源码片段 1 中 NearestNeighbors 的 __init__ 参数 n_neighbors 类型为 int。",
+        "源码片段 3 中 kneighbors 方法的参数 n_neighbors 类型为 int。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "在 sklearn.neighbors.kd_tree.NeighborsHeap.__init__ 中抛出 TypeError: 'float' object cannot be interpreted as an integer。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误堆栈跟踪信息。",
+        "Issue 描述指出错误发生在内部，应更早被捕获。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "应在 NearestNeighbors 构造或 kneighbors 方法调用时，对 n_neighbors 参数进行类型验证，若为浮点数则抛出更清晰的错误信息（或进行整数转换）。",
+      "evidence": [
+        "Issue 描述：\"This should be caught earlier and a more helpful error message should be raised (or we could be lenient and cast to integer, but I think a better error might be better).\"",
+        "相关测试 1 (test_neighbors_badargs) 展示了参数验证和抛出 ValueError 的模式。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "NearestNeighbors.__init__",
+        "kind": "method",
+        "source_path": "sklearn/neighbors/unsupervised.py",
+        "reason": "Issue 中触发 bug 的构造函数，负责接收 n_neighbors 参数。"
+      },
+      {
+        "name": "NearestNeighbors.kneighbors",
+        "kind": "method",
+        "source_path": "sklearn/neighbors/base.py",
+        "reason": "Issue 中提到的另一种触发方式，也接收 n_neighbors 参数。"
+      },
+      {
+        "name": "make_blobs",
+        "kind": "function",
+        "source_path": "sklearn/datasets/samples_generator.py",
+        "reason": "Issue 中用于生成测试数据的函数。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/neighbors/unsupervised.py",
+        "object": "NearestNeighbors.__init__",
+        "lines": "115-123",
+        "reason": "构造函数接收 n_neighbors 参数，但可能未进行类型检查就传递给父类。"
+      },
+      {
+        "path": "sklearn/neighbors/base.py",
+        "object": "KNeighborsMixin.kneighbors",
+        "lines": "273-421",
+        "reason": "kneighbors 方法接收 n_neighbors 参数，但可能未在内部使用前进行类型检查。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_neighbors_badargs",
+        "test_file": "sklearn/neighbors/tests/test_neighbors.py",
+        "why_relevant": "该测试专门验证 neighbors 模块中各种类对非法参数的处理，包含参数验证和抛出 ValueError 的模式。",
+        "reusable_parts": [
+          "imports (neighbors, assert_raises)",
+          "测试结构（使用 assert_raises 验证错误）",
+          "对 NearestNeighbors 等类的构造和调用模式。"
+        ],
+        "possible_gap": "该测试目前没有覆盖 n_neighbors 为浮点数的情况，只测试了 n_neighbors=-1 等整数边界值。"
+      },
+      {
+        "test_name": "test_unsupervised_inputs",
+        "test_file": "sklearn/neighbors/tests/test_neighbors.py",
+        "why_relevant": "该测试展示了 NearestNeighbors 的基本使用流程：构造、fit、kneighbors。",
+        "reusable_parts": [
+          "NearestNeighbors 对象的构造和 fit 调用",
+          "kneighbors 方法的调用",
+          "assert_array_almost_equal 断言风格。"
+        ],
+        "possible_gap": "该测试使用合法的整数 n_neighbors 参数，没有触发缺陷路径。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "argument",
+        "current_pattern": "相似测试中使用整数作为 n_neighbors 参数值，例如 `n_neighbors=1`。",
+        "target_pattern": "将 n_neighbors 参数值改为浮点数，例如 `n_neighbors=3.` 或 `n_neighbors=5.0`。",
+        "reason": "Issue 明确指出浮点数 n_neighbors 会触发内部 TypeError，而当前测试未覆盖此情况。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "在构造函数中传入 n_neighbors 参数，然后调用 fit 和 kneighbors。",
+        "target_pattern": "在构造函数中传入整数 n_neighbors，但在调用 kneighbors 方法时传入浮点数 n_neighbors 参数。",
+        "reason": "Issue 提到需要确保 `neighbors.kneighbors(X, n_neighbors=3.)` 也能正常工作或抛出合适错误。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 `NearestNeighbors(n_neighbors=3.).fit(X)` 或 `neighbors.kneighbors(X, n_neighbors=3.)` 时捕获的异常。",
+        "reason": "Issue 的核心是异常类型和错误信息。观测是否抛出异常、异常类型是否为 TypeError 或更早的 ValueError、错误信息是否清晰。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "在构造函数或 kneighbors 方法内部，检查 `n_neighbors` 参数的类型。",
+        "reason": "缺陷根源在于参数类型未验证。观测传入参数的类型有助于理解缺陷路径。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当 n_neighbors 为浮点数时，应抛出清晰的错误（如 ValueError），而不是内部的 TypeError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串，因为 Issue 未指定精确措辞。避免断言不抛出任何异常（因为修复前会抛异常）。",
+        "reason": "Issue 期望更早、更有帮助的错误信息。使用 raises 断言可以验证异常被抛出，且可以验证异常类型（如 ValueError）。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用 make_blobs 或随机数据生成样本 X，用于 fit 和 kneighbors 调用。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 pytest 的 assert_raises 或 unittest 的 assertRaises 来验证异常。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "修复后的具体错误信息内容是什么？Issue 只建议更清晰的错误，未指定具体措辞。",
+      "修复方案是抛出 ValueError 还是进行整数转换？Issue 提到了两种可能性，但倾向于更好的错误信息。",
+      "验证点是在构造函数、fit 方法还是 kneighbors 方法中？需要进一步插桩确认。"
+    ]
+  }
+}

@@ -1,0 +1,370 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "matplotlib__matplotlib-23964",
+  "issue_summary": "使用 PostScript 后端保存包含空行的多行文本标签的图形时，会引发 TypeError: cannot unpack non-iterable NoneType object 异常。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用临时文件或 io.BytesIO 缓冲区来保存图形输出，避免污染文件系统。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要导入 matplotlib.pyplot 或相关模块来创建图形和坐标轴。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试应专注于 PostScript 后端，可通过指定 format='eps' 或文件扩展名 .eps 来触发。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_savefig_to_stringio",
+        "test_file": "lib/matplotlib/tests/test_backend_ps.py",
+        "why_relevant": "该测试使用 PostScript 后端保存图形，并设置了标题（包含多语言字符），测试了多种格式（包括 eps）和配置，是测试 PostScript 后端保存功能的典型测试。",
+        "reusable_parts": [
+          "imports (plt, io, mpl)",
+          "图形和坐标轴的创建 (fig, ax = plt.subplots())",
+          "设置文本 (ax.set_title)",
+          "保存到 BytesIO (fig.savefig(buf, format=format))",
+          "对输出进行断言检查"
+        ],
+        "possible_gap": "该测试使用的标题文本不包含以换行符开头的空行，因此可能不会触发此特定缺陷。"
+      },
+      {
+        "test_name": "test_multiline",
+        "test_file": "lib/matplotlib/tests/test_text.py",
+        "why_relevant": "该测试专门测试多行文本的渲染和布局，使用了包含换行符的文本。",
+        "reusable_parts": [
+          "imports (plt)",
+          "图形和坐标轴的创建 (plt.figure(), plt.subplot())",
+          "使用 plt.text 设置多行文本",
+          "图像比较的装饰器 @image_comparison"
+        ],
+        "possible_gap": "该测试是图像比较测试，可能不涉及保存到文件，特别是使用 PostScript 后端。它可能使用默认后端进行渲染和比较。"
+      },
+      {
+        "test_name": "test_text_clip",
+        "test_file": "lib/matplotlib/tests/test_backend_ps.py",
+        "why_relevant": "该测试直接测试 PostScript 后端（通过 extensions=[\"eps\"]），并涉及文本的绘制。",
+        "reusable_parts": [
+          "使用 @check_figures_equal 装饰器",
+          "图形创建和添加坐标轴 (fig_test.add_subplot())",
+          "使用 ax.text 添加文本",
+          "针对 EPS 格式的测试"
+        ],
+        "possible_gap": "该测试的文本内容不包含空行，且主要关注裁剪行为，而非文本内容解析。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用 PostScript 后端（例如保存为 .eps 文件）保存一个包含多行文本标签（例如通过 ax.annotate 或 ax.set_title 设置）且其中包含空行（例如文本以换行符 '\\n' 开头或中间有空行）的图形。",
+      "evidence": [
+        "Issue 描述：'When saving a figure with the PostScript backend, a TypeError... happens if the figure contains a multi-line text label with an empty line'",
+        "Issue 复现代码：ax.annotate(text='\\nLower label', xy=(0, 0)) 和 figure.savefig('figure.eps')",
+        "Issue 附加信息：'seems to happen if a text label or title contains a linebreak with an empty line'",
+        "Issue 附加信息：'works without error for other backends such as PNG, PDF, SVG, Qt'"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "在 figure.savefig 调用过程中，抛出 TypeError: cannot unpack non-iterable NoneType object 异常。堆栈跟踪指向 backend_ps.py 的 draw_text 方法中的 for ps_name, xs_names in stream: 行。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 的 Actual outcome 部分：完整的堆栈跟踪，最终错误为 'TypeError: cannot unpack non-iterable NoneType object'",
+        "堆栈跟踪指向：'File \"...\\matplotlib\\backends\\backend_ps.py\", line 673, in draw_text for ps_name, xs_names in stream:'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "matplotlib.figure.Figure.savefig",
+        "kind": "method",
+        "source_path": "lib/matplotlib/figure.py",
+        "reason": "Issue 复现代码中触发错误的入口点。"
+      },
+      {
+        "name": "matplotlib.axes.Axes.annotate",
+        "kind": "method",
+        "source_path": "lib/matplotlib/axes/_axes.py",
+        "reason": "Issue 复现代码中用于创建包含问题文本标签的方法。"
+      },
+      {
+        "name": "matplotlib.backends.backend_ps.FigureCanvasPS._print_ps",
+        "kind": "method",
+        "source_path": "lib/matplotlib/backends/backend_ps.py",
+        "reason": "PostScript 后端保存流程的入口方法。"
+      },
+      {
+        "name": "matplotlib.backends.backend_ps.PsTextRenderer.draw_text",
+        "kind": "method",
+        "source_path": "lib/matplotlib/backends/backend_ps.py",
+        "reason": "堆栈跟踪中抛出异常的方法。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "lib/matplotlib/backends/backend_ps.py",
+        "object": "PsTextRenderer.draw_text",
+        "lines": "669-673",
+        "reason": "Issue 堆栈跟踪指向第 673 行 'for ps_name, xs_names in stream:'，且附加信息提到 'adding `if curr_stream:` before line 669 of `backend_ps.py` seems to fix the bug'，表明该区域是缺陷的疑似位置。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试中设置的文本通常是普通字符串或包含换行符但不以空行开头/结尾的字符串（例如 'multiline\\ntext alignment' 或 'Déjà vu ...'）。",
+        "target_pattern": "将文本设置为以换行符开头（例如 '\\nLower label'）或中间包含空行的多行文本（例如 'Line1\\n\\nLine2'）。",
+        "reason": "Issue 明确指出，当文本标签包含空行（换行符）时会触发错误。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "测试通常使用默认后端或通过 format 参数指定后端。",
+        "target_pattern": "确保保存操作使用 PostScript 后端，例如通过指定 format='eps' 或使用 .eps 扩展名。",
+        "reason": "Issue 表明该错误特定于 PostScript 后端，其他后端工作正常。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "测试通常直接调用 fig.savefig 并传入缓冲区。",
+        "target_pattern": "保持调用链不变，但确保文本在保存前已添加到图形中（例如通过 annotate 或 set_title）。",
+        "reason": "错误发生在保存流程的深层绘制阶段，需要完整的保存调用链。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "图形应能成功保存为 EPS 文件，不引发任何异常，与使用其他后端（如 PNG、PDF）时的行为一致。",
+      "evidence": [
+        "Issue 的 Expected outcome 部分：'The figure can be saved as `figure.eps` without error.'",
+        "Issue 附加信息：'works without error for other backends such as PNG, PDF, SVG, Qt'"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "在调用 figure.savefig 时捕获的异常，特别是 TypeError。",
+        "reason": "Issue 的核心错误现象是抛出 TypeError，观测此异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "figure.savefig 的调用是否成功完成（无异常抛出）。",
+        "reason": "预期行为是保存成功，无异常。"
+      },
+      {
+        "kind": "file_output",
+        "expression_hint": "保存操作后生成的 EPS 文件是否非空且结构基本正确（例如包含 PS 头）。",
+        "reason": "即使没有异常，也应验证输出文件是否实际生成。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "使用包含空行的文本和 PostScript 后端保存图形时，不应引发 TypeError 异常。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言输出文件的完整二进制内容相等。",
+        "reason": "Issue 的核心是特定条件下会抛出异常。修复后，该异常应消失。使用 pytest.raises 或其否定形式（或 try-except）来验证异常是否被引发是直接且稳定的方法。"
+      },
+      {
+        "assertion_goal": "保存操作应成功完成（可能生成文件或写入缓冲区）。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言渲染的像素级图像完全相等。",
+        "reason": "除了没有异常，保存操作本身应成功执行。可以断言在保存调用后，缓冲区有内容或文件被创建。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "backend_ps.py 中 draw_text 方法内 'stream' 变量的确切来源和其变为 None 的具体条件。",
+    "除了以换行符开头，文本中间的空行或末尾的空行是否也会触发错误。",
+    "错误是否也影响其他 PostScript 相关格式（如 .ps），还是仅限 .eps。",
+    "matplotlib 版本 3.6.0 中引入此缺陷的确切代码变更。"
+  ],
+  "raw": {
+    "issue_summary": "使用 PostScript 后端保存包含空行的多行文本标签的图形时，会引发 TypeError: cannot unpack non-iterable NoneType object 异常。",
+    "trigger_condition": {
+      "text": "使用 PostScript 后端（例如保存为 .eps 文件）保存一个包含多行文本标签（例如通过 ax.annotate 或 ax.set_title 设置）且其中包含空行（例如文本以换行符 '\\n' 开头或中间有空行）的图形。",
+      "evidence": [
+        "Issue 描述：'When saving a figure with the PostScript backend, a TypeError... happens if the figure contains a multi-line text label with an empty line'",
+        "Issue 复现代码：ax.annotate(text='\\nLower label', xy=(0, 0)) 和 figure.savefig('figure.eps')",
+        "Issue 附加信息：'seems to happen if a text label or title contains a linebreak with an empty line'",
+        "Issue 附加信息：'works without error for other backends such as PNG, PDF, SVG, Qt'"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "在 figure.savefig 调用过程中，抛出 TypeError: cannot unpack non-iterable NoneType object 异常。堆栈跟踪指向 backend_ps.py 的 draw_text 方法中的 for ps_name, xs_names in stream: 行。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 的 Actual outcome 部分：完整的堆栈跟踪，最终错误为 'TypeError: cannot unpack non-iterable NoneType object'",
+        "堆栈跟踪指向：'File \"...\\matplotlib\\backends\\backend_ps.py\", line 673, in draw_text for ps_name, xs_names in stream:'"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "图形应能成功保存为 EPS 文件，不引发任何异常，与使用其他后端（如 PNG、PDF）时的行为一致。",
+      "evidence": [
+        "Issue 的 Expected outcome 部分：'The figure can be saved as `figure.eps` without error.'",
+        "Issue 附加信息：'works without error for other backends such as PNG, PDF, SVG, Qt'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "matplotlib.figure.Figure.savefig",
+        "kind": "method",
+        "source_path": "lib/matplotlib/figure.py",
+        "reason": "Issue 复现代码中触发错误的入口点。"
+      },
+      {
+        "name": "matplotlib.axes.Axes.annotate",
+        "kind": "method",
+        "source_path": "lib/matplotlib/axes/_axes.py",
+        "reason": "Issue 复现代码中用于创建包含问题文本标签的方法。"
+      },
+      {
+        "name": "matplotlib.backends.backend_ps.FigureCanvasPS._print_ps",
+        "kind": "method",
+        "source_path": "lib/matplotlib/backends/backend_ps.py",
+        "reason": "PostScript 后端保存流程的入口方法。"
+      },
+      {
+        "name": "matplotlib.backends.backend_ps.PsTextRenderer.draw_text",
+        "kind": "method",
+        "source_path": "lib/matplotlib/backends/backend_ps.py",
+        "reason": "堆栈跟踪中抛出异常的方法。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "lib/matplotlib/backends/backend_ps.py",
+        "object": "PsTextRenderer.draw_text",
+        "lines": "669-673",
+        "reason": "Issue 堆栈跟踪指向第 673 行 'for ps_name, xs_names in stream:'，且附加信息提到 'adding `if curr_stream:` before line 669 of `backend_ps.py` seems to fix the bug'，表明该区域是缺陷的疑似位置。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_savefig_to_stringio",
+        "test_file": "lib/matplotlib/tests/test_backend_ps.py",
+        "why_relevant": "该测试使用 PostScript 后端保存图形，并设置了标题（包含多语言字符），测试了多种格式（包括 eps）和配置，是测试 PostScript 后端保存功能的典型测试。",
+        "reusable_parts": [
+          "imports (plt, io, mpl)",
+          "图形和坐标轴的创建 (fig, ax = plt.subplots())",
+          "设置文本 (ax.set_title)",
+          "保存到 BytesIO (fig.savefig(buf, format=format))",
+          "对输出进行断言检查"
+        ],
+        "possible_gap": "该测试使用的标题文本不包含以换行符开头的空行，因此可能不会触发此特定缺陷。"
+      },
+      {
+        "test_name": "test_multiline",
+        "test_file": "lib/matplotlib/tests/test_text.py",
+        "why_relevant": "该测试专门测试多行文本的渲染和布局，使用了包含换行符的文本。",
+        "reusable_parts": [
+          "imports (plt)",
+          "图形和坐标轴的创建 (plt.figure(), plt.subplot())",
+          "使用 plt.text 设置多行文本",
+          "图像比较的装饰器 @image_comparison"
+        ],
+        "possible_gap": "该测试是图像比较测试，可能不涉及保存到文件，特别是使用 PostScript 后端。它可能使用默认后端进行渲染和比较。"
+      },
+      {
+        "test_name": "test_text_clip",
+        "test_file": "lib/matplotlib/tests/test_backend_ps.py",
+        "why_relevant": "该测试直接测试 PostScript 后端（通过 extensions=[\"eps\"]），并涉及文本的绘制。",
+        "reusable_parts": [
+          "使用 @check_figures_equal 装饰器",
+          "图形创建和添加坐标轴 (fig_test.add_subplot())",
+          "使用 ax.text 添加文本",
+          "针对 EPS 格式的测试"
+        ],
+        "possible_gap": "该测试的文本内容不包含空行，且主要关注裁剪行为，而非文本内容解析。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试中设置的文本通常是普通字符串或包含换行符但不以空行开头/结尾的字符串（例如 'multiline\\ntext alignment' 或 'Déjà vu ...'）。",
+        "target_pattern": "将文本设置为以换行符开头（例如 '\\nLower label'）或中间包含空行的多行文本（例如 'Line1\\n\\nLine2'）。",
+        "reason": "Issue 明确指出，当文本标签包含空行（换行符）时会触发错误。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "测试通常使用默认后端或通过 format 参数指定后端。",
+        "target_pattern": "确保保存操作使用 PostScript 后端，例如通过指定 format='eps' 或使用 .eps 扩展名。",
+        "reason": "Issue 表明该错误特定于 PostScript 后端，其他后端工作正常。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "测试通常直接调用 fig.savefig 并传入缓冲区。",
+        "target_pattern": "保持调用链不变，但确保文本在保存前已添加到图形中（例如通过 annotate 或 set_title）。",
+        "reason": "错误发生在保存流程的深层绘制阶段，需要完整的保存调用链。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "在调用 figure.savefig 时捕获的异常，特别是 TypeError。",
+        "reason": "Issue 的核心错误现象是抛出 TypeError，观测此异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "figure.savefig 的调用是否成功完成（无异常抛出）。",
+        "reason": "预期行为是保存成功，无异常。"
+      },
+      {
+        "kind": "file_output",
+        "expression_hint": "保存操作后生成的 EPS 文件是否非空且结构基本正确（例如包含 PS 头）。",
+        "reason": "即使没有异常，也应验证输出文件是否实际生成。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "使用包含空行的文本和 PostScript 后端保存图形时，不应引发 TypeError 异常。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言输出文件的完整二进制内容相等。",
+        "reason": "Issue 的核心是特定条件下会抛出异常。修复后，该异常应消失。使用 pytest.raises 或其否定形式（或 try-except）来验证异常是否被引发是直接且稳定的方法。"
+      },
+      {
+        "assertion_goal": "保存操作应成功完成（可能生成文件或写入缓冲区）。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言渲染的像素级图像完全相等。",
+        "reason": "除了没有异常，保存操作本身应成功执行。可以断言在保存调用后，缓冲区有内容或文件被创建。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用临时文件或 io.BytesIO 缓冲区来保存图形输出，避免污染文件系统。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要导入 matplotlib.pyplot 或相关模块来创建图形和坐标轴。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试应专注于 PostScript 后端，可通过指定 format='eps' 或文件扩展名 .eps 来触发。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "backend_ps.py 中 draw_text 方法内 'stream' 变量的确切来源和其变为 None 的具体条件。",
+      "除了以换行符开头，文本中间的空行或末尾的空行是否也会触发错误。",
+      "错误是否也影响其他 PostScript 相关格式（如 .ps），还是仅限 .eps。",
+      "matplotlib 版本 3.6.0 中引入此缺陷的确切代码变更。"
+    ]
+  }
+}

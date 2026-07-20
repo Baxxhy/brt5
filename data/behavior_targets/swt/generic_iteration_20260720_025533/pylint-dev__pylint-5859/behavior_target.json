@@ -1,0 +1,240 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "pylint-dev__pylint-5859",
+  "issue_summary": "当通过 --notes 选项指定的 note tag 完全由标点符号组成时，pylint 不会报告相应的 fixme 警告 (W0511)。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要使用 CheckerTestCase 和 set_config 装饰器来配置 notes 选项，并调用 process_tokens 方法。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestFixme.test_other_present_codetag",
+        "test_file": "tests/checkers/unittest_misc.py",
+        "why_relevant": "该测试使用 `@set_config(notes=[\"CODETAG\"])` 配置自定义 note tag，并验证了相应的警告被生成，这与 Issue 中通过 --notes 选项配置自定义 tag 的场景相似。",
+        "reusable_parts": [
+          "CheckerTestCase 类结构",
+          "set_config 装饰器",
+          "process_tokens 调用方式",
+          "assertAddsMessages 断言风格",
+          "_tokenize_str 工具"
+        ],
+        "possible_gap": "该测试使用的 tag 'CODETAG' 是字母，而 Issue 中的触发条件是 tag 完全由标点符号组成。"
+      },
+      {
+        "test_name": "TestFixme.test_xxx_without_space",
+        "test_file": "tests/checkers/unittest_misc.py",
+        "why_relevant": "该测试检查了默认 tag 'XXX' 的检测，展示了基本的警告生成逻辑。",
+        "reusable_parts": [
+          "CheckerTestCase 类结构",
+          "process_tokens 调用方式",
+          "assertAddsMessages 断言风格",
+          "_tokenize_str 工具"
+        ],
+        "possible_gap": "该测试没有使用自定义 notes 配置，且 tag 是字母，不涉及标点符号 tag。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "运行 pylint 检查包含特定注释的 Python 文件，并使用 --notes 选项指定一个完全由标点符号（例如 '???'）组成的 note tag。",
+      "evidence": [
+        "Issue 描述：'If a note tag specified with the `--notes` option is entirely punctuation, pylint won't report a fixme warning (W0511).'",
+        "Issue 中的命令示例：`pylint test.py --notes=\"YES,???\"`",
+        "Issue 中的代码示例：`# ???: no`"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "对于完全由标点符号组成的 note tag（如 '???'），pylint 没有报告预期的 fixme 警告 (W0511)。",
+      "symptom_type": "warning",
+      "evidence": [
+        "Issue 输出显示只报告了 'YES: yes' 的警告，没有报告 '???: no' 的警告。",
+        "Issue 描述：'pylint won't report a fixme warning (W0511)'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "process_tokens",
+        "kind": "method",
+        "source_path": "",
+        "reason": "相关测试代码中，CheckerTestCase 的测试都调用了 `self.checker.process_tokens(_tokenize_str(code))` 来触发检查逻辑，这与 Issue 中触发警告的机制相关。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "",
+        "object": "",
+        "lines": "",
+        "reason": "iCoRe 未检索到相关源代码片段，无法推断具体位置。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "notes=[\"CODETAG\"] (字母 tag)",
+        "target_pattern": "notes=[\"YES\",\"???\"] 或 notes=[\"???\"] (包含纯标点 tag)",
+        "reason": "Issue 表明当 notes 配置中包含纯标点 tag 时，警告生成失败。将测试中的 tag 从字母改为纯标点可能触发缺陷路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "代码注释包含字母 tag，如 '# CODETAG'",
+        "target_pattern": "代码注释包含纯标点 tag，如 '# ???: no'",
+        "reason": "测试输入需要匹配配置的 tag 以触发检查。使用纯标点 tag 作为注释内容，可以测试该 tag 是否被正确处理。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "pylint 应该为所有通过 --notes 选项指定的 note tag（包括完全由标点符号组成的 tag）报告相应的 fixme 警告 (W0511)。",
+      "evidence": [
+        "Issue 中的 'Expected behavior' 部分显示了两条警告，包括 '???: no'。",
+        "Issue 描述隐含了期望对所有指定 tag 都报告警告。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "warning",
+        "expression_hint": "self.checker.process_tokens 调用后生成的警告消息列表",
+        "reason": "Issue 的核心是特定 tag 的警告缺失。观察生成的警告消息列表，可以确认 '???' tag 的警告是否被正确生成。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证当配置了纯标点 note tag 并在代码中出现相应注释时，pylint 会生成一个包含该 tag 的 fixme 警告。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "避免断言完整的警告消息字符串，因为行号、列偏移等可能变化。",
+        "reason": "Issue 期望警告被生成。断言警告列表中存在包含特定 tag（如 '???'）的警告片段，可以稳定地验证功能是否正常，而不依赖于易变的格式细节。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "导致纯标点 tag 被忽略的具体代码位置和逻辑原因未知。",
+    "除了 '???' 之外，其他纯标点组合（如 '!!!', '...'）是否也会被忽略？",
+    "notes 选项的解析和 tag 匹配规则的具体实现细节。"
+  ],
+  "raw": {
+    "issue_summary": "当通过 --notes 选项指定的 note tag 完全由标点符号组成时，pylint 不会报告相应的 fixme 警告 (W0511)。",
+    "trigger_condition": {
+      "text": "运行 pylint 检查包含特定注释的 Python 文件，并使用 --notes 选项指定一个完全由标点符号（例如 '???'）组成的 note tag。",
+      "evidence": [
+        "Issue 描述：'If a note tag specified with the `--notes` option is entirely punctuation, pylint won't report a fixme warning (W0511).'",
+        "Issue 中的命令示例：`pylint test.py --notes=\"YES,???\"`",
+        "Issue 中的代码示例：`# ???: no`"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "对于完全由标点符号组成的 note tag（如 '???'），pylint 没有报告预期的 fixme 警告 (W0511)。",
+      "symptom_type": "warning",
+      "evidence": [
+        "Issue 输出显示只报告了 'YES: yes' 的警告，没有报告 '???: no' 的警告。",
+        "Issue 描述：'pylint won't report a fixme warning (W0511)'"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "pylint 应该为所有通过 --notes 选项指定的 note tag（包括完全由标点符号组成的 tag）报告相应的 fixme 警告 (W0511)。",
+      "evidence": [
+        "Issue 中的 'Expected behavior' 部分显示了两条警告，包括 '???: no'。",
+        "Issue 描述隐含了期望对所有指定 tag 都报告警告。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "process_tokens",
+        "kind": "method",
+        "source_path": "",
+        "reason": "相关测试代码中，CheckerTestCase 的测试都调用了 `self.checker.process_tokens(_tokenize_str(code))` 来触发检查逻辑，这与 Issue 中触发警告的机制相关。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "",
+        "object": "",
+        "lines": "",
+        "reason": "iCoRe 未检索到相关源代码片段，无法推断具体位置。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestFixme.test_other_present_codetag",
+        "test_file": "tests/checkers/unittest_misc.py",
+        "why_relevant": "该测试使用 `@set_config(notes=[\"CODETAG\"])` 配置自定义 note tag，并验证了相应的警告被生成，这与 Issue 中通过 --notes 选项配置自定义 tag 的场景相似。",
+        "reusable_parts": [
+          "CheckerTestCase 类结构",
+          "set_config 装饰器",
+          "process_tokens 调用方式",
+          "assertAddsMessages 断言风格",
+          "_tokenize_str 工具"
+        ],
+        "possible_gap": "该测试使用的 tag 'CODETAG' 是字母，而 Issue 中的触发条件是 tag 完全由标点符号组成。"
+      },
+      {
+        "test_name": "TestFixme.test_xxx_without_space",
+        "test_file": "tests/checkers/unittest_misc.py",
+        "why_relevant": "该测试检查了默认 tag 'XXX' 的检测，展示了基本的警告生成逻辑。",
+        "reusable_parts": [
+          "CheckerTestCase 类结构",
+          "process_tokens 调用方式",
+          "assertAddsMessages 断言风格",
+          "_tokenize_str 工具"
+        ],
+        "possible_gap": "该测试没有使用自定义 notes 配置，且 tag 是字母，不涉及标点符号 tag。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "notes=[\"CODETAG\"] (字母 tag)",
+        "target_pattern": "notes=[\"YES\",\"???\"] 或 notes=[\"???\"] (包含纯标点 tag)",
+        "reason": "Issue 表明当 notes 配置中包含纯标点 tag 时，警告生成失败。将测试中的 tag 从字母改为纯标点可能触发缺陷路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "代码注释包含字母 tag，如 '# CODETAG'",
+        "target_pattern": "代码注释包含纯标点 tag，如 '# ???: no'",
+        "reason": "测试输入需要匹配配置的 tag 以触发检查。使用纯标点 tag 作为注释内容，可以测试该 tag 是否被正确处理。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "warning",
+        "expression_hint": "self.checker.process_tokens 调用后生成的警告消息列表",
+        "reason": "Issue 的核心是特定 tag 的警告缺失。观察生成的警告消息列表，可以确认 '???' tag 的警告是否被正确生成。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证当配置了纯标点 note tag 并在代码中出现相应注释时，pylint 会生成一个包含该 tag 的 fixme 警告。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "避免断言完整的警告消息字符串，因为行号、列偏移等可能变化。",
+        "reason": "Issue 期望警告被生成。断言警告列表中存在包含特定 tag（如 '???'）的警告片段，可以稳定地验证功能是否正常，而不依赖于易变的格式细节。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要使用 CheckerTestCase 和 set_config 装饰器来配置 notes 选项，并调用 process_tokens 方法。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "导致纯标点 tag 被忽略的具体代码位置和逻辑原因未知。",
+      "除了 '???' 之外，其他纯标点组合（如 '!!!', '...'）是否也会被忽略？",
+      "notes 选项的解析和 tag 匹配规则的具体实现细节。"
+    ]
+  }
+}

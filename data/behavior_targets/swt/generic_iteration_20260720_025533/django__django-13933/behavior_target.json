@@ -1,0 +1,315 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-13933",
+  "issue_summary": "ModelChoiceField 在抛出 ValidationError 时没有显示无效选项的值，而 ModelMultipleChoiceField 和 ChoiceField 会显示。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要一个 Django TestCase 和数据库支持，因为 ModelChoiceField 依赖于 QuerySet。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要创建测试模型实例（如 Category、ChoiceModel）作为有效选项。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "ModelChoiceFieldTests.test_basics",
+        "test_file": "tests/model_forms/test_modelchoicefield.py",
+        "why_relevant": "它测试了 ModelChoiceField 的 clean 方法，包括对无效输入（如已删除对象的 ID）的验证，并检查了抛出的 ValidationError 消息。",
+        "reusable_parts": [
+          "ModelChoiceField 的实例化方式（f = forms.ModelChoiceField(Category.objects.all())）",
+          "使用 assertRaisesMessage 捕获特定错误消息的模式。",
+          "测试数据库交互的 setup（创建 Category 对象）。"
+        ],
+        "possible_gap": "当前测试只验证了错误消息的固定字符串（包含 'That choice'），没有验证或要求错误消息中包含具体的无效值。"
+      },
+      {
+        "test_name": "ModelChoiceFieldErrorMessagesTestCase.test_modelchoicefield",
+        "test_file": "tests/forms_tests/tests/test_error_messages.py",
+        "why_relevant": "它专门测试 ModelChoiceField 的自定义错误消息，包括 invalid_choice，并展示了如何用无效值（'4'）触发该错误。",
+        "reusable_parts": [
+          "使用自定义 error_messages 字典覆盖默认消息的模式。",
+          "使用 assertFormErrors 辅助方法验证错误。",
+          "为 ModelChoiceField 创建测试数据（ChoiceModel）。"
+        ],
+        "possible_gap": "它使用了自定义错误消息 'INVALID CHOICE'，没有测试默认错误消息的格式，因此无法直接暴露默认消息中缺少 '%(value)s' 的问题。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "向 ModelChoiceField 提供一个无效的输入值（例如，一个不在查询集中的主键值或一个错误类型的对象）。",
+      "evidence": [
+        "Issue 描述指出 ModelChoiceField 在验证错误时没有显示无效值。",
+        "相关测试 1 和 4 展示了向 ModelChoiceField 传递无效值（如其他模型实例或已删除对象的 ID）会触发 ValidationError。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "当输入无效时，ModelChoiceField 抛出的 ValidationError 的错误消息中不包含无效的具体值，而是一个通用的占位符 'That choice'。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中对比了 ModelChoiceField 和 ModelMultipleChoiceField 的 default_error_messages：ModelChoiceField 的消息是 'That choice is not one of...'，而 ModelMultipleChoiceField 的消息包含 '%(value)s'。",
+        "相关测试 1、3、4 中捕获的 ValidationError 消息都包含 'That choice is not one of the available choices.'，没有具体值。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "ModelChoiceField",
+        "kind": "class",
+        "source_path": "django/forms/models.py",
+        "reason": "Issue 的核心是关于 ModelChoiceField 类的错误消息行为。"
+      },
+      {
+        "name": "ModelChoiceField.validate",
+        "kind": "method",
+        "source_path": "django/forms/models.py",
+        "reason": "该方法可能负责验证输入并抛出 ValidationError。"
+      },
+      {
+        "name": "ValidationError",
+        "kind": "class",
+        "source_path": "django/core/exceptions.py",
+        "reason": "错误最终以 ValidationError 异常形式抛出。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/forms/models.py",
+        "object": "ModelChoiceField.default_error_messages",
+        "lines": "1186-1298",
+        "reason": "其 invalid_choice 错误消息模板缺少 '%(value)s' 占位符，而子类 ModelMultipleChoiceField 和父类 ChoiceField 的模板都有。"
+      },
+      {
+        "path": "django/forms/models.py",
+        "object": "ModelChoiceField.validate",
+        "lines": "1186-1298",
+        "reason": "该方法在验证失败时构造 ValidationError，可能没有将无效值作为参数传递。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试中通常使用无效但类型正确的值（如不存在的 ID '100' 或已删除对象的 ID）。",
+        "target_pattern": "使用一个具体的无效值（例如一个数字字符串 '99' 或一个错误类型的对象），并在测试中断言错误消息中应包含该值。",
+        "reason": "Issue 的核心是无效值没有出现在错误消息中。变异输入并检查错误消息内容可以触发并验证此缺陷。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "测试通常使用默认的 error_messages 或完全自定义的字符串。",
+        "target_pattern": "在测试中，使用一个包含 '%(value)s' 占位符的自定义 invalid_choice 错误消息，并验证格式化后的消息。",
+        "reason": "这可以模拟修复后的预期行为，并验证 ValidationError 的构造是否正确地接收了 value 参数。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [
+      {
+        "rule": "positive_example_polarity",
+        "severity": "hard",
+        "protected_inputs": [
+          "invalid_choice"
+        ],
+        "instruction": "Inputs explicitly described by the Issue as accepted, parsed, or successful must not be used as invalid inputs and must not be placed inside assertRaises/pytest.raises.",
+        "evidence": [
+          "Issue describes 'invalid_choice' on a successful/accepted path."
+        ],
+        "validation_message_instruction": "For a validation-error-message defect, preserve a genuinely invalid input from the highest-ranked iCoRe seed and mutate only the expected fixed-side message fragment."
+      }
+    ],
+    "audit_warnings": [
+      "Derived polarity audit: do not reinterpret successful Issue example(s) 'invalid_choice' as invalid trigger inputs."
+    ]
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "ModelChoiceField 在抛出 invalid_choice 验证错误时，其错误消息应包含无效输入的具体值，与 ModelMultipleChoiceField 和 ChoiceField 的行为一致。",
+      "evidence": [
+        "Issue 描述建议通过传递参数和修改默认错误消息来修复。",
+        "源码片段 1 和 3 显示 ModelMultipleChoiceField 和 ChoiceField 的 invalid_choice 错误消息模板都包含 '%(value)s' 占位符。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "捕获的 ValidationError 实例的 .message 或 .messages 属性，或者其字符串表示 str(e)。",
+        "reason": "错误消息的内容是缺陷的直接体现，观察其是否包含输入的无效值。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "ModelChoiceField.clean 方法在输入有效时的返回值。",
+        "reason": "确认测试在有效输入时行为正常，以隔离无效输入时的缺陷。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当输入无效时，抛出的 ValidationError 的错误消息字符串应包含该无效输入的具体表示（例如 '99'）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的、固定的错误消息字符串相等，因为消息格式在修复后可能会改变（例如添加了值）。",
+        "reason": "Issue 关注的是消息中是否包含值，而不是消息的完整固定格式。contains_fragment 更稳定。"
+      },
+      {
+        "assertion_goal": "ModelChoiceField 的 invalid_choice 错误消息行为应与 ModelMultipleChoiceField 或 ChoiceField 一致（即支持 value 参数）。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "直接比较不同字段类的内部实现细节。",
+        "reason": "Issue 的核心是行为不一致，断言行为对等性（例如，使用相同自定义错误消息模板时，格式化结果都包含值）比断言具体实现更稳定。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "无效值具体以何种形式（字符串表示？主键？）传递给错误消息模板中的 %(value)s 尚不确定。",
+    "ModelChoiceField.validate 或相关方法中，导致 value 参数未传递给 ValidationError 的具体代码位置。",
+    "修复是否仅涉及修改 default_error_messages 字典，还是也需要修改验证逻辑中的参数传递。"
+  ],
+  "raw": {
+    "issue_summary": "ModelChoiceField 在抛出 ValidationError 时没有显示无效选项的值，而 ModelMultipleChoiceField 和 ChoiceField 会显示。",
+    "trigger_condition": {
+      "text": "向 ModelChoiceField 提供一个无效的输入值（例如，一个不在查询集中的主键值或一个错误类型的对象）。",
+      "evidence": [
+        "Issue 描述指出 ModelChoiceField 在验证错误时没有显示无效值。",
+        "相关测试 1 和 4 展示了向 ModelChoiceField 传递无效值（如其他模型实例或已删除对象的 ID）会触发 ValidationError。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "当输入无效时，ModelChoiceField 抛出的 ValidationError 的错误消息中不包含无效的具体值，而是一个通用的占位符 'That choice'。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中对比了 ModelChoiceField 和 ModelMultipleChoiceField 的 default_error_messages：ModelChoiceField 的消息是 'That choice is not one of...'，而 ModelMultipleChoiceField 的消息包含 '%(value)s'。",
+        "相关测试 1、3、4 中捕获的 ValidationError 消息都包含 'That choice is not one of the available choices.'，没有具体值。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "ModelChoiceField 在抛出 invalid_choice 验证错误时，其错误消息应包含无效输入的具体值，与 ModelMultipleChoiceField 和 ChoiceField 的行为一致。",
+      "evidence": [
+        "Issue 描述建议通过传递参数和修改默认错误消息来修复。",
+        "源码片段 1 和 3 显示 ModelMultipleChoiceField 和 ChoiceField 的 invalid_choice 错误消息模板都包含 '%(value)s' 占位符。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "ModelChoiceField",
+        "kind": "class",
+        "source_path": "django/forms/models.py",
+        "reason": "Issue 的核心是关于 ModelChoiceField 类的错误消息行为。"
+      },
+      {
+        "name": "ModelChoiceField.validate",
+        "kind": "method",
+        "source_path": "django/forms/models.py",
+        "reason": "该方法可能负责验证输入并抛出 ValidationError。"
+      },
+      {
+        "name": "ValidationError",
+        "kind": "class",
+        "source_path": "django/core/exceptions.py",
+        "reason": "错误最终以 ValidationError 异常形式抛出。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/forms/models.py",
+        "object": "ModelChoiceField.default_error_messages",
+        "lines": "1186-1298",
+        "reason": "其 invalid_choice 错误消息模板缺少 '%(value)s' 占位符，而子类 ModelMultipleChoiceField 和父类 ChoiceField 的模板都有。"
+      },
+      {
+        "path": "django/forms/models.py",
+        "object": "ModelChoiceField.validate",
+        "lines": "1186-1298",
+        "reason": "该方法在验证失败时构造 ValidationError，可能没有将无效值作为参数传递。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "ModelChoiceFieldTests.test_basics",
+        "test_file": "tests/model_forms/test_modelchoicefield.py",
+        "why_relevant": "它测试了 ModelChoiceField 的 clean 方法，包括对无效输入（如已删除对象的 ID）的验证，并检查了抛出的 ValidationError 消息。",
+        "reusable_parts": [
+          "ModelChoiceField 的实例化方式（f = forms.ModelChoiceField(Category.objects.all())）",
+          "使用 assertRaisesMessage 捕获特定错误消息的模式。",
+          "测试数据库交互的 setup（创建 Category 对象）。"
+        ],
+        "possible_gap": "当前测试只验证了错误消息的固定字符串（包含 'That choice'），没有验证或要求错误消息中包含具体的无效值。"
+      },
+      {
+        "test_name": "ModelChoiceFieldErrorMessagesTestCase.test_modelchoicefield",
+        "test_file": "tests/forms_tests/tests/test_error_messages.py",
+        "why_relevant": "它专门测试 ModelChoiceField 的自定义错误消息，包括 invalid_choice，并展示了如何用无效值（'4'）触发该错误。",
+        "reusable_parts": [
+          "使用自定义 error_messages 字典覆盖默认消息的模式。",
+          "使用 assertFormErrors 辅助方法验证错误。",
+          "为 ModelChoiceField 创建测试数据（ChoiceModel）。"
+        ],
+        "possible_gap": "它使用了自定义错误消息 'INVALID CHOICE'，没有测试默认错误消息的格式，因此无法直接暴露默认消息中缺少 '%(value)s' 的问题。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试中通常使用无效但类型正确的值（如不存在的 ID '100' 或已删除对象的 ID）。",
+        "target_pattern": "使用一个具体的无效值（例如一个数字字符串 '99' 或一个错误类型的对象），并在测试中断言错误消息中应包含该值。",
+        "reason": "Issue 的核心是无效值没有出现在错误消息中。变异输入并检查错误消息内容可以触发并验证此缺陷。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "测试通常使用默认的 error_messages 或完全自定义的字符串。",
+        "target_pattern": "在测试中，使用一个包含 '%(value)s' 占位符的自定义 invalid_choice 错误消息，并验证格式化后的消息。",
+        "reason": "这可以模拟修复后的预期行为，并验证 ValidationError 的构造是否正确地接收了 value 参数。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "捕获的 ValidationError 实例的 .message 或 .messages 属性，或者其字符串表示 str(e)。",
+        "reason": "错误消息的内容是缺陷的直接体现，观察其是否包含输入的无效值。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "ModelChoiceField.clean 方法在输入有效时的返回值。",
+        "reason": "确认测试在有效输入时行为正常，以隔离无效输入时的缺陷。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当输入无效时，抛出的 ValidationError 的错误消息字符串应包含该无效输入的具体表示（例如 '99'）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的、固定的错误消息字符串相等，因为消息格式在修复后可能会改变（例如添加了值）。",
+        "reason": "Issue 关注的是消息中是否包含值，而不是消息的完整固定格式。contains_fragment 更稳定。"
+      },
+      {
+        "assertion_goal": "ModelChoiceField 的 invalid_choice 错误消息行为应与 ModelMultipleChoiceField 或 ChoiceField 一致（即支持 value 参数）。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "直接比较不同字段类的内部实现细节。",
+        "reason": "Issue 的核心是行为不一致，断言行为对等性（例如，使用相同自定义错误消息模板时，格式化结果都包含值）比断言具体实现更稳定。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要一个 Django TestCase 和数据库支持，因为 ModelChoiceField 依赖于 QuerySet。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要创建测试模型实例（如 Category、ChoiceModel）作为有效选项。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "无效值具体以何种形式（字符串表示？主键？）传递给错误消息模板中的 %(value)s 尚不确定。",
+      "ModelChoiceField.validate 或相关方法中，导致 value 参数未传递给 ValidationError 的具体代码位置。",
+      "修复是否仅涉及修改 default_error_messages 字典，还是也需要修改验证逻辑中的参数传递。"
+    ]
+  }
+}

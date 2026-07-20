@@ -1,0 +1,358 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "matplotlib__matplotlib-25332",
+  "issue_summary": "调用 align_labels() 后无法对图形进行 pickle 序列化。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用 BytesIO 作为 pickle 操作的临时缓冲区。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要创建包含至少两个垂直堆叠子图的图形以触发标签对齐逻辑。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 @mpl.style.context(\"default\") 装饰器确保可重复的样式。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_complete",
+        "test_file": "lib/matplotlib/tests/test_pickle.py",
+        "why_relevant": "这是一个完整的图形 pickle 测试，包含了序列化和反序列化的完整流程。",
+        "reusable_parts": [
+          "使用 pickle.dump 和 pickle.loads 的模式",
+          "使用 BytesIO 作为缓冲区",
+          "使用 @check_figures_equal 装饰器进行结果比较"
+        ],
+        "possible_gap": "该测试没有调用 align_labels() 方法，因此无法复现当前 Issue。"
+      },
+      {
+        "test_name": "test_no_pyplot",
+        "test_file": "lib/matplotlib/tests/test_pickle.py",
+        "why_relevant": "测试了不通过 pyplot 创建的图形的 pickle 能力，展示了基本的图形构造和序列化。",
+        "reusable_parts": [
+          "图形和子图的创建模式",
+          "简单的 pickle.dump 调用",
+          "使用 BytesIO"
+        ],
+        "possible_gap": "同样没有调用 align_labels() 方法。"
+      },
+      {
+        "test_name": "test_align_labels",
+        "test_file": "lib/matplotlib/tests/test_figure.py",
+        "why_relevant": "这是专门测试 align_labels 方法的测试，包含了复杂的子图布局和标签设置。",
+        "reusable_parts": [
+          "创建包含多个子图的图形",
+          "设置轴标签",
+          "调用 fig.align_labels()"
+        ],
+        "possible_gap": "该测试是图像比较测试，没有包含 pickle 序列化操作，因此无法检测序列化错误。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "创建一个包含多个子图的图形，调用 fig.align_labels() 方法，然后尝试 pickle 序列化该图形。",
+      "evidence": [
+        "Issue 中的代码示例展示了创建图形、添加子图、调用 align_labels() 和 pickle.dumps(fig) 的步骤。",
+        "Issue 说明 'pickling works after removing this line' 指出了触发条件。",
+        "源码片段 3 显示了 align_labels 方法的定义。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "尝试 pickle 序列化时抛出 TypeError: cannot pickle 'weakref.ReferenceType' object。",
+      "symptom_type": "serialization_error",
+      "evidence": [
+        "Issue 的 'Actual outcome' 部分显示了该错误信息。",
+        "错误发生在 pickle.dumps(fig) 这一行。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "matplotlib.figure.Figure.align_labels",
+        "kind": "method",
+        "source_path": "lib/matplotlib/figure.py",
+        "reason": "Issue 明确指出调用此方法后导致 pickle 失败。"
+      },
+      {
+        "name": "matplotlib.figure.Figure.add_subplot",
+        "kind": "method",
+        "source_path": "lib/matplotlib/figure.py",
+        "reason": "Issue 的复现代码中使用了此方法创建子图。"
+      },
+      {
+        "name": "matplotlib.pyplot.figure",
+        "kind": "function",
+        "source_path": "lib/matplotlib/pyplot.py",
+        "reason": "Issue 的复现代码中用于创建图形。"
+      },
+      {
+        "name": "pickle.dumps",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 中用于触发错误的序列化操作。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "lib/matplotlib/figure.py",
+        "object": "FigureBase.align_labels",
+        "lines": "1456-1478",
+        "reason": "Issue 的触发条件是调用此方法。该方法内部调用了 align_xlabels 和 align_ylabels，可能在这些过程中引入了不可 pickle 的对象（如 weakref）。"
+      },
+      {
+        "path": "lib/matplotlib/figure.py",
+        "object": "FigureBase.align_xlabels 或 FigureBase.align_ylabels",
+        "lines": "",
+        "reason": "align_labels 方法调用了这两个方法，缺陷可能存在于它们或其调用的更深层方法中，导致图形状态包含不可序列化的引用。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "call_chain",
+        "current_pattern": "相关测试（如 test_complete, test_no_pyplot）在创建图形和子图后直接进行 pickle。",
+        "target_pattern": "在创建图形和子图后，调用 fig.align_labels()，然后再进行 pickle。",
+        "reason": "Issue 表明在 pickle 调用链中插入 align_labels() 调用会触发错误。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "相似测试中的图形在 pickle 前处于“普通”状态。",
+        "target_pattern": "图形在 pickle 前处于“标签已对齐”的状态，这可能引入了新的内部引用（如 weakref）。",
+        "reason": "align_labels 操作可能改变了图形的内部状态，使其包含不可 pickle 的对象。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "调用 align_labels() 后，图形应能成功进行 pickle 序列化。",
+      "evidence": [
+        "Issue 的 'Expected outcome' 部分明确为 'Pickling successful'。",
+        "相关测试 1、2、3、4 都表明图形在正常情况下应该可以 pickle。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "pickle.dumps(fig) 或 pickle.dump(fig, ...) 的调用结果。",
+        "reason": "Issue 的核心错误现象是序列化时抛出 TypeError。观测此调用是否成功或抛出异常可以直接判断缺陷是否触发。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "调用 align_labels() 后图形内部对象的类型，特别是与标签对齐相关的属性。",
+        "reason": "错误信息指向 'weakref.ReferenceType'，插桩检查图形内部是否存在此类对象有助于定位问题。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "调用 align_labels() 前后图形的内部状态差异（例如 _align_label_groups 或其他相关属性）。",
+        "reason": "理解 align_labels 如何修改图形状态是复现和诊断缺陷的关键。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证调用 align_labels() 后的图形可以被成功 pickle 序列化和反序列化。",
+        "preferred_assertion_style": "raises",
+        "avoid": "避免断言反序列化后图形的像素级完全相等，因为这可能受平台或渲染器影响。",
+        "reason": "Issue 的期望结果是序列化成功。当前缺陷表现为抛出异常，因此修复后的测试应确保不抛出异常。但最终断言目标应是正向的（如序列化/反序列化流程完成）。更稳定的断言是验证反序列化后的图形具有关键属性（如子图数量、标签文本）。"
+      },
+      {
+        "assertion_goal": "验证反序列化后的图形保留了原始图形的关键结构（如子图数量、轴标签文本）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的图形对象相等或内部所有属性相等。",
+        "reason": "这确保了 pickle 过程不仅没有崩溃，而且功能上基本正确。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "align_labels() 内部具体哪个步骤引入了不可 pickle 的 weakref 对象。",
+    "是否所有调用 align_labels() 的情况都会触发此错误，还是需要特定的图形配置（如 Issue 中的垂直堆叠子图）。",
+    "错误是否与特定的 matplotlib 后端有关（Issue 未指定）。",
+    "除了 weakref.ReferenceType，是否还有其他不可 pickle 的对象类型被引入。"
+  ],
+  "raw": {
+    "issue_summary": "调用 align_labels() 后无法对图形进行 pickle 序列化。",
+    "trigger_condition": {
+      "text": "创建一个包含多个子图的图形，调用 fig.align_labels() 方法，然后尝试 pickle 序列化该图形。",
+      "evidence": [
+        "Issue 中的代码示例展示了创建图形、添加子图、调用 align_labels() 和 pickle.dumps(fig) 的步骤。",
+        "Issue 说明 'pickling works after removing this line' 指出了触发条件。",
+        "源码片段 3 显示了 align_labels 方法的定义。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "尝试 pickle 序列化时抛出 TypeError: cannot pickle 'weakref.ReferenceType' object。",
+      "symptom_type": "serialization_error",
+      "evidence": [
+        "Issue 的 'Actual outcome' 部分显示了该错误信息。",
+        "错误发生在 pickle.dumps(fig) 这一行。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "调用 align_labels() 后，图形应能成功进行 pickle 序列化。",
+      "evidence": [
+        "Issue 的 'Expected outcome' 部分明确为 'Pickling successful'。",
+        "相关测试 1、2、3、4 都表明图形在正常情况下应该可以 pickle。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "matplotlib.figure.Figure.align_labels",
+        "kind": "method",
+        "source_path": "lib/matplotlib/figure.py",
+        "reason": "Issue 明确指出调用此方法后导致 pickle 失败。"
+      },
+      {
+        "name": "matplotlib.figure.Figure.add_subplot",
+        "kind": "method",
+        "source_path": "lib/matplotlib/figure.py",
+        "reason": "Issue 的复现代码中使用了此方法创建子图。"
+      },
+      {
+        "name": "matplotlib.pyplot.figure",
+        "kind": "function",
+        "source_path": "lib/matplotlib/pyplot.py",
+        "reason": "Issue 的复现代码中用于创建图形。"
+      },
+      {
+        "name": "pickle.dumps",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 中用于触发错误的序列化操作。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "lib/matplotlib/figure.py",
+        "object": "FigureBase.align_labels",
+        "lines": "1456-1478",
+        "reason": "Issue 的触发条件是调用此方法。该方法内部调用了 align_xlabels 和 align_ylabels，可能在这些过程中引入了不可 pickle 的对象（如 weakref）。"
+      },
+      {
+        "path": "lib/matplotlib/figure.py",
+        "object": "FigureBase.align_xlabels 或 FigureBase.align_ylabels",
+        "lines": "",
+        "reason": "align_labels 方法调用了这两个方法，缺陷可能存在于它们或其调用的更深层方法中，导致图形状态包含不可序列化的引用。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_complete",
+        "test_file": "lib/matplotlib/tests/test_pickle.py",
+        "why_relevant": "这是一个完整的图形 pickle 测试，包含了序列化和反序列化的完整流程。",
+        "reusable_parts": [
+          "使用 pickle.dump 和 pickle.loads 的模式",
+          "使用 BytesIO 作为缓冲区",
+          "使用 @check_figures_equal 装饰器进行结果比较"
+        ],
+        "possible_gap": "该测试没有调用 align_labels() 方法，因此无法复现当前 Issue。"
+      },
+      {
+        "test_name": "test_no_pyplot",
+        "test_file": "lib/matplotlib/tests/test_pickle.py",
+        "why_relevant": "测试了不通过 pyplot 创建的图形的 pickle 能力，展示了基本的图形构造和序列化。",
+        "reusable_parts": [
+          "图形和子图的创建模式",
+          "简单的 pickle.dump 调用",
+          "使用 BytesIO"
+        ],
+        "possible_gap": "同样没有调用 align_labels() 方法。"
+      },
+      {
+        "test_name": "test_align_labels",
+        "test_file": "lib/matplotlib/tests/test_figure.py",
+        "why_relevant": "这是专门测试 align_labels 方法的测试，包含了复杂的子图布局和标签设置。",
+        "reusable_parts": [
+          "创建包含多个子图的图形",
+          "设置轴标签",
+          "调用 fig.align_labels()"
+        ],
+        "possible_gap": "该测试是图像比较测试，没有包含 pickle 序列化操作，因此无法检测序列化错误。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "call_chain",
+        "current_pattern": "相关测试（如 test_complete, test_no_pyplot）在创建图形和子图后直接进行 pickle。",
+        "target_pattern": "在创建图形和子图后，调用 fig.align_labels()，然后再进行 pickle。",
+        "reason": "Issue 表明在 pickle 调用链中插入 align_labels() 调用会触发错误。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "相似测试中的图形在 pickle 前处于“普通”状态。",
+        "target_pattern": "图形在 pickle 前处于“标签已对齐”的状态，这可能引入了新的内部引用（如 weakref）。",
+        "reason": "align_labels 操作可能改变了图形的内部状态，使其包含不可 pickle 的对象。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "pickle.dumps(fig) 或 pickle.dump(fig, ...) 的调用结果。",
+        "reason": "Issue 的核心错误现象是序列化时抛出 TypeError。观测此调用是否成功或抛出异常可以直接判断缺陷是否触发。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "调用 align_labels() 后图形内部对象的类型，特别是与标签对齐相关的属性。",
+        "reason": "错误信息指向 'weakref.ReferenceType'，插桩检查图形内部是否存在此类对象有助于定位问题。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "调用 align_labels() 前后图形的内部状态差异（例如 _align_label_groups 或其他相关属性）。",
+        "reason": "理解 align_labels 如何修改图形状态是复现和诊断缺陷的关键。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证调用 align_labels() 后的图形可以被成功 pickle 序列化和反序列化。",
+        "preferred_assertion_style": "raises",
+        "avoid": "避免断言反序列化后图形的像素级完全相等，因为这可能受平台或渲染器影响。",
+        "reason": "Issue 的期望结果是序列化成功。当前缺陷表现为抛出异常，因此修复后的测试应确保不抛出异常。但最终断言目标应是正向的（如序列化/反序列化流程完成）。更稳定的断言是验证反序列化后的图形具有关键属性（如子图数量、标签文本）。"
+      },
+      {
+        "assertion_goal": "验证反序列化后的图形保留了原始图形的关键结构（如子图数量、轴标签文本）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的图形对象相等或内部所有属性相等。",
+        "reason": "这确保了 pickle 过程不仅没有崩溃，而且功能上基本正确。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用 BytesIO 作为 pickle 操作的临时缓冲区。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要创建包含至少两个垂直堆叠子图的图形以触发标签对齐逻辑。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 @mpl.style.context(\"default\") 装饰器确保可重复的样式。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "align_labels() 内部具体哪个步骤引入了不可 pickle 的 weakref 对象。",
+      "是否所有调用 align_labels() 的情况都会触发此错误，还是需要特定的图形配置（如 Issue 中的垂直堆叠子图）。",
+      "错误是否与特定的 matplotlib 后端有关（Issue 未指定）。",
+      "除了 weakref.ReferenceType，是否还有其他不可 pickle 的对象类型被引入。"
+    ]
+  }
+}

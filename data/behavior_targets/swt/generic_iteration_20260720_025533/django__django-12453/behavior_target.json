@@ -1,0 +1,344 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-12453",
+  "issue_summary": "TransactionTestCase.serialized_rollback 在恢复数据库对象时因外键约束顺序问题导致完整性错误。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要一个继承自 TransactionTestCase 的测试类，并设置 serialized_rollback = True。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要至少两个具有外键关系的 Django 模型定义。",
+        "source": "inference",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要确保数据库支持事务（尽管 Issue 提到此机制正是为无事务或使用 TransactionTestCase 的环境设计）。",
+        "source": "inference",
+        "confidence": "medium"
+      },
+      {
+        "hint": "可能需要在测试的 setUp 或测试方法中预先创建一些数据库对象，以便被序列化然后恢复。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestSerializedRollbackInhibitsPostMigrate.test",
+        "test_file": "tests/test_utils/test_transactiontestcase.py",
+        "why_relevant": "这是一个直接使用 TransactionTestCase 并涉及 _fixture_setup/_fixture_teardown 的测试，与触发 bug 的测试类相同。",
+        "reusable_parts": [
+          "TransactionTestCase 子类的结构",
+          "可能使用 mock 来观察调用"
+        ],
+        "possible_gap": "该测试主要关注 flush 命令的调用，并未实际测试 serialized_rollback 功能下的数据库序列化/反序列化过程，也没有创建具有外键依赖的模型数据。"
+      },
+      {
+        "test_name": "NonAutocommitTests.test_orm_query_after_error_and_rollback",
+        "test_file": "tests/transactions/tests.py",
+        "why_relevant": "该测试位于 TransactionTestCase 子类中，并涉及数据库操作、IntegrityError 和事务回滚，与 Issue 的错误现象（IntegrityError）和事务上下文相关。",
+        "reusable_parts": [
+          "TransactionTestCase 子类",
+          "Reporter 模型的使用",
+          "数据库操作和异常断言"
+        ],
+        "possible_gap": "该测试关注的是非自动提交模式下的 ORM 查询，而非 serialized_rollback 机制。它没有设置 serialized_rollback = True，也没有涉及序列化/反序列化流程。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "在 TransactionTestCase 子类中设置 serialized_rollback = True，并且测试数据库中存在具有外键依赖关系的模型，当依赖实例的保存顺序违反外键约束时。",
+      "evidence": [
+        "Issue 描述：'serialized_rollback = True on a TransactionTestCase triggers rollback emulation'",
+        "Issue 描述：'deserialize_db_from_string deserializes and saves models without wrapping in a transaction. This can result in integrity errors if an instance containing a foreign key is saved before the instance it references.'",
+        "源码片段 2 显示 _fixture_setup 在 serialized_rollback 为 True 时调用 deserialize_db_from_string。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "在反序列化恢复数据库状态时，可能抛出完整性错误（IntegrityError），因为包含外键的实例在它所引用的实例之前被保存。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 描述：'This can result in integrity errors if an instance containing a foreign key is saved before the instance it references.'",
+        "Issue 提到 loaddata 没有此问题，因为它包装在事务中，暗示此处缺少事务包装。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "TransactionTestCase",
+        "kind": "class",
+        "source_path": "django/test/testcases.py",
+        "reason": "Issue 的核心是关于 TransactionTestCase 的 serialized_rollback 功能。"
+      },
+      {
+        "name": "BaseDatabaseCreation.deserialize_db_from_string",
+        "kind": "method",
+        "source_path": "django/db/backends/base/creation.py",
+        "reason": "Issue 明确指出此方法在保存反序列化对象时缺少事务包装，导致潜在完整性错误。"
+      },
+      {
+        "name": "BaseDatabaseCreation.serialize_db_to_string",
+        "kind": "method",
+        "source_path": "django/db/backends/base/creation.py",
+        "reason": "此方法生成序列化数据，其排序逻辑（sort_dependencies）是问题背景的一部分。"
+      },
+      {
+        "name": "transaction.atomic",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 建议的修复是在 deserialize_db_from_string 中使用 transaction.atomic 包装保存操作。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/backends/base/creation.py",
+        "object": "BaseDatabaseCreation.deserialize_db_from_string",
+        "lines": "123-130",
+        "reason": "Issue 指出该方法在循环保存反序列化对象时没有使用事务包装，导致外键约束可能被违反。源码片段 5 证实了这一点。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "相关测试种子中未设置 serialized_rollback 属性（默认为 False）。",
+        "target_pattern": "在 TransactionTestCase 子类中设置 serialized_rollback = True。",
+        "reason": "这是触发 rollback 模拟和调用有缺陷的 deserialize_db_from_string 方法的必要条件。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "测试种子中可能创建独立的模型实例或没有复杂外键依赖。",
+        "target_pattern": "创建至少两个具有外键关系的模型实例，其中子实例引用父实例。",
+        "reason": "为了触发因保存顺序导致的完整性错误，需要存在外键依赖。Issue 提到 sort_dependencies 只处理自然键，不保证外键顺序。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "测试种子可能直接操作数据库或使用 fixtures。",
+        "target_pattern": "测试流程应触发 _fixture_setup（进而调用 deserialize_db_from_string）来恢复数据库状态。",
+        "reason": "Bug 发生在 _fixture_setup 调用 deserialize_db_from_string 恢复序列化数据时。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "deserialize_db_from_string 方法应能成功恢复序列化的数据库状态，即使模型之间存在外键依赖，不会因保存顺序问题引发完整性错误。",
+      "evidence": [
+        "Issue 建议的修复：用 transaction.atomic 包装 deserialize_db_from_string 中的保存循环。",
+        "Issue 指出 loaddata 命令通过包装在事务中避免了此问题。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "在 _fixture_setup 或 deserialize_db_from_string 调用期间捕获的异常，如 IntegrityError。",
+        "reason": "Issue 描述的核心错误现象是完整性错误。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "在 _fixture_setup 调用前后，相关模型（特别是具有外键关系的模型）在数据库中的存在状态。",
+        "reason": "验证反序列化过程是否成功恢复了所有对象，尤其是依赖对象是否被正确恢复。"
+      },
+      {
+        "kind": "serialization",
+        "expression_hint": "serialize_db_to_string 输出的序列化字符串中对象的顺序。",
+        "reason": "Issue 指出序列化顺序取决于 app registry 的顺序，且可能不满足外键约束。观察顺序有助于理解触发条件。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当 serialized_rollback=True 且数据库中存在外键依赖数据时，测试的 _fixture_setup 阶段不应抛出 IntegrityError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言具体的异常消息字符串，因为不同数据库后端的消息可能不同。",
+        "reason": "修复前，在某些条件下应预期捕获 IntegrityError；修复后，该断言应不再成立（即不抛出异常）。根据 expected_behavior，最终目标是“不引发完整性错误”，因此修复后的稳定断言应是关于状态恢复的正确性（如下一条）。"
+      },
+      {
+        "assertion_goal": "经过 serialized_rollback 恢复后，数据库中的对象（包括具有外键引用的对象）应被正确恢复，数量与序列化前一致。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言对象保存的精确顺序或完整的 repr 输出。",
+        "reason": "这直接验证了修复后的预期行为：反序列化功能正常工作，不受外键顺序影响。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "Issue 描述中提到‘I think it can be understood just by inspecting the code’，但没有提供最小的、可运行的复现案例。具体哪些模型关系、何种 app 注册顺序会必然触发此错误是不确定的。",
+    "serializers.sort_dependencies 的具体排序算法及其与 app registry 顺序的交互细节，如何导致一个确定性的、可测试的坏顺序。",
+    "是否所有数据库后端都会表现出同样的错误，或者某些后端可能因为延迟约束检查而不会立即抛出异常。"
+  ],
+  "raw": {
+    "issue_summary": "TransactionTestCase.serialized_rollback 在恢复数据库对象时因外键约束顺序问题导致完整性错误。",
+    "trigger_condition": {
+      "text": "在 TransactionTestCase 子类中设置 serialized_rollback = True，并且测试数据库中存在具有外键依赖关系的模型，当依赖实例的保存顺序违反外键约束时。",
+      "evidence": [
+        "Issue 描述：'serialized_rollback = True on a TransactionTestCase triggers rollback emulation'",
+        "Issue 描述：'deserialize_db_from_string deserializes and saves models without wrapping in a transaction. This can result in integrity errors if an instance containing a foreign key is saved before the instance it references.'",
+        "源码片段 2 显示 _fixture_setup 在 serialized_rollback 为 True 时调用 deserialize_db_from_string。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "在反序列化恢复数据库状态时，可能抛出完整性错误（IntegrityError），因为包含外键的实例在它所引用的实例之前被保存。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 描述：'This can result in integrity errors if an instance containing a foreign key is saved before the instance it references.'",
+        "Issue 提到 loaddata 没有此问题，因为它包装在事务中，暗示此处缺少事务包装。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "deserialize_db_from_string 方法应能成功恢复序列化的数据库状态，即使模型之间存在外键依赖，不会因保存顺序问题引发完整性错误。",
+      "evidence": [
+        "Issue 建议的修复：用 transaction.atomic 包装 deserialize_db_from_string 中的保存循环。",
+        "Issue 指出 loaddata 命令通过包装在事务中避免了此问题。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "TransactionTestCase",
+        "kind": "class",
+        "source_path": "django/test/testcases.py",
+        "reason": "Issue 的核心是关于 TransactionTestCase 的 serialized_rollback 功能。"
+      },
+      {
+        "name": "BaseDatabaseCreation.deserialize_db_from_string",
+        "kind": "method",
+        "source_path": "django/db/backends/base/creation.py",
+        "reason": "Issue 明确指出此方法在保存反序列化对象时缺少事务包装，导致潜在完整性错误。"
+      },
+      {
+        "name": "BaseDatabaseCreation.serialize_db_to_string",
+        "kind": "method",
+        "source_path": "django/db/backends/base/creation.py",
+        "reason": "此方法生成序列化数据，其排序逻辑（sort_dependencies）是问题背景的一部分。"
+      },
+      {
+        "name": "transaction.atomic",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 建议的修复是在 deserialize_db_from_string 中使用 transaction.atomic 包装保存操作。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/backends/base/creation.py",
+        "object": "BaseDatabaseCreation.deserialize_db_from_string",
+        "lines": "123-130",
+        "reason": "Issue 指出该方法在循环保存反序列化对象时没有使用事务包装，导致外键约束可能被违反。源码片段 5 证实了这一点。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestSerializedRollbackInhibitsPostMigrate.test",
+        "test_file": "tests/test_utils/test_transactiontestcase.py",
+        "why_relevant": "这是一个直接使用 TransactionTestCase 并涉及 _fixture_setup/_fixture_teardown 的测试，与触发 bug 的测试类相同。",
+        "reusable_parts": [
+          "TransactionTestCase 子类的结构",
+          "可能使用 mock 来观察调用"
+        ],
+        "possible_gap": "该测试主要关注 flush 命令的调用，并未实际测试 serialized_rollback 功能下的数据库序列化/反序列化过程，也没有创建具有外键依赖的模型数据。"
+      },
+      {
+        "test_name": "NonAutocommitTests.test_orm_query_after_error_and_rollback",
+        "test_file": "tests/transactions/tests.py",
+        "why_relevant": "该测试位于 TransactionTestCase 子类中，并涉及数据库操作、IntegrityError 和事务回滚，与 Issue 的错误现象（IntegrityError）和事务上下文相关。",
+        "reusable_parts": [
+          "TransactionTestCase 子类",
+          "Reporter 模型的使用",
+          "数据库操作和异常断言"
+        ],
+        "possible_gap": "该测试关注的是非自动提交模式下的 ORM 查询，而非 serialized_rollback 机制。它没有设置 serialized_rollback = True，也没有涉及序列化/反序列化流程。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "相关测试种子中未设置 serialized_rollback 属性（默认为 False）。",
+        "target_pattern": "在 TransactionTestCase 子类中设置 serialized_rollback = True。",
+        "reason": "这是触发 rollback 模拟和调用有缺陷的 deserialize_db_from_string 方法的必要条件。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "测试种子中可能创建独立的模型实例或没有复杂外键依赖。",
+        "target_pattern": "创建至少两个具有外键关系的模型实例，其中子实例引用父实例。",
+        "reason": "为了触发因保存顺序导致的完整性错误，需要存在外键依赖。Issue 提到 sort_dependencies 只处理自然键，不保证外键顺序。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "测试种子可能直接操作数据库或使用 fixtures。",
+        "target_pattern": "测试流程应触发 _fixture_setup（进而调用 deserialize_db_from_string）来恢复数据库状态。",
+        "reason": "Bug 发生在 _fixture_setup 调用 deserialize_db_from_string 恢复序列化数据时。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "在 _fixture_setup 或 deserialize_db_from_string 调用期间捕获的异常，如 IntegrityError。",
+        "reason": "Issue 描述的核心错误现象是完整性错误。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "在 _fixture_setup 调用前后，相关模型（特别是具有外键关系的模型）在数据库中的存在状态。",
+        "reason": "验证反序列化过程是否成功恢复了所有对象，尤其是依赖对象是否被正确恢复。"
+      },
+      {
+        "kind": "serialization",
+        "expression_hint": "serialize_db_to_string 输出的序列化字符串中对象的顺序。",
+        "reason": "Issue 指出序列化顺序取决于 app registry 的顺序，且可能不满足外键约束。观察顺序有助于理解触发条件。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当 serialized_rollback=True 且数据库中存在外键依赖数据时，测试的 _fixture_setup 阶段不应抛出 IntegrityError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言具体的异常消息字符串，因为不同数据库后端的消息可能不同。",
+        "reason": "修复前，在某些条件下应预期捕获 IntegrityError；修复后，该断言应不再成立（即不抛出异常）。根据 expected_behavior，最终目标是“不引发完整性错误”，因此修复后的稳定断言应是关于状态恢复的正确性（如下一条）。"
+      },
+      {
+        "assertion_goal": "经过 serialized_rollback 恢复后，数据库中的对象（包括具有外键引用的对象）应被正确恢复，数量与序列化前一致。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言对象保存的精确顺序或完整的 repr 输出。",
+        "reason": "这直接验证了修复后的预期行为：反序列化功能正常工作，不受外键顺序影响。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要一个继承自 TransactionTestCase 的测试类，并设置 serialized_rollback = True。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要至少两个具有外键关系的 Django 模型定义。",
+        "source": "inference",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要确保数据库支持事务（尽管 Issue 提到此机制正是为无事务或使用 TransactionTestCase 的环境设计）。",
+        "source": "inference",
+        "confidence": "medium"
+      },
+      {
+        "hint": "可能需要在测试的 setUp 或测试方法中预先创建一些数据库对象，以便被序列化然后恢复。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "Issue 描述中提到‘I think it can be understood just by inspecting the code’，但没有提供最小的、可运行的复现案例。具体哪些模型关系、何种 app 注册顺序会必然触发此错误是不确定的。",
+      "serializers.sort_dependencies 的具体排序算法及其与 app registry 顺序的交互细节，如何导致一个确定性的、可测试的坏顺序。",
+      "是否所有数据库后端都会表现出同样的错误，或者某些后端可能因为延迟约束检查而不会立即抛出异常。"
+    ]
+  }
+}

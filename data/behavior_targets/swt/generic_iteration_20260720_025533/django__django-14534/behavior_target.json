@@ -1,0 +1,346 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-14534",
+  "issue_summary": "BoundWidget.id_for_label 方法忽略了通过 ChoiceWidget.options 设置的 id 属性，导致自定义 auto_id 格式时标签关联错误。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要创建一个使用 CheckboxSelectMultiple 的 Form 或直接使用该小部件。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 SimpleTestCase 或 WidgetTest 作为测试基类。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要设置 auto_id 参数或 widget.attrs['id'] 来提供自定义 id 格式。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "CheckboxSelectMultipleTest.test_separate_ids",
+        "test_file": "tests/forms_tests/widget_tests/test_checkboxselectmultiple.py",
+        "why_relevant": "它测试了 CheckboxSelectMultiple 小部件为每个选项生成独立 id 的行为，涉及 id 的生成和渲染。",
+        "reusable_parts": [
+          "CheckboxSelectMultiple 的构造",
+          "self.check_html 断言方法",
+          "choices 和 attrs 的设置模式"
+        ],
+        "possible_gap": "该测试直接检查渲染的 HTML 输出，没有直接测试 BoundWidget.id_for_label 的返回值。"
+      },
+      {
+        "test_name": "FormsTestCase.test_checkbox_auto_id",
+        "test_file": "tests/forms_tests/tests/test_forms.py",
+        "why_relevant": "它专门测试了 CheckboxSelectMultiple 在 auto_id 下的行为，验证了生成的 HTML id 格式。",
+        "reusable_parts": [
+          "使用 Form 和 MultipleChoiceField 的测试结构",
+          "auto_id 参数的设置",
+          "assertHTMLEqual 断言"
+        ],
+        "possible_gap": "它测试的是整个字段的渲染输出（str(f['composers'])），而不是单个 BoundWidget 的 id_for_label 属性。"
+      },
+      {
+        "test_name": "FormsTestCase.test_boundfield_id_for_label_override_by_attrs",
+        "test_file": "tests/forms_tests/tests/test_forms.py",
+        "why_relevant": "它测试了通过 Widget.attrs 覆盖 id 时，BoundField.id_for_label 的行为。这与 Issue 中通过 attrs 设置 id 的场景相关。",
+        "reusable_parts": [
+          "通过 widget=TextInput(attrs={'id': ...}) 设置自定义 id 的模式",
+          "对 form['field'].id_for_label 的直接断言"
+        ],
+        "possible_gap": "它测试的是 BoundField.id_for_label，而不是 BoundWidget.id_for_label，且使用的是 TextInput 而非 CheckboxSelectMultiple。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用 CheckboxSelectMultiple 小部件，并通过 auto_id 参数或 widget.attrs 自定义 id 格式，然后访问 BoundWidget 的 id_for_label 属性。",
+      "evidence": [
+        "Issue 描述：'rarely the auto_id-argument is overridden when initializing a form. If however we do, one would assume that the method BoundWidget.id_for_label renders that string as specified through the auto_id format-string.'",
+        "Issue 描述：'This error only occurs when rendering the subwidgets of a widget of type CheckboxSelectMultiple.'",
+        "源码片段 2 显示 subwidgets 方法会构建 attrs 字典并传递给 widget.subwidgets。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "BoundWidget.id_for_label 返回硬编码的 'id_%s_%s' 格式字符串，而不是使用 self.data['attrs']['id'] 中已计算好的 id。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 描述：'BoundWidget.id_for_label() is implemented as ... ignoring the id available through self.data['attrs']['id']'",
+        "源码片段 4 显示 id_for_label 的实现：return 'id_%s_%s' % (self.data['name'], self.data['index'])。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "BoundWidget.id_for_label",
+        "kind": "method",
+        "source_path": "django/forms/boundfield.py",
+        "reason": "这是 Issue 报告的直接缺陷方法。"
+      },
+      {
+        "name": "BoundField.subwidgets",
+        "kind": "method",
+        "source_path": "django/forms/boundfield.py",
+        "reason": "它创建 BoundWidget 实例并传递包含 id 的 attrs 数据。"
+      },
+      {
+        "name": "CheckboxSelectMultiple",
+        "kind": "class",
+        "source_path": "django/forms/widgets.py",
+        "reason": "Issue 明确指出此缺陷仅影响 CheckboxSelectMultiple 的子部件渲染。"
+      },
+      {
+        "name": "BoundField.id_for_label",
+        "kind": "property",
+        "source_path": "django/forms/boundfield.py",
+        "reason": "Issue 提到此方法与此缺陷无关，但它是相关 API，用于对比。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/forms/boundfield.py",
+        "object": "BoundWidget.id_for_label",
+        "lines": "279-280",
+        "reason": "该方法硬编码了 id 的生成逻辑，没有使用 self.data['attrs']['id']。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "相关测试中通常使用默认的 auto_id 行为或通过构造器 attrs 设置一个基础 id（如 'abc'）。",
+        "target_pattern": "设置一个自定义的 auto_id 格式字符串（如 auto_id='%s_id'）或通过 widget.attrs 设置一个特定的 id，然后迭代访问 BoundWidget 的 id_for_label。",
+        "reason": "Issue 指出缺陷在覆盖 auto_id 参数时显现。需要变异测试配置以触发使用自定义 id 格式的路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "相关测试直接检查渲染的 HTML 或 BoundField 的 id_for_label。",
+        "target_pattern": "通过 BoundField.subwidgets 获取 BoundWidget 列表，然后检查每个 BoundWidget 的 id_for_label 属性。",
+        "reason": "缺陷存在于 BoundWidget 级别，需要直接调用其 id_for_label 方法才能观察到错误返回值。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "BoundWidget.id_for_label 应返回 self.data['attrs']['id'] 中存储的 id 值，该值由 BoundField.subwidgets 根据 auto_id 或 widget.attrs 计算得出。",
+      "evidence": [
+        "Issue 描述：'By changing the code from above to ... return self.data['attrs']['id'] that function behaves as expected.'",
+        "源码片段 2 显示 attrs 字典被构建并传递给 widget.subwidgets，其中包含 'id' 键。",
+        "相关测试 4 表明 id 可以通过 Widget.attrs 覆盖。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "bound_widget.id_for_label",
+        "reason": "直接观察缺陷方法的返回值，看它是硬编码格式还是使用了 attrs 中的 id。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "bound_widget.data['attrs'].get('id')",
+        "reason": "观察 BoundWidget 内部存储的 attrs 字典中是否包含正确的 id 值，以确认输入数据是正确的。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "bound_field.subwidgets",
+        "reason": "观察生成的 BoundWidget 列表，确认其数量和结构，确保测试进入了正确的子部件迭代路径。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "BoundWidget.id_for_label 的返回值应等于 self.data['attrs']['id'] 的值。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的 HTML 字符串，因为 HTML 渲染可能涉及其他无关细节。",
+        "reason": "直接验证核心缺陷点：方法的返回值是否使用了正确的数据源。"
+      },
+      {
+        "assertion_goal": "当通过 auto_id 或 attrs 设置自定义 id 时，BoundWidget.id_for_label 应返回符合该自定义格式的 id。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "硬编码期望的完整 id 字符串，因为格式可能随 Django 版本变化。可以断言包含自定义前缀。",
+        "reason": "验证自定义 id 格式被正确应用，而不是被硬编码的 'id_%s_%s' 覆盖。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "BoundWidget.data 字典的确切结构，除了 'attrs' 外是否还有其他关键字段（如 'name', 'index'）。",
+    "widget.subwidgets 方法返回的字典具体包含哪些键值对。",
+    "除了 CheckboxSelectMultiple，其他类似小部件（如 RadioSelect）是否也存在同样问题？Issue 说仅限 CheckboxSelectMultiple，但未解释原因。",
+    "BoundField.subwidgets 中构建的 attrs 字典是否总是包含 'id' 键，还是有时可能为空。"
+  ],
+  "raw": {
+    "issue_summary": "BoundWidget.id_for_label 方法忽略了通过 ChoiceWidget.options 设置的 id 属性，导致自定义 auto_id 格式时标签关联错误。",
+    "trigger_condition": {
+      "text": "使用 CheckboxSelectMultiple 小部件，并通过 auto_id 参数或 widget.attrs 自定义 id 格式，然后访问 BoundWidget 的 id_for_label 属性。",
+      "evidence": [
+        "Issue 描述：'rarely the auto_id-argument is overridden when initializing a form. If however we do, one would assume that the method BoundWidget.id_for_label renders that string as specified through the auto_id format-string.'",
+        "Issue 描述：'This error only occurs when rendering the subwidgets of a widget of type CheckboxSelectMultiple.'",
+        "源码片段 2 显示 subwidgets 方法会构建 attrs 字典并传递给 widget.subwidgets。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "BoundWidget.id_for_label 返回硬编码的 'id_%s_%s' 格式字符串，而不是使用 self.data['attrs']['id'] 中已计算好的 id。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 描述：'BoundWidget.id_for_label() is implemented as ... ignoring the id available through self.data['attrs']['id']'",
+        "源码片段 4 显示 id_for_label 的实现：return 'id_%s_%s' % (self.data['name'], self.data['index'])。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "BoundWidget.id_for_label 应返回 self.data['attrs']['id'] 中存储的 id 值，该值由 BoundField.subwidgets 根据 auto_id 或 widget.attrs 计算得出。",
+      "evidence": [
+        "Issue 描述：'By changing the code from above to ... return self.data['attrs']['id'] that function behaves as expected.'",
+        "源码片段 2 显示 attrs 字典被构建并传递给 widget.subwidgets，其中包含 'id' 键。",
+        "相关测试 4 表明 id 可以通过 Widget.attrs 覆盖。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "BoundWidget.id_for_label",
+        "kind": "method",
+        "source_path": "django/forms/boundfield.py",
+        "reason": "这是 Issue 报告的直接缺陷方法。"
+      },
+      {
+        "name": "BoundField.subwidgets",
+        "kind": "method",
+        "source_path": "django/forms/boundfield.py",
+        "reason": "它创建 BoundWidget 实例并传递包含 id 的 attrs 数据。"
+      },
+      {
+        "name": "CheckboxSelectMultiple",
+        "kind": "class",
+        "source_path": "django/forms/widgets.py",
+        "reason": "Issue 明确指出此缺陷仅影响 CheckboxSelectMultiple 的子部件渲染。"
+      },
+      {
+        "name": "BoundField.id_for_label",
+        "kind": "property",
+        "source_path": "django/forms/boundfield.py",
+        "reason": "Issue 提到此方法与此缺陷无关，但它是相关 API，用于对比。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/forms/boundfield.py",
+        "object": "BoundWidget.id_for_label",
+        "lines": "279-280",
+        "reason": "该方法硬编码了 id 的生成逻辑，没有使用 self.data['attrs']['id']。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "CheckboxSelectMultipleTest.test_separate_ids",
+        "test_file": "tests/forms_tests/widget_tests/test_checkboxselectmultiple.py",
+        "why_relevant": "它测试了 CheckboxSelectMultiple 小部件为每个选项生成独立 id 的行为，涉及 id 的生成和渲染。",
+        "reusable_parts": [
+          "CheckboxSelectMultiple 的构造",
+          "self.check_html 断言方法",
+          "choices 和 attrs 的设置模式"
+        ],
+        "possible_gap": "该测试直接检查渲染的 HTML 输出，没有直接测试 BoundWidget.id_for_label 的返回值。"
+      },
+      {
+        "test_name": "FormsTestCase.test_checkbox_auto_id",
+        "test_file": "tests/forms_tests/tests/test_forms.py",
+        "why_relevant": "它专门测试了 CheckboxSelectMultiple 在 auto_id 下的行为，验证了生成的 HTML id 格式。",
+        "reusable_parts": [
+          "使用 Form 和 MultipleChoiceField 的测试结构",
+          "auto_id 参数的设置",
+          "assertHTMLEqual 断言"
+        ],
+        "possible_gap": "它测试的是整个字段的渲染输出（str(f['composers'])），而不是单个 BoundWidget 的 id_for_label 属性。"
+      },
+      {
+        "test_name": "FormsTestCase.test_boundfield_id_for_label_override_by_attrs",
+        "test_file": "tests/forms_tests/tests/test_forms.py",
+        "why_relevant": "它测试了通过 Widget.attrs 覆盖 id 时，BoundField.id_for_label 的行为。这与 Issue 中通过 attrs 设置 id 的场景相关。",
+        "reusable_parts": [
+          "通过 widget=TextInput(attrs={'id': ...}) 设置自定义 id 的模式",
+          "对 form['field'].id_for_label 的直接断言"
+        ],
+        "possible_gap": "它测试的是 BoundField.id_for_label，而不是 BoundWidget.id_for_label，且使用的是 TextInput 而非 CheckboxSelectMultiple。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "相关测试中通常使用默认的 auto_id 行为或通过构造器 attrs 设置一个基础 id（如 'abc'）。",
+        "target_pattern": "设置一个自定义的 auto_id 格式字符串（如 auto_id='%s_id'）或通过 widget.attrs 设置一个特定的 id，然后迭代访问 BoundWidget 的 id_for_label。",
+        "reason": "Issue 指出缺陷在覆盖 auto_id 参数时显现。需要变异测试配置以触发使用自定义 id 格式的路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "相关测试直接检查渲染的 HTML 或 BoundField 的 id_for_label。",
+        "target_pattern": "通过 BoundField.subwidgets 获取 BoundWidget 列表，然后检查每个 BoundWidget 的 id_for_label 属性。",
+        "reason": "缺陷存在于 BoundWidget 级别，需要直接调用其 id_for_label 方法才能观察到错误返回值。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "bound_widget.id_for_label",
+        "reason": "直接观察缺陷方法的返回值，看它是硬编码格式还是使用了 attrs 中的 id。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "bound_widget.data['attrs'].get('id')",
+        "reason": "观察 BoundWidget 内部存储的 attrs 字典中是否包含正确的 id 值，以确认输入数据是正确的。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "bound_field.subwidgets",
+        "reason": "观察生成的 BoundWidget 列表，确认其数量和结构，确保测试进入了正确的子部件迭代路径。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "BoundWidget.id_for_label 的返回值应等于 self.data['attrs']['id'] 的值。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的 HTML 字符串，因为 HTML 渲染可能涉及其他无关细节。",
+        "reason": "直接验证核心缺陷点：方法的返回值是否使用了正确的数据源。"
+      },
+      {
+        "assertion_goal": "当通过 auto_id 或 attrs 设置自定义 id 时，BoundWidget.id_for_label 应返回符合该自定义格式的 id。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "硬编码期望的完整 id 字符串，因为格式可能随 Django 版本变化。可以断言包含自定义前缀。",
+        "reason": "验证自定义 id 格式被正确应用，而不是被硬编码的 'id_%s_%s' 覆盖。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要创建一个使用 CheckboxSelectMultiple 的 Form 或直接使用该小部件。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 SimpleTestCase 或 WidgetTest 作为测试基类。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要设置 auto_id 参数或 widget.attrs['id'] 来提供自定义 id 格式。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "BoundWidget.data 字典的确切结构，除了 'attrs' 外是否还有其他关键字段（如 'name', 'index'）。",
+      "widget.subwidgets 方法返回的字典具体包含哪些键值对。",
+      "除了 CheckboxSelectMultiple，其他类似小部件（如 RadioSelect）是否也存在同样问题？Issue 说仅限 CheckboxSelectMultiple，但未解释原因。",
+      "BoundField.subwidgets 中构建的 attrs 字典是否总是包含 'id' 键，还是有时可能为空。"
+    ]
+  }
+}

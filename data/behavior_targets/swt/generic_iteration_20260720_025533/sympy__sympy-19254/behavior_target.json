@@ -1,0 +1,336 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-19254",
+  "issue_summary": "Issue 建议用 Knuth-Cohen bound 替换现有的 mignotte bound 实现以提升性能。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy.polys.rings 的 ring 和 ZZ，以及可能的多项式构造工具。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在 `sympy/polys/tests/test_factortools.py` 的上下文中运行，以访问某些全局测试变量（如 w_1）。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_dup_zz_mignotte_bound",
+        "test_file": "sympy/polys/tests/test_factortools.py",
+        "why_relevant": "直接测试了 `dup_zz_mignotte_bound` 方法，提供了输入多项式构造和断言 bound 值的模式。",
+        "reusable_parts": [
+          "ring(\"x\", ZZ) 的构造",
+          "多项式 2*x**2 + 3*x + 4 的构造",
+          "调用 R.dup_zz_mignotte_bound 的 API 模式",
+          "使用 assert 进行数值比较的风格"
+        ],
+        "possible_gap": "该测试仅验证了一个特定输入下的固定返回值（32）。对于性能改进或不同 bound 算法的验证，需要更广泛的输入测试，且新算法下的 bound 值可能不同（更小），因此固定断言值 32 可能失效。"
+      },
+      {
+        "test_name": "test_dmp_zz_mignotte_bound",
+        "test_file": "sympy/polys/tests/test_factortools.py",
+        "why_relevant": "直接测试了 `dmp_zz_mignotte_bound` 方法，提供了多元多项式环的构造和测试模式。",
+        "reusable_parts": [
+          "ring(\"x,y\", ZZ) 的构造",
+          "调用 R.dmp_zz_mignotte_bound 的 API 模式",
+          "使用 assert 进行数值比较的风格"
+        ],
+        "possible_gap": "同样只测试了一个特定输入和固定返回值。"
+      },
+      {
+        "test_name": "test_dmp_zz_wang",
+        "test_file": "sympy/polys/tests/test_factortools.py",
+        "why_relevant": "展示了 `dmp_zz_mignotte_bound` 在更复杂算法（Wang 算法）中的实际使用场景，即其返回值被用于计算下一个质数。这有助于理解 bound 值变化可能带来的下游影响。",
+        "reusable_parts": [
+          "复杂多项式 w_1 的上下文（尽管未定义）",
+          "R.dmp_zz_mignotte_bound 结果用于 nextprime 的模式",
+          "涉及 dmp_zz_wang 相关方法调用的链条"
+        ],
+        "possible_gap": "测试依赖于未在片段中定义的全局变量 w_1，且断言了具体的质数值（6291469）。如果 bound 值改变，这个质数也可能改变，导致断言失败。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "调用 `dup_zz_mignotte_bound` 或 `dmp_zz_mignotte_bound` 方法计算多项式系数的 Mignotte 界。",
+      "evidence": [
+        "Issue 明确提到 `dup_zz_mignotte_bound(f, K)` 和 `dmp_zz_mignotte_bound(f, u, K)` 应被替换。",
+        "相关测试代码中调用了 `R.dmp_zz_mignotte_bound` 和 `R.dup_zz_mignotte_bound`。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "Issue 未报告具体的错误现象（如异常、错误返回值），而是指出当前实现（Mignotte bound）在性能上不如 Knuth-Cohen bound。",
+      "symptom_type": "performance",
+      "evidence": [
+        "Issue 描述为“可以显著改进”，并提到基于研究结果和反馈，建议替换。",
+        "Issue 未提及任何运行时错误或功能失效。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "dup_zz_mignotte_bound",
+        "kind": "method",
+        "source_path": "sympy/polys/compatibility.py",
+        "reason": "Issue 明确建议改进此方法。"
+      },
+      {
+        "name": "dmp_zz_mignotte_bound",
+        "kind": "method",
+        "source_path": "sympy/polys/compatibility.py",
+        "reason": "Issue 明确建议改进此方法。"
+      },
+      {
+        "name": "dmp_zz_wang",
+        "kind": "method",
+        "source_path": "",
+        "reason": "相关测试显示 `dmp_zz_mignotte_bound` 的结果被 `dmp_zz_wang` 算法使用（用于计算质数 p）。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/polys/compatibility.py",
+        "object": "IPolys.dup_zz_mignotte_bound",
+        "lines": "731-732",
+        "reason": "Issue 直接指出此方法应被替换。"
+      },
+      {
+        "path": "sympy/polys/compatibility.py",
+        "object": "IPolys.dmp_zz_mignotte_bound",
+        "lines": "733-734",
+        "reason": "Issue 直接指出此方法应被替换。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用简单的低阶多项式，如 2*x**2 + 3*x + 4。",
+        "target_pattern": "使用 Issue 中提到的具有不同 degree、density 和 coefficients range 的数十个多项式进行测试。",
+        "reason": "Issue 提到他们基于对多种多项式的比较研究提出建议。使用更广泛、更复杂的测试输入可能更能揭示性能差异或验证新 bound 的正确性。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "直接调用 bound 方法并断言固定返回值。",
+        "target_pattern": "调用 bound 方法，并比较其返回值与另一个独立实现的 Knuth-Cohen bound 计算值（或比较其与旧 bound 值的大小关系）。",
+        "reason": "Issue 的核心是 bound 值的改进。测试应验证新实现返回的 bound 值确实（在某些情况下）更优（更小），且不破坏依赖它的算法（如 dmp_zz_wang）。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "替换为 Knuth-Cohen bound 后，`dup_zz_mignotte_bound` 和 `dmp_zz_mignotte_bound` 方法应返回与当前实现语义相同（即仍是多项式系数的某个上界）但可能更优（更小）的数值，且不引入功能错误。",
+      "evidence": [
+        "Issue 建议用 Knuth-Cohen bound 替换 Mignotte bound，表明新方法应保持作为“bound”的语义。",
+        "相关测试 `test_dmp_zz_mignotte_bound` 和 `test_dup_zz_mignotte_bound` 对返回值有具体断言（== 32），暗示 bound 值在特定输入下应是确定且可测试的。"
+      ],
+      "confidence": "medium"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "R.dup_zz_mignotte_bound(poly) 和 R.dmp_zz_mignotte_bound(poly) 的返回值。",
+        "reason": "Issue 关注 bound 值本身。观测返回值是判断算法是否已替换以及新 bound 值是否合理（例如，是否仍为正整数，是否小于等于旧 bound）的直接方式。"
+      },
+      {
+        "kind": "performance",
+        "expression_hint": "计算 bound 所需的时间（例如使用 timeit），尤其是对于高阶、高密度多项式。",
+        "reason": "Issue 强调“显著改进”，性能是核心诉求之一。观测执行时间可以量化改进效果。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "下游算法（如 test_dmp_zz_wang 中的 nextprime 计算及后续分解结果）是否仍能正确运行。",
+        "reason": "Bound 值的变化可能影响依赖它的算法（如选择质数）。需要确保功能正确性未被破坏。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证新 bound 方法返回的数值对于给定多项式是一个有效的上界（例如，通过某些属性检查，或确保依赖它的 Wang 算法仍能成功分解）。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言 bound 值等于某个具体的魔法数字（如 32）。",
+        "reason": "具体的 bound 值可能随算法改变。更稳定的断言是验证 bound 值的语义属性（如上界性质）或比较新旧 bound 值的关系（新 bound <= 旧 bound）。"
+      },
+      {
+        "assertion_goal": "验证对于一系列测试多项式，新 bound 值不大于旧 bound 值（即至少一样好）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "仅对单个简单多项式进行断言。",
+        "reason": "这直接对应 Issue 中“改进”的诉求，且不依赖于具体的、可能变化的数值。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "Knuth-Cohen bound 的具体实现细节和计算公式未在提供材料中给出。",
+    "新 bound 算法对 `dmp_zz_wang` 等下游算法的具体影响程度未知（是仅质数选择不同，还是可能导致功能错误）。",
+    "除了性能，新 bound 算法是否在所有输入情况下都保持数学上的正确性（即确实是系数的一个上界）需要验证。",
+    "Issue 中提到的“数十个多项式”的具体例子未提供。"
+  ],
+  "raw": {
+    "issue_summary": "Issue 建议用 Knuth-Cohen bound 替换现有的 mignotte bound 实现以提升性能。",
+    "trigger_condition": {
+      "text": "调用 `dup_zz_mignotte_bound` 或 `dmp_zz_mignotte_bound` 方法计算多项式系数的 Mignotte 界。",
+      "evidence": [
+        "Issue 明确提到 `dup_zz_mignotte_bound(f, K)` 和 `dmp_zz_mignotte_bound(f, u, K)` 应被替换。",
+        "相关测试代码中调用了 `R.dmp_zz_mignotte_bound` 和 `R.dup_zz_mignotte_bound`。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "Issue 未报告具体的错误现象（如异常、错误返回值），而是指出当前实现（Mignotte bound）在性能上不如 Knuth-Cohen bound。",
+      "symptom_type": "performance",
+      "evidence": [
+        "Issue 描述为“可以显著改进”，并提到基于研究结果和反馈，建议替换。",
+        "Issue 未提及任何运行时错误或功能失效。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "替换为 Knuth-Cohen bound 后，`dup_zz_mignotte_bound` 和 `dmp_zz_mignotte_bound` 方法应返回与当前实现语义相同（即仍是多项式系数的某个上界）但可能更优（更小）的数值，且不引入功能错误。",
+      "evidence": [
+        "Issue 建议用 Knuth-Cohen bound 替换 Mignotte bound，表明新方法应保持作为“bound”的语义。",
+        "相关测试 `test_dmp_zz_mignotte_bound` 和 `test_dup_zz_mignotte_bound` 对返回值有具体断言（== 32），暗示 bound 值在特定输入下应是确定且可测试的。"
+      ],
+      "confidence": "medium"
+    },
+    "target_apis": [
+      {
+        "name": "dup_zz_mignotte_bound",
+        "kind": "method",
+        "source_path": "sympy/polys/compatibility.py",
+        "reason": "Issue 明确建议改进此方法。"
+      },
+      {
+        "name": "dmp_zz_mignotte_bound",
+        "kind": "method",
+        "source_path": "sympy/polys/compatibility.py",
+        "reason": "Issue 明确建议改进此方法。"
+      },
+      {
+        "name": "dmp_zz_wang",
+        "kind": "method",
+        "source_path": "",
+        "reason": "相关测试显示 `dmp_zz_mignotte_bound` 的结果被 `dmp_zz_wang` 算法使用（用于计算质数 p）。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/polys/compatibility.py",
+        "object": "IPolys.dup_zz_mignotte_bound",
+        "lines": "731-732",
+        "reason": "Issue 直接指出此方法应被替换。"
+      },
+      {
+        "path": "sympy/polys/compatibility.py",
+        "object": "IPolys.dmp_zz_mignotte_bound",
+        "lines": "733-734",
+        "reason": "Issue 直接指出此方法应被替换。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_dup_zz_mignotte_bound",
+        "test_file": "sympy/polys/tests/test_factortools.py",
+        "why_relevant": "直接测试了 `dup_zz_mignotte_bound` 方法，提供了输入多项式构造和断言 bound 值的模式。",
+        "reusable_parts": [
+          "ring(\"x\", ZZ) 的构造",
+          "多项式 2*x**2 + 3*x + 4 的构造",
+          "调用 R.dup_zz_mignotte_bound 的 API 模式",
+          "使用 assert 进行数值比较的风格"
+        ],
+        "possible_gap": "该测试仅验证了一个特定输入下的固定返回值（32）。对于性能改进或不同 bound 算法的验证，需要更广泛的输入测试，且新算法下的 bound 值可能不同（更小），因此固定断言值 32 可能失效。"
+      },
+      {
+        "test_name": "test_dmp_zz_mignotte_bound",
+        "test_file": "sympy/polys/tests/test_factortools.py",
+        "why_relevant": "直接测试了 `dmp_zz_mignotte_bound` 方法，提供了多元多项式环的构造和测试模式。",
+        "reusable_parts": [
+          "ring(\"x,y\", ZZ) 的构造",
+          "调用 R.dmp_zz_mignotte_bound 的 API 模式",
+          "使用 assert 进行数值比较的风格"
+        ],
+        "possible_gap": "同样只测试了一个特定输入和固定返回值。"
+      },
+      {
+        "test_name": "test_dmp_zz_wang",
+        "test_file": "sympy/polys/tests/test_factortools.py",
+        "why_relevant": "展示了 `dmp_zz_mignotte_bound` 在更复杂算法（Wang 算法）中的实际使用场景，即其返回值被用于计算下一个质数。这有助于理解 bound 值变化可能带来的下游影响。",
+        "reusable_parts": [
+          "复杂多项式 w_1 的上下文（尽管未定义）",
+          "R.dmp_zz_mignotte_bound 结果用于 nextprime 的模式",
+          "涉及 dmp_zz_wang 相关方法调用的链条"
+        ],
+        "possible_gap": "测试依赖于未在片段中定义的全局变量 w_1，且断言了具体的质数值（6291469）。如果 bound 值改变，这个质数也可能改变，导致断言失败。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用简单的低阶多项式，如 2*x**2 + 3*x + 4。",
+        "target_pattern": "使用 Issue 中提到的具有不同 degree、density 和 coefficients range 的数十个多项式进行测试。",
+        "reason": "Issue 提到他们基于对多种多项式的比较研究提出建议。使用更广泛、更复杂的测试输入可能更能揭示性能差异或验证新 bound 的正确性。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "直接调用 bound 方法并断言固定返回值。",
+        "target_pattern": "调用 bound 方法，并比较其返回值与另一个独立实现的 Knuth-Cohen bound 计算值（或比较其与旧 bound 值的大小关系）。",
+        "reason": "Issue 的核心是 bound 值的改进。测试应验证新实现返回的 bound 值确实（在某些情况下）更优（更小），且不破坏依赖它的算法（如 dmp_zz_wang）。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "R.dup_zz_mignotte_bound(poly) 和 R.dmp_zz_mignotte_bound(poly) 的返回值。",
+        "reason": "Issue 关注 bound 值本身。观测返回值是判断算法是否已替换以及新 bound 值是否合理（例如，是否仍为正整数，是否小于等于旧 bound）的直接方式。"
+      },
+      {
+        "kind": "performance",
+        "expression_hint": "计算 bound 所需的时间（例如使用 timeit），尤其是对于高阶、高密度多项式。",
+        "reason": "Issue 强调“显著改进”，性能是核心诉求之一。观测执行时间可以量化改进效果。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "下游算法（如 test_dmp_zz_wang 中的 nextprime 计算及后续分解结果）是否仍能正确运行。",
+        "reason": "Bound 值的变化可能影响依赖它的算法（如选择质数）。需要确保功能正确性未被破坏。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证新 bound 方法返回的数值对于给定多项式是一个有效的上界（例如，通过某些属性检查，或确保依赖它的 Wang 算法仍能成功分解）。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言 bound 值等于某个具体的魔法数字（如 32）。",
+        "reason": "具体的 bound 值可能随算法改变。更稳定的断言是验证 bound 值的语义属性（如上界性质）或比较新旧 bound 值的关系（新 bound <= 旧 bound）。"
+      },
+      {
+        "assertion_goal": "验证对于一系列测试多项式，新 bound 值不大于旧 bound 值（即至少一样好）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "仅对单个简单多项式进行断言。",
+        "reason": "这直接对应 Issue 中“改进”的诉求，且不依赖于具体的、可能变化的数值。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy.polys.rings 的 ring 和 ZZ，以及可能的多项式构造工具。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在 `sympy/polys/tests/test_factortools.py` 的上下文中运行，以访问某些全局测试变量（如 w_1）。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "Knuth-Cohen bound 的具体实现细节和计算公式未在提供材料中给出。",
+      "新 bound 算法对 `dmp_zz_wang` 等下游算法的具体影响程度未知（是仅质数选择不同，还是可能导致功能错误）。",
+      "除了性能，新 bound 算法是否在所有输入情况下都保持数学上的正确性（即确实是系数的一个上界）需要验证。",
+      "Issue 中提到的“数十个多项式”的具体例子未提供。"
+    ]
+  }
+}

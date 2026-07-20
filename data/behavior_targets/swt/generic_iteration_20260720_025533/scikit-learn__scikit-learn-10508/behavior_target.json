@@ -1,0 +1,288 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "scikit-learn__scikit-learn-10508",
+  "issue_summary": "LabelEncoder 在拟合字符串数据后对空列表进行 transform 时抛出类型转换异常，而拟合数值数据时正常返回空数组。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sklearn.preprocessing.LabelEncoder 和 numpy（用于数组比较）。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能不需要复杂的 fixture，直接实例化 LabelEncoder 即可。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_label_encoder",
+        "test_file": "sklearn/preprocessing/tests/test_label.py",
+        "why_relevant": "它测试了 LabelEncoder 的 transform 和 inverse_transform 方法，包括对数值和字符串数据的拟合。",
+        "reusable_parts": [
+          "LabelEncoder 的导入和实例化",
+          "使用 fit 方法",
+          "使用 transform 方法",
+          "使用 assert_array_equal 进行断言"
+        ],
+        "possible_gap": "该测试没有涵盖对空列表调用 transform 的场景，也没有测试拟合字符串数据后对空列表的转换。"
+      },
+      {
+        "test_name": "test_label_encoder_errors",
+        "test_file": "sklearn/preprocessing/tests/test_label.py",
+        "why_relevant": "它测试了 LabelEncoder 的错误情况，包括对空列表调用 transform 和 inverse_transform。",
+        "reusable_parts": [
+          "LabelEncoder 的导入和实例化",
+          "使用 assert_raises 检查 ValueError",
+          "测试空列表输入的场景"
+        ],
+        "possible_gap": "该测试断言空列表输入会引发 ValueError，但 Issue 显示在某些情况下（拟合数值时）不会引发 ValueError，而是返回空数组。此外，Issue 中的错误是 TypeError 而非 ValueError。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用字符串列表（如 ['a', 'b']）拟合 LabelEncoder 后，对空列表 [] 调用 transform 方法。",
+      "evidence": [
+        "Issue 中显示 le.fit(['a','b']) 后 le.transform([]) 抛出异常。",
+        "Issue 中显示 le.fit([1,2]) 后 le.transform([]) 返回空数组，说明触发条件与拟合数据类型有关。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 transform([]) 时抛出 TypeError: Cannot cast array data from dtype('float64') to dtype('<U32') according to the rule 'safe'。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的完整错误堆栈跟踪显示 TypeError 来自 np.searchsorted(self.classes_, y)。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "LabelEncoder",
+        "kind": "class",
+        "source_path": "sklearn/preprocessing/label.py",
+        "reason": "Issue 的核心是关于 LabelEncoder 类的 transform 方法行为。"
+      },
+      {
+        "name": "LabelEncoder.fit",
+        "kind": "method",
+        "source_path": "sklearn/preprocessing/label.py",
+        "reason": "需要调用 fit 来设置 classes_ 属性，这是触发条件的一部分。"
+      },
+      {
+        "name": "LabelEncoder.transform",
+        "kind": "method",
+        "source_path": "sklearn/preprocessing/label.py",
+        "reason": "Issue 中报告的错误发生在 transform 方法中。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/preprocessing/label.py",
+        "object": "LabelEncoder.transform",
+        "lines": "115-135",
+        "reason": "源码片段 3 显示 transform 方法最后调用 np.searchsorted(self.classes_, y)，Issue 的错误堆栈指向此行。当 y 为空列表且 classes_ 为字符串类型时，np.searchsorted 可能引发类型不匹配。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中 transform 的输入通常是非空列表（如 [0, 1, 4] 或 ['apple', 'orange']）。",
+        "target_pattern": "将 transform 的输入改为空列表 []。",
+        "reason": "Issue 的核心触发条件是使用空列表调用 transform。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "相似测试中拟合的数据通常是数值列表（如 [1, 1, 4, 5, -1, 0]）或混合的字符串列表。",
+        "target_pattern": "将拟合数据改为字符串列表（如 ['a', 'b']）。",
+        "reason": "Issue 表明只有当拟合数据为字符串类型时，对空列表的 transform 才会抛出 TypeError。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "无论拟合时使用数值还是字符串数据，对空列表调用 transform 都应返回一个空数组（例如 array([], dtype=int64)）。",
+      "evidence": [
+        "Issue 描述：'Expected behavior would be that empty arrays are returned in both cases.'",
+        "Issue 中 le.fit([1,2]) 后 le.transform([]) 返回 array([], dtype=int64)，展示了期望行为。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 le.transform([]) 时是否抛出 TypeError 及其消息。",
+        "reason": "Issue 中观察到的错误是 TypeError，这是判断缺陷是否被触发的直接标志。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "le.transform([]) 的返回值类型和内容。",
+        "reason": "期望行为是返回一个空数组，观察返回值可以确认行为是否正确。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "self.classes_ 的数据类型（dtype）。",
+        "reason": "Issue 错误涉及从 float64 到 <U32 的转换，表明 classes_ 的类型可能影响行为。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当 LabelEncoder 拟合字符串数据后，对空列表调用 transform 应返回一个空数组，而不应抛出 TypeError。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的异常消息字符串，因为具体消息可能因环境而异。",
+        "reason": "Issue 的期望行为是返回空数组，因此断言返回值应等于一个空数组（如 np.array([], dtype=int64)）是稳定且与 Issue 对齐的。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "错误是否只发生在拟合纯字符串数据时？混合类型（如数字和字符串）是否也会触发？",
+    "除了空列表，其他空输入（如空元组、空 numpy 数组）是否表现出相同问题？",
+    "错误的确切根源是 np.searchsorted 的调用，还是更早的 y = column_or_1d(y, warn=True) 处理？",
+    "修复后，返回的空数组的 dtype 是否应该始终是 int64，还是取决于拟合数据的类型？"
+  ],
+  "raw": {
+    "issue_summary": "LabelEncoder 在拟合字符串数据后对空列表进行 transform 时抛出类型转换异常，而拟合数值数据时正常返回空数组。",
+    "trigger_condition": {
+      "text": "使用字符串列表（如 ['a', 'b']）拟合 LabelEncoder 后，对空列表 [] 调用 transform 方法。",
+      "evidence": [
+        "Issue 中显示 le.fit(['a','b']) 后 le.transform([]) 抛出异常。",
+        "Issue 中显示 le.fit([1,2]) 后 le.transform([]) 返回空数组，说明触发条件与拟合数据类型有关。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "调用 transform([]) 时抛出 TypeError: Cannot cast array data from dtype('float64') to dtype('<U32') according to the rule 'safe'。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的完整错误堆栈跟踪显示 TypeError 来自 np.searchsorted(self.classes_, y)。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "无论拟合时使用数值还是字符串数据，对空列表调用 transform 都应返回一个空数组（例如 array([], dtype=int64)）。",
+      "evidence": [
+        "Issue 描述：'Expected behavior would be that empty arrays are returned in both cases.'",
+        "Issue 中 le.fit([1,2]) 后 le.transform([]) 返回 array([], dtype=int64)，展示了期望行为。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "LabelEncoder",
+        "kind": "class",
+        "source_path": "sklearn/preprocessing/label.py",
+        "reason": "Issue 的核心是关于 LabelEncoder 类的 transform 方法行为。"
+      },
+      {
+        "name": "LabelEncoder.fit",
+        "kind": "method",
+        "source_path": "sklearn/preprocessing/label.py",
+        "reason": "需要调用 fit 来设置 classes_ 属性，这是触发条件的一部分。"
+      },
+      {
+        "name": "LabelEncoder.transform",
+        "kind": "method",
+        "source_path": "sklearn/preprocessing/label.py",
+        "reason": "Issue 中报告的错误发生在 transform 方法中。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sklearn/preprocessing/label.py",
+        "object": "LabelEncoder.transform",
+        "lines": "115-135",
+        "reason": "源码片段 3 显示 transform 方法最后调用 np.searchsorted(self.classes_, y)，Issue 的错误堆栈指向此行。当 y 为空列表且 classes_ 为字符串类型时，np.searchsorted 可能引发类型不匹配。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_label_encoder",
+        "test_file": "sklearn/preprocessing/tests/test_label.py",
+        "why_relevant": "它测试了 LabelEncoder 的 transform 和 inverse_transform 方法，包括对数值和字符串数据的拟合。",
+        "reusable_parts": [
+          "LabelEncoder 的导入和实例化",
+          "使用 fit 方法",
+          "使用 transform 方法",
+          "使用 assert_array_equal 进行断言"
+        ],
+        "possible_gap": "该测试没有涵盖对空列表调用 transform 的场景，也没有测试拟合字符串数据后对空列表的转换。"
+      },
+      {
+        "test_name": "test_label_encoder_errors",
+        "test_file": "sklearn/preprocessing/tests/test_label.py",
+        "why_relevant": "它测试了 LabelEncoder 的错误情况，包括对空列表调用 transform 和 inverse_transform。",
+        "reusable_parts": [
+          "LabelEncoder 的导入和实例化",
+          "使用 assert_raises 检查 ValueError",
+          "测试空列表输入的场景"
+        ],
+        "possible_gap": "该测试断言空列表输入会引发 ValueError，但 Issue 显示在某些情况下（拟合数值时）不会引发 ValueError，而是返回空数组。此外，Issue 中的错误是 TypeError 而非 ValueError。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中 transform 的输入通常是非空列表（如 [0, 1, 4] 或 ['apple', 'orange']）。",
+        "target_pattern": "将 transform 的输入改为空列表 []。",
+        "reason": "Issue 的核心触发条件是使用空列表调用 transform。",
+        "confidence": "high"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "相似测试中拟合的数据通常是数值列表（如 [1, 1, 4, 5, -1, 0]）或混合的字符串列表。",
+        "target_pattern": "将拟合数据改为字符串列表（如 ['a', 'b']）。",
+        "reason": "Issue 表明只有当拟合数据为字符串类型时，对空列表的 transform 才会抛出 TypeError。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 le.transform([]) 时是否抛出 TypeError 及其消息。",
+        "reason": "Issue 中观察到的错误是 TypeError，这是判断缺陷是否被触发的直接标志。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "le.transform([]) 的返回值类型和内容。",
+        "reason": "期望行为是返回一个空数组，观察返回值可以确认行为是否正确。"
+      },
+      {
+        "kind": "type",
+        "expression_hint": "self.classes_ 的数据类型（dtype）。",
+        "reason": "Issue 错误涉及从 float64 到 <U32 的转换，表明 classes_ 的类型可能影响行为。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当 LabelEncoder 拟合字符串数据后，对空列表调用 transform 应返回一个空数组，而不应抛出 TypeError。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的异常消息字符串，因为具体消息可能因环境而异。",
+        "reason": "Issue 的期望行为是返回空数组，因此断言返回值应等于一个空数组（如 np.array([], dtype=int64)）是稳定且与 Issue 对齐的。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sklearn.preprocessing.LabelEncoder 和 numpy（用于数组比较）。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能不需要复杂的 fixture，直接实例化 LabelEncoder 即可。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "错误是否只发生在拟合纯字符串数据时？混合类型（如数字和字符串）是否也会触发？",
+      "除了空列表，其他空输入（如空元组、空 numpy 数组）是否表现出相同问题？",
+      "错误的确切根源是 np.searchsorted 的调用，还是更早的 y = column_or_1d(y, warn=True) 处理？",
+      "修复后，返回的空数组的 dtype 是否应该始终是 int64，还是取决于拟合数据的类型？"
+    ]
+  }
+}

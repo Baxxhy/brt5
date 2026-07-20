@@ -1,0 +1,242 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-22005",
+  "issue_summary": "solve_poly_system 在处理某些单变量多项式但多变量生成元时，错误地返回了结果，而不是抛出 NotImplementedError。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 solve_poly_system, Poly, symbols (如 x, y)。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在现有的 test_solve_poly_system 函数上下文中运行，或作为独立测试函数。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_solve_poly_system",
+        "test_file": "sympy/solvers/tests/test_polysys.py",
+        "why_relevant": "该测试已经包含了对 solve_poly_system 各种行为的测试，包括对 NotImplementedError 的测试。",
+        "reusable_parts": [
+          "imports (如 from sympy import ...)",
+          "基本的 assert 和 raises 使用模式",
+          "使用 Poly 对象作为输入的测试用例"
+        ],
+        "possible_gap": "现有测试可能没有覆盖到触发缺陷的特定输入模式：一个单变量多项式（变量不是第一个生成元）与多个生成元。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "调用 solve_poly_system，传入一个单变量多项式（如 y - 1）和多个生成元（如 x, y）。",
+      "evidence": [
+        "Issue 中的示例：solve_poly_system((y - 1,), x, y) 返回了 [(1,)]，而预期应抛出 NotImplementedError。",
+        "Issue 中的 diff 显示在 _solve_reduced_system 中增加了 len(gens) == 1 的条件。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "对于某些单变量多项式但多生成元的系统，函数返回了一个解列表，而不是抛出 NotImplementedError 异常。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中显示 solve_poly_system((y - 1,), x, y) 返回 [(1,)]，而 solve_poly_system((x - 1,), x, y) 则正确抛出 NotImplementedError。",
+        "相关测试 1 中已有类似的 NotImplementedError 测试用例。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "solve_poly_system",
+        "kind": "function",
+        "source_path": "sympy/solvers/polysys.py",
+        "reason": "这是 Issue 中报告缺陷的直接入口函数。"
+      },
+      {
+        "name": "_solve_reduced_system",
+        "kind": "function",
+        "source_path": "sympy/solvers/polysys.py",
+        "reason": "Issue 的 diff 显示在此函数中进行了修复，以正确处理单变量多生成元情况。"
+      },
+      {
+        "name": "Poly",
+        "kind": "class",
+        "source_path": "sympy/polys/polytools.py",
+        "reason": "Issue 示例和测试中使用了 Poly 对象作为输入。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/solvers/polysys.py",
+        "object": "_solve_reduced_system",
+        "lines": "240-250",
+        "reason": "Issue 的 diff 在此处修改了条件，从 `if len(univariate) == 1:` 改为 `if len(univariate) == 1 and len(gens) == 1:`，表明原逻辑在处理单变量但多生成元时存在缺陷。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "测试中已有的 NotImplementedError 测试用例，如 solve_poly_system([x**3 - y**3], x, y)。",
+        "target_pattern": "使用单变量多项式但多生成元，且多项式变量不是第一个生成元，例如 solve_poly_system(Poly(y - 1, x, y), (x, y)) 或 solve_poly_system([y - 1], x, y)。",
+        "reason": "原逻辑在 len(univariate) == 1 但 len(gens) > 1 时可能错误地进入处理路径，导致返回结果而非异常。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "对于非零维系统（无限解），包括单变量多项式但多生成元的情况，solve_poly_system 应一致地抛出 NotImplementedError，表明仅支持有限解系统。",
+      "evidence": [
+        "Issue 标题和描述表明应检测无限解请求。",
+        "Issue 中的 diff 在 _solve_reduced_system 中增加了检查，确保单变量情况仅当生成元数量为 1 时才处理。",
+        "相关测试 1 中已有对类似情况抛出 NotImplementedError 的测试。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 solve_poly_system 时是否抛出 NotImplementedError 异常。",
+        "reason": "Issue 的核心是某些输入应抛出异常但未抛出。观测异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "solve_poly_system 的返回值（当未抛出异常时）。",
+        "reason": "对于缺陷案例，函数可能错误地返回了一个解列表，需要检查返回值是否符合预期（应为 None 或抛出异常）。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "对于单变量多项式但多生成元的输入，solve_poly_system 应抛出 NotImplementedError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言返回值的具体内容（如 [(1,)]），因为这是缺陷行为。",
+        "reason": "修复后，此类输入应一致地抛出异常，使用 raises 断言最稳定且与 Issue 语义对齐。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "缺陷是否只存在于使用 Poly 对象作为输入时，还是也存在于使用普通表达式列表时？Issue 示例使用了元组，但 diff 中的测试使用了 Poly。",
+    "_solve_reduced_system 函数内部的具体调用路径和条件，除了已修改的行外，是否还有其他相关逻辑？",
+    "修复后，对于所有单变量多生成元的情况，是否都应抛出 NotImplementedError？还是存在其他合法情况？"
+  ],
+  "raw": {
+    "issue_summary": "solve_poly_system 在处理某些单变量多项式但多变量生成元时，错误地返回了结果，而不是抛出 NotImplementedError。",
+    "trigger_condition": {
+      "text": "调用 solve_poly_system，传入一个单变量多项式（如 y - 1）和多个生成元（如 x, y）。",
+      "evidence": [
+        "Issue 中的示例：solve_poly_system((y - 1,), x, y) 返回了 [(1,)]，而预期应抛出 NotImplementedError。",
+        "Issue 中的 diff 显示在 _solve_reduced_system 中增加了 len(gens) == 1 的条件。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "对于某些单变量多项式但多生成元的系统，函数返回了一个解列表，而不是抛出 NotImplementedError 异常。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中显示 solve_poly_system((y - 1,), x, y) 返回 [(1,)]，而 solve_poly_system((x - 1,), x, y) 则正确抛出 NotImplementedError。",
+        "相关测试 1 中已有类似的 NotImplementedError 测试用例。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "对于非零维系统（无限解），包括单变量多项式但多生成元的情况，solve_poly_system 应一致地抛出 NotImplementedError，表明仅支持有限解系统。",
+      "evidence": [
+        "Issue 标题和描述表明应检测无限解请求。",
+        "Issue 中的 diff 在 _solve_reduced_system 中增加了检查，确保单变量情况仅当生成元数量为 1 时才处理。",
+        "相关测试 1 中已有对类似情况抛出 NotImplementedError 的测试。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "solve_poly_system",
+        "kind": "function",
+        "source_path": "sympy/solvers/polysys.py",
+        "reason": "这是 Issue 中报告缺陷的直接入口函数。"
+      },
+      {
+        "name": "_solve_reduced_system",
+        "kind": "function",
+        "source_path": "sympy/solvers/polysys.py",
+        "reason": "Issue 的 diff 显示在此函数中进行了修复，以正确处理单变量多生成元情况。"
+      },
+      {
+        "name": "Poly",
+        "kind": "class",
+        "source_path": "sympy/polys/polytools.py",
+        "reason": "Issue 示例和测试中使用了 Poly 对象作为输入。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/solvers/polysys.py",
+        "object": "_solve_reduced_system",
+        "lines": "240-250",
+        "reason": "Issue 的 diff 在此处修改了条件，从 `if len(univariate) == 1:` 改为 `if len(univariate) == 1 and len(gens) == 1:`，表明原逻辑在处理单变量但多生成元时存在缺陷。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_solve_poly_system",
+        "test_file": "sympy/solvers/tests/test_polysys.py",
+        "why_relevant": "该测试已经包含了对 solve_poly_system 各种行为的测试，包括对 NotImplementedError 的测试。",
+        "reusable_parts": [
+          "imports (如 from sympy import ...)",
+          "基本的 assert 和 raises 使用模式",
+          "使用 Poly 对象作为输入的测试用例"
+        ],
+        "possible_gap": "现有测试可能没有覆盖到触发缺陷的特定输入模式：一个单变量多项式（变量不是第一个生成元）与多个生成元。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "测试中已有的 NotImplementedError 测试用例，如 solve_poly_system([x**3 - y**3], x, y)。",
+        "target_pattern": "使用单变量多项式但多生成元，且多项式变量不是第一个生成元，例如 solve_poly_system(Poly(y - 1, x, y), (x, y)) 或 solve_poly_system([y - 1], x, y)。",
+        "reason": "原逻辑在 len(univariate) == 1 但 len(gens) > 1 时可能错误地进入处理路径，导致返回结果而非异常。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 solve_poly_system 时是否抛出 NotImplementedError 异常。",
+        "reason": "Issue 的核心是某些输入应抛出异常但未抛出。观测异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "solve_poly_system 的返回值（当未抛出异常时）。",
+        "reason": "对于缺陷案例，函数可能错误地返回了一个解列表，需要检查返回值是否符合预期（应为 None 或抛出异常）。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "对于单变量多项式但多生成元的输入，solve_poly_system 应抛出 NotImplementedError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言返回值的具体内容（如 [(1,)]），因为这是缺陷行为。",
+        "reason": "修复后，此类输入应一致地抛出异常，使用 raises 断言最稳定且与 Issue 语义对齐。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 solve_poly_system, Poly, symbols (如 x, y)。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在现有的 test_solve_poly_system 函数上下文中运行，或作为独立测试函数。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "缺陷是否只存在于使用 Poly 对象作为输入时，还是也存在于使用普通表达式列表时？Issue 示例使用了元组，但 diff 中的测试使用了 Poly。",
+      "_solve_reduced_system 函数内部的具体调用路径和条件，除了已修改的行外，是否还有其他相关逻辑？",
+      "修复后，对于所有单变量多生成元的情况，是否都应抛出 NotImplementedError？还是存在其他合法情况？"
+    ]
+  }
+}

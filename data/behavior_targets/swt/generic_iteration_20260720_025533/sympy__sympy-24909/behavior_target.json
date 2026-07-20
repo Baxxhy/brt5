@@ -1,0 +1,286 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-24909",
+  "issue_summary": "milli 前缀与单位相乘时错误地返回数值 1，而不是带前缀的单位。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要从 sympy.physics.units 导入 milli 和 W 等预定义单位。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在 sympy.physics.units 的上下文中运行，以正确加载单位系统。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_prefix_operations",
+        "test_file": "sympy/physics/units/tests/test_prefixes.py",
+        "why_relevant": "它直接测试了 Prefix 对象之间的乘法（如 m * k == 1）以及 Prefix 与 Quantity 的乘法，与 Issue 场景高度相关。",
+        "reusable_parts": [
+          "导入 Prefix 和 PREFIXES",
+          "断言风格 assert m * k == 1",
+          "构造 Prefix 对象"
+        ],
+        "possible_gap": "该测试主要关注前缀之间的运算以及前缀与自定义 Quantity 的乘法，但没有直接测试 milli 与预定义单位（如 W）的乘法。"
+      },
+      {
+        "test_name": "test_mul_div",
+        "test_file": "sympy/physics/units/tests/test_quantities.py",
+        "why_relevant": "它测试了 Quantity 对象的乘除操作，涉及单位与数值的交互，有助于理解单位系统的乘法行为。",
+        "reusable_parts": [
+          "Quantity 对象的构造和设置",
+          "乘法断言 assert u * 1 == u"
+        ],
+        "possible_gap": "该测试未涉及 Prefix 对象与预定义单位的乘法。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "将 milli 前缀与一个单位（如 W）相乘，例如执行 milli*W 或 W*milli。",
+      "evidence": [
+        "Issue 中用户输入：milli*W == 1 和 W*milli",
+        "相关测试 1 中测试了 m * k == 1 等前缀操作"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "milli*W 返回 True（即等于 1），而 W*milli 返回一个包含 watt 和 Prefix 对象的 Mul 表达式，而不是预期的带前缀单位（如 mW）。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中输出：Out[2]: True 和 Out[3]: watt*Prefix(milli, m, -3, 10)",
+        "用户期望：milli*W should evaluate to milli watts / mW"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "Prefix",
+        "kind": "class",
+        "source_path": "sympy/physics/units/prefixes.py",
+        "reason": "milli 是 Prefix 类的实例，其乘法行为（__mul__）是问题的核心。"
+      },
+      {
+        "name": "__mul__",
+        "kind": "method",
+        "source_path": "sympy/physics/units/prefixes.py",
+        "reason": "Prefix 类的乘法方法决定了 milli*W 的结果。"
+      },
+      {
+        "name": "W",
+        "kind": "global_var",
+        "source_path": "sympy/physics/units/__init__.py",
+        "reason": "Issue 中使用的单位，是乘法操作的另一方。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/physics/units/prefixes.py",
+        "object": "Prefix.__mul__",
+        "lines": "",
+        "reason": "Issue 表明 Prefix 实例与单位相乘时行为异常，可能在该方法中未正确处理与 Unit 类的乘法。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中测试了 m * k（前缀乘前缀）和 dodeca * m（前缀乘自定义 Quantity）。",
+        "target_pattern": "将输入改为 milli * W（前缀乘预定义单位）。",
+        "reason": "Issue 表明缺陷在 milli 与预定义单位（如 W）相乘时触发，而现有测试未覆盖此组合。",
+        "confidence": "high"
+      },
+      {
+        "slot": "operator",
+        "current_pattern": "相关测试 1 中使用了相等比较（==）来检查结果是否为 1 或另一个 Prefix。",
+        "target_pattern": "检查结果是否是一个带前缀的单位（例如 isinstance 或检查其 repr/str 是否包含 'mW'），而不是数值 1。",
+        "reason": "Issue 的预期行为是生成带前缀的单位，而不是数值 1。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "milli 前缀与单位相乘应生成一个带该前缀的派生单位（例如 milli*W 应得到毫瓦单位 mW），而不是数值 1 或未简化的乘积表达式。",
+      "evidence": [
+        "Issue 中用户期望：milli*W should evaluate to milli watts / mW",
+        "源码片段 3 中 Prefix 类的文档说明：Prefixes are used to create derived units from a given unit."
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "milli*W 的结果值及其类型。",
+        "reason": "Issue 显示错误结果是数值 1，正确结果应是一个单位对象。"
+      },
+      {
+        "kind": "repr",
+        "expression_hint": "repr(milli*W) 和 repr(W*milli)。",
+        "reason": "Issue 中显示了 W*milli 的 repr 输出，可以观察乘积表达式是否被正确简化。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "milli*W 不应等于 1，而应是一个表示毫瓦的单位对象。",
+        "preferred_assertion_style": "not_equals",
+        "avoid": "避免断言完整的 repr 字符串相等，因为具体表示可能变化。",
+        "reason": "Issue 的核心错误是结果错误地等于 1，修复后应不相等。"
+      },
+      {
+        "assertion_goal": "milli*W 的结果应是一个 Quantity 或 Mul 对象，且其 scale_factor 或组成部分应包含 milli 前缀。",
+        "preferred_assertion_style": "isinstance",
+        "avoid": "避免断言具体的、可能变化的内部属性值。",
+        "reason": "这能稳定地验证结果是一个单位而非标量。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "缺陷是否只影响 milli 前缀，还是影响所有前缀与单位的乘法。",
+    "W*milli 返回的 watt*Prefix(...) 表达式是否是预期的中间状态，还是本身就是错误的。",
+    "修复后的确切输出形式（例如是 Quantity('mW') 还是 Mul(milli, W) 的某种简化形式）。"
+  ],
+  "raw": {
+    "issue_summary": "milli 前缀与单位相乘时错误地返回数值 1，而不是带前缀的单位。",
+    "trigger_condition": {
+      "text": "将 milli 前缀与一个单位（如 W）相乘，例如执行 milli*W 或 W*milli。",
+      "evidence": [
+        "Issue 中用户输入：milli*W == 1 和 W*milli",
+        "相关测试 1 中测试了 m * k == 1 等前缀操作"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "milli*W 返回 True（即等于 1），而 W*milli 返回一个包含 watt 和 Prefix 对象的 Mul 表达式，而不是预期的带前缀单位（如 mW）。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中输出：Out[2]: True 和 Out[3]: watt*Prefix(milli, m, -3, 10)",
+        "用户期望：milli*W should evaluate to milli watts / mW"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "milli 前缀与单位相乘应生成一个带该前缀的派生单位（例如 milli*W 应得到毫瓦单位 mW），而不是数值 1 或未简化的乘积表达式。",
+      "evidence": [
+        "Issue 中用户期望：milli*W should evaluate to milli watts / mW",
+        "源码片段 3 中 Prefix 类的文档说明：Prefixes are used to create derived units from a given unit."
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "Prefix",
+        "kind": "class",
+        "source_path": "sympy/physics/units/prefixes.py",
+        "reason": "milli 是 Prefix 类的实例，其乘法行为（__mul__）是问题的核心。"
+      },
+      {
+        "name": "__mul__",
+        "kind": "method",
+        "source_path": "sympy/physics/units/prefixes.py",
+        "reason": "Prefix 类的乘法方法决定了 milli*W 的结果。"
+      },
+      {
+        "name": "W",
+        "kind": "global_var",
+        "source_path": "sympy/physics/units/__init__.py",
+        "reason": "Issue 中使用的单位，是乘法操作的另一方。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/physics/units/prefixes.py",
+        "object": "Prefix.__mul__",
+        "lines": "",
+        "reason": "Issue 表明 Prefix 实例与单位相乘时行为异常，可能在该方法中未正确处理与 Unit 类的乘法。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_prefix_operations",
+        "test_file": "sympy/physics/units/tests/test_prefixes.py",
+        "why_relevant": "它直接测试了 Prefix 对象之间的乘法（如 m * k == 1）以及 Prefix 与 Quantity 的乘法，与 Issue 场景高度相关。",
+        "reusable_parts": [
+          "导入 Prefix 和 PREFIXES",
+          "断言风格 assert m * k == 1",
+          "构造 Prefix 对象"
+        ],
+        "possible_gap": "该测试主要关注前缀之间的运算以及前缀与自定义 Quantity 的乘法，但没有直接测试 milli 与预定义单位（如 W）的乘法。"
+      },
+      {
+        "test_name": "test_mul_div",
+        "test_file": "sympy/physics/units/tests/test_quantities.py",
+        "why_relevant": "它测试了 Quantity 对象的乘除操作，涉及单位与数值的交互，有助于理解单位系统的乘法行为。",
+        "reusable_parts": [
+          "Quantity 对象的构造和设置",
+          "乘法断言 assert u * 1 == u"
+        ],
+        "possible_gap": "该测试未涉及 Prefix 对象与预定义单位的乘法。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中测试了 m * k（前缀乘前缀）和 dodeca * m（前缀乘自定义 Quantity）。",
+        "target_pattern": "将输入改为 milli * W（前缀乘预定义单位）。",
+        "reason": "Issue 表明缺陷在 milli 与预定义单位（如 W）相乘时触发，而现有测试未覆盖此组合。",
+        "confidence": "high"
+      },
+      {
+        "slot": "operator",
+        "current_pattern": "相关测试 1 中使用了相等比较（==）来检查结果是否为 1 或另一个 Prefix。",
+        "target_pattern": "检查结果是否是一个带前缀的单位（例如 isinstance 或检查其 repr/str 是否包含 'mW'），而不是数值 1。",
+        "reason": "Issue 的预期行为是生成带前缀的单位，而不是数值 1。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "milli*W 的结果值及其类型。",
+        "reason": "Issue 显示错误结果是数值 1，正确结果应是一个单位对象。"
+      },
+      {
+        "kind": "repr",
+        "expression_hint": "repr(milli*W) 和 repr(W*milli)。",
+        "reason": "Issue 中显示了 W*milli 的 repr 输出，可以观察乘积表达式是否被正确简化。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "milli*W 不应等于 1，而应是一个表示毫瓦的单位对象。",
+        "preferred_assertion_style": "not_equals",
+        "avoid": "避免断言完整的 repr 字符串相等，因为具体表示可能变化。",
+        "reason": "Issue 的核心错误是结果错误地等于 1，修复后应不相等。"
+      },
+      {
+        "assertion_goal": "milli*W 的结果应是一个 Quantity 或 Mul 对象，且其 scale_factor 或组成部分应包含 milli 前缀。",
+        "preferred_assertion_style": "isinstance",
+        "avoid": "避免断言具体的、可能变化的内部属性值。",
+        "reason": "这能稳定地验证结果是一个单位而非标量。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要从 sympy.physics.units 导入 milli 和 W 等预定义单位。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在 sympy.physics.units 的上下文中运行，以正确加载单位系统。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "缺陷是否只影响 milli 前缀，还是影响所有前缀与单位的乘法。",
+      "W*milli 返回的 watt*Prefix(...) 表达式是否是预期的中间状态，还是本身就是错误的。",
+      "修复后的确切输出形式（例如是 Quantity('mW') 还是 Mul(milli, W) 的某种简化形式）。"
+    ]
+  }
+}

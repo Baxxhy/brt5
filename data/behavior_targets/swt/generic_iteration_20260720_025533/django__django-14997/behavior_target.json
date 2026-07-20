@@ -1,0 +1,402 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-14997",
+  "issue_summary": "在 SQLite 上使用包含 F 表达式的 UniqueConstraint 后，执行 AlterField 迁移操作时，因重建表生成错误的索引表达式而引发 OperationalError。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要使用 TransactionTestCase 或类似的测试基类来支持数据库操作。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试需要配置 Django 使用 SQLite 内存数据库（或其他 SQLite 连接）。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 isolate_apps 来避免模型冲突。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      },
+      {
+        "hint": "需要构建包含两个迁移（AddConstraint 和 AlterField）的迁移图或状态来模拟 Issue 场景。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_func_unique_constraint_unsupported",
+        "test_file": "tests/schema/tests.py",
+        "why_relevant": "它测试了在不支持表达式索引的数据库上，使用 F 表达式的 UniqueConstraint 的行为（被忽略）。",
+        "reusable_parts": [
+          "使用 connection.schema_editor() 的上下文管理器。",
+          "创建模型、添加约束的模式。",
+          "使用 UniqueConstraint(F('name'), ...) 的构造方式。",
+          "TransactionTestCase 基类。"
+        ],
+        "possible_gap": "该测试只验证了约束被忽略（返回 None），没有测试后续对模型字段进行修改（AlterField）并触发表重建的场景。"
+      },
+      {
+        "test_name": "test_unique_no_unnecessary_fk_drops",
+        "test_file": "tests/schema/tests.py",
+        "why_relevant": "它测试了在具有唯一约束的字段上执行 alter_field 操作，并验证了 SQL 执行次数。",
+        "reusable_parts": [
+          "使用 editor.alter_field 的调用模式。",
+          "使用 CharField 并修改 max_length 的字段变更场景。",
+          "使用 assertLogs 来检查执行语句。",
+          "isolate_apps 装饰器。"
+        ],
+        "possible_gap": "该测试使用的唯一约束是简单的 `unique=True`，而不是使用 F 表达式的 UniqueConstraint，且没有涉及 SQLite 特定的表重建逻辑。"
+      },
+      {
+        "test_name": "test_add_partial_unique_constraint",
+        "test_file": "tests/migrations/test_operations.py",
+        "why_relevant": "它测试了通过迁移操作 AddConstraint 添加 UniqueConstraint，并执行 database_forwards。",
+        "reusable_parts": [
+          "使用 migrations.AddConstraint 操作。",
+          "使用 operation.database_forwards 执行数据库变更。",
+          "使用 project_state 和 new_state 的状态管理。",
+          "OperationTestBase 测试基类。"
+        ],
+        "possible_gap": "该测试的约束是部分唯一约束，不涉及 F 表达式，且没有测试后续的 AlterField 操作。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "在 SQLite 数据库上，对一个已定义了包含 F 表达式（如 F('name')）的 UniqueConstraint 的模型，执行一个修改字段（如 max_length）的 AlterField 迁移操作。",
+      "evidence": [
+        "Issue 中描述了包含 F('name') 和 F('value') 的 UniqueConstraint 的模型定义和迁移文件。",
+        "Issue 中执行 `manage.py migrate` 应用第二个迁移（AlterField）时出错。",
+        "相关测试 2 展示了使用 F('name') 创建 UniqueConstraint 的场景。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "执行迁移时抛出 sqlite3.OperationalError: the \".\" operator prohibited in index expressions，最终导致 django.db.utils.OperationalError。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中完整的异常堆栈跟踪显示此错误。",
+        "相关测试 5 在类似场景下预期会抛出 DatabaseError。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "UniqueConstraint",
+        "kind": "class",
+        "source_path": "",
+        "reason": "Issue 中用于定义约束的核心类。"
+      },
+      {
+        "name": "AlterField",
+        "kind": "class",
+        "source_path": "django/db/migrations/operations/fields.py",
+        "reason": "触发错误的迁移操作。"
+      },
+      {
+        "name": "schema_editor._remake_table",
+        "kind": "method",
+        "source_path": "django/db/backends/sqlite3/schema.py",
+        "reason": "Issue 堆栈跟踪显示错误发生在 _remake_table 方法中。"
+      },
+      {
+        "name": "F",
+        "kind": "class",
+        "source_path": "",
+        "reason": "Issue 中 UniqueConstraint 使用了 F 表达式。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/backends/sqlite3/schema.py",
+        "object": "_remake_table",
+        "lines": "303",
+        "reason": "Issue 堆栈跟踪显示错误发生在 _remake_table 方法中执行 SQL 时。"
+      },
+      {
+        "path": "django/db/backends/sqlite3/schema.py",
+        "object": "_alter_field",
+        "lines": "362",
+        "reason": "Issue 堆栈跟踪显示 _alter_field 调用了 _remake_table。"
+      },
+      {
+        "path": "django/db/migrations/operations/fields.py",
+        "object": "AlterField.database_forwards",
+        "lines": "",
+        "reason": "这是触发表重建的迁移操作的入口点。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 2 中，UniqueConstraint 使用 F('name')，但仅测试添加/移除约束本身。",
+        "target_pattern": "在创建并添加了使用 F 表达式的 UniqueConstraint 后，紧接着对同一模型的某个字段执行 AlterField 操作（例如修改 max_length）。",
+        "reason": "Issue 表明，仅当在已有 F 表达式约束的模型上执行字段修改（触发表重建）时，才会暴露 SQLite 索引表达式错误。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "相关测试通常在通用数据库抽象上运行，或通过 @skipIfDBFeature/@skipUnlessDBFeature 控制。",
+        "target_pattern": "测试环境必须配置为使用 SQLite 数据库后端。",
+        "reason": "错误是 SQLite 特有的（“the \".\" operator prohibited in index expressions”），在其他数据库上可能不会发生或表现不同。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "测试通常直接调用 schema_editor 方法或单个迁移操作的 database_forwards。",
+        "target_pattern": "需要模拟完整的迁移执行流程：先应用包含 AddConstraint 的迁移，再应用包含 AlterField 的迁移。",
+        "reason": "Issue 中的错误是在应用第二个迁移（AlterField）时发生的，这依赖于第一个迁移建立的状态（已存在的约束）。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "在 SQLite 上，即使模型包含使用 F 表达式的 UniqueConstraint，执行 AlterField 迁移也应成功完成，不引发 OperationalError。",
+      "evidence": [
+        "Issue 标题和描述暗示这是一个需要修复的崩溃问题。",
+        "相关测试 2 表明在不支持表达式索引的数据库上，UniqueConstraint 应被忽略（add_constraint 返回 None）。",
+        "相关测试 4 展示了成功修改具有唯一约束字段的场景。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "在执行迁移操作（如 operation.database_forwards 或 editor.alter_field）时捕获的异常。",
+        "reason": "Issue 的核心症状是 OperationalError，观测是否抛出此异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "sql",
+        "expression_hint": "在 _remake_table 或相关方法中，由 schema_editor.execute(sql) 执行的 SQL 语句。",
+        "reason": "错误信息指向索引表达式中的 '.' 操作符，观测生成的 SQL 语句可以确认错误的来源。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "迁移前后模型的状态，特别是约束的定义（是否包含 F 表达式）。",
+        "reason": "需要确认触发条件（F 表达式约束）在迁移状态中是否正确存在。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "在 SQLite 上，对带有 F 表达式 UniqueConstraint 的模型执行 AlterField 迁移不应引发 OperationalError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串，因为具体措辞可能因 SQLite 版本而异。",
+        "reason": "修复后，该操作应成功完成（不抛出异常）。因此，测试应断言不引发特定异常（例如，使用 assertNotRaises 或验证迁移成功）。但当前缺陷表现为会引发异常，所以初始复现测试可能使用 assertRaises(OperationalError)。注意：最终修复后的测试目标应是不引发异常。"
+      },
+      {
+        "assertion_goal": "迁移操作成功执行，模型字段被正确修改。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言底层具体的、可能变化的 SQL 语句。",
+        "reason": "更稳定的断言是验证迁移的最终效果，例如字段的 max_length 是否已更新，或者是否可以创建符合新约束的模型实例。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "F 表达式在 UniqueConstraint 中是如何被序列化并最终导致 SQL 索引表达式包含非法 '.' 操作符的精确机制。",
+    "除了 SQLite，其他不支持表达式索引的数据库（如 MySQL）是否会有不同的行为或错误。",
+    "_remake_table 方法中生成错误 SQL 的确切代码位置和逻辑。",
+    "修复方案是应该在 SQLite 上完全忽略此类约束（如 test_func_unique_constraint_unsupported 所示），还是应该以其他方式（例如转换为普通列约束）处理它们。"
+  ],
+  "raw": {
+    "issue_summary": "在 SQLite 上使用包含 F 表达式的 UniqueConstraint 后，执行 AlterField 迁移操作时，因重建表生成错误的索引表达式而引发 OperationalError。",
+    "trigger_condition": {
+      "text": "在 SQLite 数据库上，对一个已定义了包含 F 表达式（如 F('name')）的 UniqueConstraint 的模型，执行一个修改字段（如 max_length）的 AlterField 迁移操作。",
+      "evidence": [
+        "Issue 中描述了包含 F('name') 和 F('value') 的 UniqueConstraint 的模型定义和迁移文件。",
+        "Issue 中执行 `manage.py migrate` 应用第二个迁移（AlterField）时出错。",
+        "相关测试 2 展示了使用 F('name') 创建 UniqueConstraint 的场景。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "执行迁移时抛出 sqlite3.OperationalError: the \".\" operator prohibited in index expressions，最终导致 django.db.utils.OperationalError。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中完整的异常堆栈跟踪显示此错误。",
+        "相关测试 5 在类似场景下预期会抛出 DatabaseError。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "在 SQLite 上，即使模型包含使用 F 表达式的 UniqueConstraint，执行 AlterField 迁移也应成功完成，不引发 OperationalError。",
+      "evidence": [
+        "Issue 标题和描述暗示这是一个需要修复的崩溃问题。",
+        "相关测试 2 表明在不支持表达式索引的数据库上，UniqueConstraint 应被忽略（add_constraint 返回 None）。",
+        "相关测试 4 展示了成功修改具有唯一约束字段的场景。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "UniqueConstraint",
+        "kind": "class",
+        "source_path": "",
+        "reason": "Issue 中用于定义约束的核心类。"
+      },
+      {
+        "name": "AlterField",
+        "kind": "class",
+        "source_path": "django/db/migrations/operations/fields.py",
+        "reason": "触发错误的迁移操作。"
+      },
+      {
+        "name": "schema_editor._remake_table",
+        "kind": "method",
+        "source_path": "django/db/backends/sqlite3/schema.py",
+        "reason": "Issue 堆栈跟踪显示错误发生在 _remake_table 方法中。"
+      },
+      {
+        "name": "F",
+        "kind": "class",
+        "source_path": "",
+        "reason": "Issue 中 UniqueConstraint 使用了 F 表达式。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/backends/sqlite3/schema.py",
+        "object": "_remake_table",
+        "lines": "303",
+        "reason": "Issue 堆栈跟踪显示错误发生在 _remake_table 方法中执行 SQL 时。"
+      },
+      {
+        "path": "django/db/backends/sqlite3/schema.py",
+        "object": "_alter_field",
+        "lines": "362",
+        "reason": "Issue 堆栈跟踪显示 _alter_field 调用了 _remake_table。"
+      },
+      {
+        "path": "django/db/migrations/operations/fields.py",
+        "object": "AlterField.database_forwards",
+        "lines": "",
+        "reason": "这是触发表重建的迁移操作的入口点。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_func_unique_constraint_unsupported",
+        "test_file": "tests/schema/tests.py",
+        "why_relevant": "它测试了在不支持表达式索引的数据库上，使用 F 表达式的 UniqueConstraint 的行为（被忽略）。",
+        "reusable_parts": [
+          "使用 connection.schema_editor() 的上下文管理器。",
+          "创建模型、添加约束的模式。",
+          "使用 UniqueConstraint(F('name'), ...) 的构造方式。",
+          "TransactionTestCase 基类。"
+        ],
+        "possible_gap": "该测试只验证了约束被忽略（返回 None），没有测试后续对模型字段进行修改（AlterField）并触发表重建的场景。"
+      },
+      {
+        "test_name": "test_unique_no_unnecessary_fk_drops",
+        "test_file": "tests/schema/tests.py",
+        "why_relevant": "它测试了在具有唯一约束的字段上执行 alter_field 操作，并验证了 SQL 执行次数。",
+        "reusable_parts": [
+          "使用 editor.alter_field 的调用模式。",
+          "使用 CharField 并修改 max_length 的字段变更场景。",
+          "使用 assertLogs 来检查执行语句。",
+          "isolate_apps 装饰器。"
+        ],
+        "possible_gap": "该测试使用的唯一约束是简单的 `unique=True`，而不是使用 F 表达式的 UniqueConstraint，且没有涉及 SQLite 特定的表重建逻辑。"
+      },
+      {
+        "test_name": "test_add_partial_unique_constraint",
+        "test_file": "tests/migrations/test_operations.py",
+        "why_relevant": "它测试了通过迁移操作 AddConstraint 添加 UniqueConstraint，并执行 database_forwards。",
+        "reusable_parts": [
+          "使用 migrations.AddConstraint 操作。",
+          "使用 operation.database_forwards 执行数据库变更。",
+          "使用 project_state 和 new_state 的状态管理。",
+          "OperationTestBase 测试基类。"
+        ],
+        "possible_gap": "该测试的约束是部分唯一约束，不涉及 F 表达式，且没有测试后续的 AlterField 操作。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 2 中，UniqueConstraint 使用 F('name')，但仅测试添加/移除约束本身。",
+        "target_pattern": "在创建并添加了使用 F 表达式的 UniqueConstraint 后，紧接着对同一模型的某个字段执行 AlterField 操作（例如修改 max_length）。",
+        "reason": "Issue 表明，仅当在已有 F 表达式约束的模型上执行字段修改（触发表重建）时，才会暴露 SQLite 索引表达式错误。",
+        "confidence": "high"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "相关测试通常在通用数据库抽象上运行，或通过 @skipIfDBFeature/@skipUnlessDBFeature 控制。",
+        "target_pattern": "测试环境必须配置为使用 SQLite 数据库后端。",
+        "reason": "错误是 SQLite 特有的（“the \".\" operator prohibited in index expressions”），在其他数据库上可能不会发生或表现不同。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "测试通常直接调用 schema_editor 方法或单个迁移操作的 database_forwards。",
+        "target_pattern": "需要模拟完整的迁移执行流程：先应用包含 AddConstraint 的迁移，再应用包含 AlterField 的迁移。",
+        "reason": "Issue 中的错误是在应用第二个迁移（AlterField）时发生的，这依赖于第一个迁移建立的状态（已存在的约束）。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "在执行迁移操作（如 operation.database_forwards 或 editor.alter_field）时捕获的异常。",
+        "reason": "Issue 的核心症状是 OperationalError，观测是否抛出此异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "sql",
+        "expression_hint": "在 _remake_table 或相关方法中，由 schema_editor.execute(sql) 执行的 SQL 语句。",
+        "reason": "错误信息指向索引表达式中的 '.' 操作符，观测生成的 SQL 语句可以确认错误的来源。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "迁移前后模型的状态，特别是约束的定义（是否包含 F 表达式）。",
+        "reason": "需要确认触发条件（F 表达式约束）在迁移状态中是否正确存在。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "在 SQLite 上，对带有 F 表达式 UniqueConstraint 的模型执行 AlterField 迁移不应引发 OperationalError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整的异常消息字符串，因为具体措辞可能因 SQLite 版本而异。",
+        "reason": "修复后，该操作应成功完成（不抛出异常）。因此，测试应断言不引发特定异常（例如，使用 assertNotRaises 或验证迁移成功）。但当前缺陷表现为会引发异常，所以初始复现测试可能使用 assertRaises(OperationalError)。注意：最终修复后的测试目标应是不引发异常。"
+      },
+      {
+        "assertion_goal": "迁移操作成功执行，模型字段被正确修改。",
+        "preferred_assertion_style": "before_after_relation",
+        "avoid": "断言底层具体的、可能变化的 SQL 语句。",
+        "reason": "更稳定的断言是验证迁移的最终效果，例如字段的 max_length 是否已更新，或者是否可以创建符合新约束的模型实例。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要使用 TransactionTestCase 或类似的测试基类来支持数据库操作。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试需要配置 Django 使用 SQLite 内存数据库（或其他 SQLite 连接）。",
+        "source": "issue",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用 isolate_apps 来避免模型冲突。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      },
+      {
+        "hint": "需要构建包含两个迁移（AddConstraint 和 AlterField）的迁移图或状态来模拟 Issue 场景。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "F 表达式在 UniqueConstraint 中是如何被序列化并最终导致 SQL 索引表达式包含非法 '.' 操作符的精确机制。",
+      "除了 SQLite，其他不支持表达式索引的数据库（如 MySQL）是否会有不同的行为或错误。",
+      "_remake_table 方法中生成错误 SQL 的确切代码位置和逻辑。",
+      "修复方案是应该在 SQLite 上完全忽略此类约束（如 test_func_unique_constraint_unsupported 所示），还是应该以其他方式（例如转换为普通列约束）处理它们。"
+    ]
+  }
+}

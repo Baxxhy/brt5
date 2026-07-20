@@ -1,0 +1,330 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-11400",
+  "issue_summary": "ccode函数无法正确处理sinc函数，返回不支持的错误信息，而不是将其转换为Piecewise表达式。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要从sympy导入ccode, sinc, sin, Piecewise, Ne, Symbol。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要定义符号变量，如x或theta。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_ccode_functions",
+        "test_file": "sympy/printing/tests/test_ccode.py",
+        "why_relevant": "测试了ccode对基本函数（如sin）的处理，展示了ccode测试的基本模式。",
+        "reusable_parts": [
+          "imports",
+          "ccode调用模式",
+          "assert风格"
+        ],
+        "possible_gap": "该测试只测试了sin**cos，没有测试sinc函数，也没有测试函数重写逻辑。"
+      },
+      {
+        "test_name": "test_ccode_Piecewise",
+        "test_file": "sympy/printing/tests/test_ccode.py",
+        "why_relevant": "测试了ccode对Piecewise表达式的处理，这正是sinc函数期望被转换成的形式。",
+        "reusable_parts": [
+          "Piecewise对象的构造",
+          "ccode对三元运算符的生成",
+          "assert字符串比较模式"
+        ],
+        "possible_gap": "该测试没有涉及sinc函数，也没有测试从sinc到Piecewise的自动转换。"
+      },
+      {
+        "test_name": "test_sinc",
+        "test_file": "sympy/functions/elementary/tests/test_trigonometric.py",
+        "why_relevant": "测试了sinc函数的各种属性，包括其rewrite为sin(x)/x。",
+        "reusable_parts": [
+          "sinc(x)的导入和构造",
+          "sinc.rewrite(sin)的断言"
+        ],
+        "possible_gap": "该测试是数学功能测试，不涉及代码生成（ccode）。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "调用ccode(sinc(x))，其中x是符号变量。",
+      "evidence": [
+        "Issue中显示：ccode(sinc(x)) 返回 '// Not supported in C:\\n// sinc\\nsinc(x)'",
+        "Issue中提供了ccode(Piecewise((sin(theta)/theta, Ne(theta, 0)), (1, True))) 作为期望输出的示例"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "ccode(sinc(x)) 返回了表示不支持的注释字符串，而不是有效的C代码表达式。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue输出：'// Not supported in C:\\n// sinc\\nsinc(x)'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "ccode",
+        "kind": "function",
+        "source_path": "sympy/printing/ccode.py",
+        "reason": "Issue直接调用的函数，负责将SymPy表达式转换为C代码。"
+      },
+      {
+        "name": "sinc",
+        "kind": "class",
+        "source_path": "sympy/functions/elementary/trigonometric.py",
+        "reason": "Issue中无法被ccode正确处理的函数。"
+      },
+      {
+        "name": "Piecewise",
+        "kind": "class",
+        "source_path": "sympy/functions/elementary/piecewise.py",
+        "reason": "sinc函数在C中无直接对应，可能应被重写为Piecewise表达式后再由ccode处理。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/printing/ccode.py",
+        "object": "ccode",
+        "lines": "",
+        "reason": "ccode函数可能缺少对sinc函数的处理规则，导致其返回不支持的信息。"
+      },
+      {
+        "path": "sympy/functions/elementary/trigonometric.py",
+        "object": "sinc",
+        "lines": "1620-1700",
+        "reason": "sinc类可能缺少_`eval_rewrite_as_Piecewise`方法或ccode可识别的重写规则。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "test_ccode_functions中使用sin(x) ** cos(x)作为输入。",
+        "target_pattern": "使用sinc(x)作为输入。",
+        "reason": "sinc是ccode当前不支持的函数，替换输入可能触发缺陷路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "test_ccode_Piecewise中直接构造Piecewise对象作为输入。",
+        "target_pattern": "使用sinc(x)作为输入，期望ccode内部将其重写为Piecewise。",
+        "reason": "sinc(x)在数学上等价于Piecewise((sin(x)/x, Ne(x, 0)), (1, True))，但ccode可能没有实现此重写。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "ccode(sinc(x)) 应该返回一个有效的C代码表达式，例如将sinc(x)转换为Piecewise((sin(x)/x, Ne(x, 0)), (1, True))的C三元运算符表示。",
+      "evidence": [
+        "Issue中用户指出：'I don't think `math.h` has `sinc`, but it could print'，并给出了ccode(Piecewise(...))的示例输出",
+        "相关测试2显示ccode可以正确处理Piecewise表达式，生成三元运算符"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "ccode(sinc(x))的返回值字符串。",
+        "reason": "Issue的核心是返回值错误，观察返回值是否包含'Not supported'或正确的C代码。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "sinc(x).rewrite(sin)的结果。",
+        "reason": "确认sinc在数学上是否能正确重写为sin(x)/x，这是生成C代码的基础。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "ccode(sinc(x).rewrite(Piecewise(...)))的返回值。",
+        "reason": "如果手动重写后ccode能正确输出，则问题在于ccode没有自动应用此重写。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "ccode(sinc(x))的返回值不应包含'Not supported'注释，而应是一个有效的C表达式。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "断言完整的输出字符串，因为具体的C表达式格式可能变化。",
+        "reason": "Issue表明当前输出包含错误注释，修复后应不再出现。"
+      },
+      {
+        "assertion_goal": "ccode(sinc(x))的返回值应包含三元运算符'?'和':'，因为sinc在x=0处有特殊定义。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的Piecewise结构字符串。",
+        "reason": "sinc的定义需要条件判断，C中通常用三元运算符实现，这与Piecewise的转换一致。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "sinc函数是否已有_`eval_rewrite_as_Piecewise`方法或其他ccode可用的重写规则。",
+    "ccode函数内部是否有针对sinc的特殊处理分支，或者完全依赖通用的函数处理机制。",
+    "修复后ccode(sinc(x))的确切输出字符串格式，例如三元运算符的换行和缩进细节。",
+    "是否还有其他类似sinc的函数也存在ccode不支持的问题。"
+  ],
+  "raw": {
+    "issue_summary": "ccode函数无法正确处理sinc函数，返回不支持的错误信息，而不是将其转换为Piecewise表达式。",
+    "trigger_condition": {
+      "text": "调用ccode(sinc(x))，其中x是符号变量。",
+      "evidence": [
+        "Issue中显示：ccode(sinc(x)) 返回 '// Not supported in C:\\n// sinc\\nsinc(x)'",
+        "Issue中提供了ccode(Piecewise((sin(theta)/theta, Ne(theta, 0)), (1, True))) 作为期望输出的示例"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "ccode(sinc(x)) 返回了表示不支持的注释字符串，而不是有效的C代码表达式。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue输出：'// Not supported in C:\\n// sinc\\nsinc(x)'"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "ccode(sinc(x)) 应该返回一个有效的C代码表达式，例如将sinc(x)转换为Piecewise((sin(x)/x, Ne(x, 0)), (1, True))的C三元运算符表示。",
+      "evidence": [
+        "Issue中用户指出：'I don't think `math.h` has `sinc`, but it could print'，并给出了ccode(Piecewise(...))的示例输出",
+        "相关测试2显示ccode可以正确处理Piecewise表达式，生成三元运算符"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "ccode",
+        "kind": "function",
+        "source_path": "sympy/printing/ccode.py",
+        "reason": "Issue直接调用的函数，负责将SymPy表达式转换为C代码。"
+      },
+      {
+        "name": "sinc",
+        "kind": "class",
+        "source_path": "sympy/functions/elementary/trigonometric.py",
+        "reason": "Issue中无法被ccode正确处理的函数。"
+      },
+      {
+        "name": "Piecewise",
+        "kind": "class",
+        "source_path": "sympy/functions/elementary/piecewise.py",
+        "reason": "sinc函数在C中无直接对应，可能应被重写为Piecewise表达式后再由ccode处理。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/printing/ccode.py",
+        "object": "ccode",
+        "lines": "",
+        "reason": "ccode函数可能缺少对sinc函数的处理规则，导致其返回不支持的信息。"
+      },
+      {
+        "path": "sympy/functions/elementary/trigonometric.py",
+        "object": "sinc",
+        "lines": "1620-1700",
+        "reason": "sinc类可能缺少_`eval_rewrite_as_Piecewise`方法或ccode可识别的重写规则。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_ccode_functions",
+        "test_file": "sympy/printing/tests/test_ccode.py",
+        "why_relevant": "测试了ccode对基本函数（如sin）的处理，展示了ccode测试的基本模式。",
+        "reusable_parts": [
+          "imports",
+          "ccode调用模式",
+          "assert风格"
+        ],
+        "possible_gap": "该测试只测试了sin**cos，没有测试sinc函数，也没有测试函数重写逻辑。"
+      },
+      {
+        "test_name": "test_ccode_Piecewise",
+        "test_file": "sympy/printing/tests/test_ccode.py",
+        "why_relevant": "测试了ccode对Piecewise表达式的处理，这正是sinc函数期望被转换成的形式。",
+        "reusable_parts": [
+          "Piecewise对象的构造",
+          "ccode对三元运算符的生成",
+          "assert字符串比较模式"
+        ],
+        "possible_gap": "该测试没有涉及sinc函数，也没有测试从sinc到Piecewise的自动转换。"
+      },
+      {
+        "test_name": "test_sinc",
+        "test_file": "sympy/functions/elementary/tests/test_trigonometric.py",
+        "why_relevant": "测试了sinc函数的各种属性，包括其rewrite为sin(x)/x。",
+        "reusable_parts": [
+          "sinc(x)的导入和构造",
+          "sinc.rewrite(sin)的断言"
+        ],
+        "possible_gap": "该测试是数学功能测试，不涉及代码生成（ccode）。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "test_ccode_functions中使用sin(x) ** cos(x)作为输入。",
+        "target_pattern": "使用sinc(x)作为输入。",
+        "reason": "sinc是ccode当前不支持的函数，替换输入可能触发缺陷路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "test_ccode_Piecewise中直接构造Piecewise对象作为输入。",
+        "target_pattern": "使用sinc(x)作为输入，期望ccode内部将其重写为Piecewise。",
+        "reason": "sinc(x)在数学上等价于Piecewise((sin(x)/x, Ne(x, 0)), (1, True))，但ccode可能没有实现此重写。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "ccode(sinc(x))的返回值字符串。",
+        "reason": "Issue的核心是返回值错误，观察返回值是否包含'Not supported'或正确的C代码。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "sinc(x).rewrite(sin)的结果。",
+        "reason": "确认sinc在数学上是否能正确重写为sin(x)/x，这是生成C代码的基础。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "ccode(sinc(x).rewrite(Piecewise(...)))的返回值。",
+        "reason": "如果手动重写后ccode能正确输出，则问题在于ccode没有自动应用此重写。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "ccode(sinc(x))的返回值不应包含'Not supported'注释，而应是一个有效的C表达式。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "断言完整的输出字符串，因为具体的C表达式格式可能变化。",
+        "reason": "Issue表明当前输出包含错误注释，修复后应不再出现。"
+      },
+      {
+        "assertion_goal": "ccode(sinc(x))的返回值应包含三元运算符'?'和':'，因为sinc在x=0处有特殊定义。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的Piecewise结构字符串。",
+        "reason": "sinc的定义需要条件判断，C中通常用三元运算符实现，这与Piecewise的转换一致。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要从sympy导入ccode, sinc, sin, Piecewise, Ne, Symbol。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要定义符号变量，如x或theta。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "sinc函数是否已有_`eval_rewrite_as_Piecewise`方法或其他ccode可用的重写规则。",
+      "ccode函数内部是否有针对sinc的特殊处理分支，或者完全依赖通用的函数处理机制。",
+      "修复后ccode(sinc(x))的确切输出字符串格式，例如三元运算符的换行和缩进细节。",
+      "是否还有其他类似sinc的函数也存在ccode不支持的问题。"
+    ]
+  }
+}

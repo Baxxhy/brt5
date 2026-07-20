@@ -1,0 +1,322 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "pytest-dev__pytest-8365",
+  "issue_summary": "当用户名包含目录名非法字符时，tmpdir、tmpdir_factory 和 tmp_path_factory 的临时目录创建失败。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用 pytester fixture 创建测试文件并运行。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 monkeypatch 修改 getpass.getuser 返回值。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要 Windows 平台或特定环境变量设置。",
+        "source": "issue",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_tmpdir_factory",
+        "test_file": "testing/test_tmpdir.py",
+        "why_relevant": "直接测试 tmpdir_factory.mktemp 的使用。",
+        "reusable_parts": [
+          "pytester fixture",
+          "makepyfile 创建测试代码",
+          "inline_run 执行测试",
+          "assertoutcome 验证结果"
+        ],
+        "possible_gap": "该测试使用默认环境，未模拟包含非法字符的用户名。"
+      },
+      {
+        "test_name": "test_tmpdir_fallback_tox_env",
+        "test_file": "testing/test_tmpdir.py",
+        "why_relevant": "测试在异常环境变量下 tmpdir 的工作，涉及 getpass 相关环境。",
+        "reusable_parts": [
+          "monkeypatch 修改环境变量",
+          "pytester fixture",
+          "assert tmpdir.isdir()"
+        ],
+        "possible_gap": "该测试删除环境变量，但未设置包含非法字符的用户名。"
+      },
+      {
+        "test_name": "test_get_user",
+        "test_file": "testing/test_tmpdir.py",
+        "why_relevant": "专门测试 Windows 上 get_user() 函数在缺失环境变量时的行为。",
+        "reusable_parts": [
+          "monkeypatch.delenv",
+          "Windows 平台标记",
+          "assert get_user() is None"
+        ],
+        "possible_gap": "测试关注缺失环境变量，而非返回非法字符。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "当 getpass.getuser() 返回包含目录名非法字符（如反斜杠 '\\'）的用户名时，调用 tmpdir_factory.mktemp('foobar') 等操作。",
+      "evidence": [
+        "Issue 描述：'getpass.getuser() may return characters that are not allowed for directory names'",
+        "Issue 复现步骤：设置 LOGNAME=contoso\\john_doe 并运行 pytest。",
+        "Issue 错误栈显示路径包含 'contoso\\john_doe'。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "创建临时目录时抛出 FileNotFoundError: [WinError 3] The system cannot find the path specified。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 错误日志：FileNotFoundError: [WinError 3] The system cannot find the path specified: 'C:\\Users\\john_doe\\AppData\\Local\\Temp\\pytest-of-contoso\\john_doe'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "tmpdir_factory.mktemp",
+        "kind": "method",
+        "source_path": "src/_pytest/tmpdir.py",
+        "reason": "Issue 中触发错误的直接调用。"
+      },
+      {
+        "name": "getpass.getuser",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 指出问题根源是 getpass.getuser() 返回非法字符。"
+      },
+      {
+        "name": "TempPathFactory.getbasetemp",
+        "kind": "method",
+        "source_path": "src/_pytest/tmpdir.py",
+        "reason": "mktemp 内部使用 getbasetemp() 构建路径。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "src/_pytest/tmpdir.py",
+        "object": "TempPathFactory",
+        "lines": "",
+        "reason": "Issue 涉及 tmpdir、tmpdir_factory 和 tmp_path_factory，这些都在此文件中定义。"
+      },
+      {
+        "path": "src/_pytest/tmpdir.py",
+        "object": "mktemp",
+        "lines": "78-100",
+        "reason": "mktemp 方法创建目录，可能未处理 basetemp 路径中的非法字符。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "正常环境下的 getpass.getuser() 返回值。",
+        "target_pattern": "getpass.getuser() 返回包含反斜杠等目录名非法字符的字符串（如 'contoso\\john_doe'）。",
+        "reason": "Issue 表明非法字符用户名是触发条件。",
+        "confidence": "high"
+      },
+      {
+        "slot": "mock",
+        "current_pattern": "未模拟 getpass.getuser。",
+        "target_pattern": "使用 monkeypatch.setattr('getpass.getuser', lambda: 'contoso\\john_doe') 模拟问题环境。",
+        "reason": "可控地复现 Issue 中描述的场景。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "即使 getpass.getuser() 返回包含目录名非法字符的用户名，tmpdir、tmpdir_factory 和 tmp_path_factory 也应能成功创建临时目录。",
+      "evidence": [
+        "Issue 标题和描述暗示 tmpdir 创建不应因用户名包含非法字符而失败。",
+        "相关测试 test_tmpdir_fallback_tox_env 和 test_tmpdir_fallback_uid_not_found 表明系统应在异常环境下仍能工作。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 tmpdir_factory.mktemp('foobar') 时是否抛出 FileNotFoundError 或其他异常。",
+        "reason": "Issue 核心错误是创建目录时抛出 FileNotFoundError。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "tmpdir_factory.getbasetemp() 返回的路径字符串。",
+        "reason": "观察 basetemp 路径是否包含未转义的非法字符。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "在模拟非法字符用户名后，tmpdir_factory.mktemp 应成功创建目录而不抛出 FileNotFoundError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整路径字符串相等，因为路径生成可能涉及内部处理。",
+        "reason": "修复后应不再抛出异常，但当前测试需验证异常是否被触发。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "哪些字符在哪些操作系统上被视为目录名非法字符？",
+    "修复逻辑是转义非法字符、替换它们，还是使用其他 fallback 机制？",
+    "除了反斜杠，是否还有其他字符（如冒号、问号等）会导致相同问题？"
+  ],
+  "raw": {
+    "issue_summary": "当用户名包含目录名非法字符时，tmpdir、tmpdir_factory 和 tmp_path_factory 的临时目录创建失败。",
+    "trigger_condition": {
+      "text": "当 getpass.getuser() 返回包含目录名非法字符（如反斜杠 '\\'）的用户名时，调用 tmpdir_factory.mktemp('foobar') 等操作。",
+      "evidence": [
+        "Issue 描述：'getpass.getuser() may return characters that are not allowed for directory names'",
+        "Issue 复现步骤：设置 LOGNAME=contoso\\john_doe 并运行 pytest。",
+        "Issue 错误栈显示路径包含 'contoso\\john_doe'。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "创建临时目录时抛出 FileNotFoundError: [WinError 3] The system cannot find the path specified。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 错误日志：FileNotFoundError: [WinError 3] The system cannot find the path specified: 'C:\\Users\\john_doe\\AppData\\Local\\Temp\\pytest-of-contoso\\john_doe'"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "即使 getpass.getuser() 返回包含目录名非法字符的用户名，tmpdir、tmpdir_factory 和 tmp_path_factory 也应能成功创建临时目录。",
+      "evidence": [
+        "Issue 标题和描述暗示 tmpdir 创建不应因用户名包含非法字符而失败。",
+        "相关测试 test_tmpdir_fallback_tox_env 和 test_tmpdir_fallback_uid_not_found 表明系统应在异常环境下仍能工作。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "tmpdir_factory.mktemp",
+        "kind": "method",
+        "source_path": "src/_pytest/tmpdir.py",
+        "reason": "Issue 中触发错误的直接调用。"
+      },
+      {
+        "name": "getpass.getuser",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 指出问题根源是 getpass.getuser() 返回非法字符。"
+      },
+      {
+        "name": "TempPathFactory.getbasetemp",
+        "kind": "method",
+        "source_path": "src/_pytest/tmpdir.py",
+        "reason": "mktemp 内部使用 getbasetemp() 构建路径。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "src/_pytest/tmpdir.py",
+        "object": "TempPathFactory",
+        "lines": "",
+        "reason": "Issue 涉及 tmpdir、tmpdir_factory 和 tmp_path_factory，这些都在此文件中定义。"
+      },
+      {
+        "path": "src/_pytest/tmpdir.py",
+        "object": "mktemp",
+        "lines": "78-100",
+        "reason": "mktemp 方法创建目录，可能未处理 basetemp 路径中的非法字符。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_tmpdir_factory",
+        "test_file": "testing/test_tmpdir.py",
+        "why_relevant": "直接测试 tmpdir_factory.mktemp 的使用。",
+        "reusable_parts": [
+          "pytester fixture",
+          "makepyfile 创建测试代码",
+          "inline_run 执行测试",
+          "assertoutcome 验证结果"
+        ],
+        "possible_gap": "该测试使用默认环境，未模拟包含非法字符的用户名。"
+      },
+      {
+        "test_name": "test_tmpdir_fallback_tox_env",
+        "test_file": "testing/test_tmpdir.py",
+        "why_relevant": "测试在异常环境变量下 tmpdir 的工作，涉及 getpass 相关环境。",
+        "reusable_parts": [
+          "monkeypatch 修改环境变量",
+          "pytester fixture",
+          "assert tmpdir.isdir()"
+        ],
+        "possible_gap": "该测试删除环境变量，但未设置包含非法字符的用户名。"
+      },
+      {
+        "test_name": "test_get_user",
+        "test_file": "testing/test_tmpdir.py",
+        "why_relevant": "专门测试 Windows 上 get_user() 函数在缺失环境变量时的行为。",
+        "reusable_parts": [
+          "monkeypatch.delenv",
+          "Windows 平台标记",
+          "assert get_user() is None"
+        ],
+        "possible_gap": "测试关注缺失环境变量，而非返回非法字符。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "正常环境下的 getpass.getuser() 返回值。",
+        "target_pattern": "getpass.getuser() 返回包含反斜杠等目录名非法字符的字符串（如 'contoso\\john_doe'）。",
+        "reason": "Issue 表明非法字符用户名是触发条件。",
+        "confidence": "high"
+      },
+      {
+        "slot": "mock",
+        "current_pattern": "未模拟 getpass.getuser。",
+        "target_pattern": "使用 monkeypatch.setattr('getpass.getuser', lambda: 'contoso\\john_doe') 模拟问题环境。",
+        "reason": "可控地复现 Issue 中描述的场景。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 tmpdir_factory.mktemp('foobar') 时是否抛出 FileNotFoundError 或其他异常。",
+        "reason": "Issue 核心错误是创建目录时抛出 FileNotFoundError。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "tmpdir_factory.getbasetemp() 返回的路径字符串。",
+        "reason": "观察 basetemp 路径是否包含未转义的非法字符。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "在模拟非法字符用户名后，tmpdir_factory.mktemp 应成功创建目录而不抛出 FileNotFoundError。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言完整路径字符串相等，因为路径生成可能涉及内部处理。",
+        "reason": "修复后应不再抛出异常，但当前测试需验证异常是否被触发。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用 pytester fixture 创建测试文件并运行。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "使用 monkeypatch 修改 getpass.getuser 返回值。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要 Windows 平台或特定环境变量设置。",
+        "source": "issue",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "哪些字符在哪些操作系统上被视为目录名非法字符？",
+      "修复逻辑是转义非法字符、替换它们，还是使用其他 fallback 机制？",
+      "除了反斜杠，是否还有其他字符（如冒号、问号等）会导致相同问题？"
+    ]
+  }
+}

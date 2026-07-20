@@ -1,0 +1,266 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-13710",
+  "issue_summary": "Django Admin Inline 的 verbose_name_plural 默认值未基于指定的 verbose_name 自动生成，而是基于模型名称或模型的 Meta 类中的 verbose_name。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要使用 TestCase 和 override_settings 来配置 ROOT_URLCONF。需要创建测试用的模型（如 Profile, VerboseNameProfile 等）和对应的 ModelAdmin/Inline。可能需要超级用户权限。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestVerboseNameInlineForms.test_verbose_name_plural_inline",
+        "test_file": "tests/admin_inlines/tests.py",
+        "why_relevant": "该测试直接验证了 Inline 的 verbose_name_plural 属性在 Admin 页面中的显示，包含了设置和不设置 verbose_name 的场景。",
+        "reusable_parts": [
+          "测试类结构（@override_settings, TestCase）",
+          "Inline 类的定义方式（继承 TabularInline，设置 model 和 verbose_name/verbose_name_plural）",
+          "ModelAdmin 的配置和 changeform_view 调用",
+          "使用 assertContains/assertNotContains 检查响应内容中的标题和链接文本。"
+        ],
+        "possible_gap": "该测试为每个 Inline 都显式设置了 verbose_name_plural，没有测试仅设置 verbose_name 时 verbose_name_plural 的默认行为是否符合 Issue 的期望。"
+      },
+      {
+        "test_name": "TestVerboseNameInlineForms.test_both_verbose_names_inline",
+        "test_file": "tests/admin_inlines/tests.py",
+        "why_relevant": "该测试同时设置了 verbose_name 和 verbose_name_plural，验证了它们同时生效的情况。",
+        "reusable_parts": [
+          "同时设置 verbose_name 和 verbose_name_plural 的 Inline 定义模式",
+          "对 'Add another' 链接文本的断言检查（链接文本使用了 verbose_name）。"
+        ],
+        "possible_gap": "同样没有测试仅设置 verbose_name 时，verbose_name_plural 是否会自动从 verbose_name 派生。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "在 Django Admin 中定义一个 Inline 类，并为其指定 verbose_name 属性，但不指定 verbose_name_plural 属性。",
+      "evidence": [
+        "Issue 描述：'verbose_name_plural for an Inline is not currently based on a specified verbose_name. Instead, it continues to be based on the model name, or an a verbose_name specified in the model's Meta class.'",
+        "相关测试 1 和 2 展示了为 Inline 类设置 verbose_name 和 verbose_name_plural 的各种组合。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "Inline 的 verbose_name_plural 显示为基于模型名称或模型 Meta 类中 verbose_name 的默认复数形式，而不是基于 Inline 自身指定的 verbose_name 自动生成的复数形式。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 描述：'This was confusing to me initially (I didn't understand why I had to specify both name forms for an Inline if I wanted to overrule the default name)'",
+        "相关测试 1 和 2 中的 assertContains 和 assertNotContains 断言验证了 Inline 标题（<h2>标签）和 'Add another' 链接文本的显示内容。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "TabularInline",
+        "kind": "class",
+        "source_path": "",
+        "reason": "相关测试中用于创建 Inline 的基类。"
+      },
+      {
+        "name": "verbose_name",
+        "kind": "unknown",
+        "source_path": "",
+        "reason": "Inline 类的属性，Issue 的核心是此属性未用于生成 verbose_name_plural 的默认值。"
+      },
+      {
+        "name": "verbose_name_plural",
+        "kind": "unknown",
+        "source_path": "",
+        "reason": "Inline 类的属性，其默认值生成逻辑存在缺陷。"
+      },
+      {
+        "name": "ModelAdmin.changeform_view",
+        "kind": "method",
+        "source_path": "",
+        "reason": "相关测试中用于获取 Admin 页面响应的方法，用于验证 Inline 标题的显示。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "",
+        "object": "",
+        "lines": "",
+        "reason": "Issue 未提供具体源码位置，检索出的源码片段 1 是模型 Meta 类的示例，与 Inline 的 verbose_name_plural 默认值生成逻辑可能不直接相关。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "相关测试中，Inline 类同时显式设置了 verbose_name 和 verbose_name_plural。",
+        "target_pattern": "Inline 类仅设置 verbose_name，而不设置 verbose_name_plural。",
+        "reason": "Issue 描述的问题是当仅设置 verbose_name 时，verbose_name_plural 的默认值不正确。因此，需要变异测试，使其仅设置 verbose_name，以触发默认值生成逻辑。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "当为 Inline 类指定了 verbose_name 时，其 verbose_name_plural 的默认值应基于该 verbose_name 自动生成（例如，添加 's' 或其他复数规则），而不是回退到模型名称或模型 Meta 类的 verbose_name。",
+      "evidence": [
+        "Issue 描述：'I propose that verbose_name_plural for an Inline class should by default be based on the verbose_name for an Inline if that is specified.'",
+        "Issue 描述：'seems inconsistent with the approach for a model's Meta class (which does automatically base the plural form on a specified verbose_name).'"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "modeladmin.changeform_view(request) 返回的 HttpResponse 对象的内容（response.content）。",
+        "reason": "Admin 页面中 Inline 的标题（<h2>标签）和 'Add another' 链接文本反映了 verbose_name 和 verbose_name_plural 的值，是验证缺陷是否触发的直接观测点。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证当 Inline 仅设置 verbose_name 时，其对应的标题（<h2>）显示为基于该 verbose_name 自动生成的复数形式（或至少不是基于模型名称的默认复数形式）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的 HTML 字符串或精确的复数形式（因为自动复数化规则可能复杂）。",
+        "reason": "Issue 关注的是显示内容是否基于 Inline 的 verbose_name，断言包含基于 verbose_name 的片段（或断言不包含基于模型名称的片段）是稳定且与 Issue 对齐的。"
+      },
+      {
+        "assertion_goal": "验证 'Add another' 链接文本使用了 Inline 的 verbose_name。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的链接文本字符串。",
+        "reason": "相关测试表明 'Add another' 链接文本使用 verbose_name，这可以作为 verbose_name 设置是否生效的辅助验证。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "Django 内部具体如何为 verbose_name 自动生成复数形式（例如，是简单的加 's' 还是有更复杂的规则）。",
+    "当 Inline 的 verbose_name 未设置时，verbose_name_plural 的默认行为是否应该改变（Issue 似乎只关注 verbose_name 已设置的情况）。",
+    "具体的缺陷源码位置和修复方式。"
+  ],
+  "raw": {
+    "issue_summary": "Django Admin Inline 的 verbose_name_plural 默认值未基于指定的 verbose_name 自动生成，而是基于模型名称或模型的 Meta 类中的 verbose_name。",
+    "trigger_condition": {
+      "text": "在 Django Admin 中定义一个 Inline 类，并为其指定 verbose_name 属性，但不指定 verbose_name_plural 属性。",
+      "evidence": [
+        "Issue 描述：'verbose_name_plural for an Inline is not currently based on a specified verbose_name. Instead, it continues to be based on the model name, or an a verbose_name specified in the model's Meta class.'",
+        "相关测试 1 和 2 展示了为 Inline 类设置 verbose_name 和 verbose_name_plural 的各种组合。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "Inline 的 verbose_name_plural 显示为基于模型名称或模型 Meta 类中 verbose_name 的默认复数形式，而不是基于 Inline 自身指定的 verbose_name 自动生成的复数形式。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 描述：'This was confusing to me initially (I didn't understand why I had to specify both name forms for an Inline if I wanted to overrule the default name)'",
+        "相关测试 1 和 2 中的 assertContains 和 assertNotContains 断言验证了 Inline 标题（<h2>标签）和 'Add another' 链接文本的显示内容。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "当为 Inline 类指定了 verbose_name 时，其 verbose_name_plural 的默认值应基于该 verbose_name 自动生成（例如，添加 's' 或其他复数规则），而不是回退到模型名称或模型 Meta 类的 verbose_name。",
+      "evidence": [
+        "Issue 描述：'I propose that verbose_name_plural for an Inline class should by default be based on the verbose_name for an Inline if that is specified.'",
+        "Issue 描述：'seems inconsistent with the approach for a model's Meta class (which does automatically base the plural form on a specified verbose_name).'"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "TabularInline",
+        "kind": "class",
+        "source_path": "",
+        "reason": "相关测试中用于创建 Inline 的基类。"
+      },
+      {
+        "name": "verbose_name",
+        "kind": "unknown",
+        "source_path": "",
+        "reason": "Inline 类的属性，Issue 的核心是此属性未用于生成 verbose_name_plural 的默认值。"
+      },
+      {
+        "name": "verbose_name_plural",
+        "kind": "unknown",
+        "source_path": "",
+        "reason": "Inline 类的属性，其默认值生成逻辑存在缺陷。"
+      },
+      {
+        "name": "ModelAdmin.changeform_view",
+        "kind": "method",
+        "source_path": "",
+        "reason": "相关测试中用于获取 Admin 页面响应的方法，用于验证 Inline 标题的显示。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "",
+        "object": "",
+        "lines": "",
+        "reason": "Issue 未提供具体源码位置，检索出的源码片段 1 是模型 Meta 类的示例，与 Inline 的 verbose_name_plural 默认值生成逻辑可能不直接相关。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "TestVerboseNameInlineForms.test_verbose_name_plural_inline",
+        "test_file": "tests/admin_inlines/tests.py",
+        "why_relevant": "该测试直接验证了 Inline 的 verbose_name_plural 属性在 Admin 页面中的显示，包含了设置和不设置 verbose_name 的场景。",
+        "reusable_parts": [
+          "测试类结构（@override_settings, TestCase）",
+          "Inline 类的定义方式（继承 TabularInline，设置 model 和 verbose_name/verbose_name_plural）",
+          "ModelAdmin 的配置和 changeform_view 调用",
+          "使用 assertContains/assertNotContains 检查响应内容中的标题和链接文本。"
+        ],
+        "possible_gap": "该测试为每个 Inline 都显式设置了 verbose_name_plural，没有测试仅设置 verbose_name 时 verbose_name_plural 的默认行为是否符合 Issue 的期望。"
+      },
+      {
+        "test_name": "TestVerboseNameInlineForms.test_both_verbose_names_inline",
+        "test_file": "tests/admin_inlines/tests.py",
+        "why_relevant": "该测试同时设置了 verbose_name 和 verbose_name_plural，验证了它们同时生效的情况。",
+        "reusable_parts": [
+          "同时设置 verbose_name 和 verbose_name_plural 的 Inline 定义模式",
+          "对 'Add another' 链接文本的断言检查（链接文本使用了 verbose_name）。"
+        ],
+        "possible_gap": "同样没有测试仅设置 verbose_name 时，verbose_name_plural 是否会自动从 verbose_name 派生。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "config",
+        "current_pattern": "相关测试中，Inline 类同时显式设置了 verbose_name 和 verbose_name_plural。",
+        "target_pattern": "Inline 类仅设置 verbose_name，而不设置 verbose_name_plural。",
+        "reason": "Issue 描述的问题是当仅设置 verbose_name 时，verbose_name_plural 的默认值不正确。因此，需要变异测试，使其仅设置 verbose_name，以触发默认值生成逻辑。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "modeladmin.changeform_view(request) 返回的 HttpResponse 对象的内容（response.content）。",
+        "reason": "Admin 页面中 Inline 的标题（<h2>标签）和 'Add another' 链接文本反映了 verbose_name 和 verbose_name_plural 的值，是验证缺陷是否触发的直接观测点。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证当 Inline 仅设置 verbose_name 时，其对应的标题（<h2>）显示为基于该 verbose_name 自动生成的复数形式（或至少不是基于模型名称的默认复数形式）。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的 HTML 字符串或精确的复数形式（因为自动复数化规则可能复杂）。",
+        "reason": "Issue 关注的是显示内容是否基于 Inline 的 verbose_name，断言包含基于 verbose_name 的片段（或断言不包含基于模型名称的片段）是稳定且与 Issue 对齐的。"
+      },
+      {
+        "assertion_goal": "验证 'Add another' 链接文本使用了 Inline 的 verbose_name。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的链接文本字符串。",
+        "reason": "相关测试表明 'Add another' 链接文本使用 verbose_name，这可以作为 verbose_name 设置是否生效的辅助验证。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要使用 TestCase 和 override_settings 来配置 ROOT_URLCONF。需要创建测试用的模型（如 Profile, VerboseNameProfile 等）和对应的 ModelAdmin/Inline。可能需要超级用户权限。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "Django 内部具体如何为 verbose_name 自动生成复数形式（例如，是简单的加 's' 还是有更复杂的规则）。",
+      "当 Inline 的 verbose_name 未设置时，verbose_name_plural 的默认行为是否应该改变（Issue 似乎只关注 verbose_name 已设置的情况）。",
+      "具体的缺陷源码位置和修复方式。"
+    ]
+  }
+}

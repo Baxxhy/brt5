@@ -1,0 +1,310 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-14382",
+  "issue_summary": "django-admin startapp 命令在目录名包含尾部斜杠时抛出无效目录名错误。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "使用 AdminScriptTestCase 或其类似基类，它提供了 run_django_admin 方法和临时测试目录（self.test_dir）。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要创建临时目录作为命令执行的上下文，确保目标目录路径存在或可创建。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      },
+      {
+        "hint": "无需特殊数据库或 settings 配置，因为 startapp 是管理命令，主要涉及文件系统操作。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "StartApp.test_invalid_target_name",
+        "test_file": "tests/admin_scripts/tests.py",
+        "why_relevant": "该测试直接验证 startapp 命令对无效目标目录名的处理，包括抛出 CommandError 和检查错误信息，与 Issue 场景高度相似。",
+        "reusable_parts": [
+          "AdminScriptTestCase 基类",
+          "self.run_django_admin 方法调用",
+          "self.assertOutput 断言风格",
+          "错误信息片段匹配模式"
+        ],
+        "possible_gap": "该测试使用 'invalid.dir_name' 等无效标识符作为目录名，但未测试包含尾部斜杠的有效标识符目录名（如 'app/'）。"
+      },
+      {
+        "test_name": "StartApp.test_invalid_name",
+        "test_file": "tests/admin_scripts/tests.py",
+        "why_relevant": "测试 startapp 对无效应用名称的验证，涉及 CommandError 和错误信息断言，展示了名称验证的测试模式。",
+        "reusable_parts": [
+          "使用 for 循环测试多个无效名称",
+          "subTest 上下文",
+          "检查目录是否未创建"
+        ],
+        "possible_gap": "测试的是应用名称参数而非目录参数，且未涉及路径处理或尾部斜杠。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用 django-admin startapp 命令，且目标目录参数包含尾部斜杠（例如 'directory/'）。",
+      "evidence": [
+        "Issue 描述：'django-admin startapp name directory/ results in the error'",
+        "Issue 指出错误由 templates.py 第 77 行调用 basename() 时未考虑尾部斜杠引起"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "抛出 CommandError，提示 '' 不是有效的应用目录，要求目录是有效的标识符。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误信息：\"CommandError: '' is not a valid app directory. Please make sure the directory is a valid identifier.\"",
+        "源码片段 2 中 validate_name 方法会抛出 CommandError"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "django.core.management.commands.startapp.Command.handle",
+        "kind": "method",
+        "source_path": "django/core/management/commands/startapp.py",
+        "reason": "这是 startapp 命令的入口点，负责处理命令行参数。"
+      },
+      {
+        "name": "django.core.management.templates.TemplateCommand.validate_name",
+        "kind": "method",
+        "source_path": "django/core/management/templates.py",
+        "reason": "Issue 明确指出错误由调用 validate_name 时传入 basename(path) 引起，且该方法是验证名称/目录有效性的核心。"
+      },
+      {
+        "name": "django.core.management.templates.TemplateCommand.handle_template",
+        "kind": "method",
+        "source_path": "django/core/management/templates.py",
+        "reason": "可能负责处理目标目录路径，并调用 validate_name。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/core/management/templates.py",
+        "object": "TemplateCommand.handle_template 或相关方法中调用 validate_name 的位置",
+        "lines": "",
+        "reason": "Issue 明确指出第 77 行调用 basename() 时未考虑尾部斜杠，导致传入空字符串给 validate_name。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中使用 'invalid.dir_name' 等明显无效的标识符作为目录参数。",
+        "target_pattern": "使用一个本身是有效标识符但附加了尾部斜杠的目录参数，例如 'myapp/' 或 'apps/myapp/'。",
+        "reason": "Issue 表明当目录名是有效标识符但路径包含尾部斜杠时，basename() 可能返回空字符串，导致 validate_name 收到空字符串而报错。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "测试中目录参数是简单的字符串名称。",
+        "target_pattern": "目录参数包含路径分隔符和尾部斜杠，模拟 bash 补全后的结果。",
+        "reason": "Issue 提到 bash tab-completion 会追加尾部斜杠，因此需要模拟真实用户输入场景。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "django-admin startapp 命令应能正确处理包含尾部斜杠的目录参数，成功创建应用或给出与目录名有效性相关的明确错误。",
+      "evidence": [
+        "Issue 建议的修复：'Removing potential trailing slashes would solve the problem'，暗示修复后应能处理尾部斜杠",
+        "相关测试 1 和 3 表明命令应验证目录/名称是否为有效标识符，但未涉及尾部斜杠处理"
+      ],
+      "confidence": "medium"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 self.run_django_admin 后返回的 err 输出流内容。",
+        "reason": "Issue 的核心错误现象是 CommandError 及其消息，观测错误输出可直接判断是否触发缺陷。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "os.path.basename(target) 在传入 'directory/' 时的返回值。",
+        "reason": "Issue 指出 basename() 对带尾部斜杠的路径返回空字符串，这是缺陷的直接原因。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "目标目录是否被创建（os.path.exists）。",
+        "reason": "相关测试 3 和 4 在验证无效名称后检查目录未创建，可用于确认命令因错误而中止。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当目录参数包含尾部斜杠时，命令应抛出 CommandError，且错误信息应指示目录名无效或为空。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的错误信息字符串，因为具体措辞可能随修复或本地化变化。避免断言不相关的错误类型。",
+        "reason": "Issue 给出了错误信息片段（\"is not a valid app directory\"），但修复后错误信息可能调整（例如指向空目录名）。使用片段断言更稳定。"
+      },
+      {
+        "assertion_goal": "当目录参数是有效标识符且不包含尾部斜杠时，命令应成功执行或抛出其他明确错误（如目录已存在），而非目录名无效错误。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "断言绝对成功（无错误输出），因为其他条件（如目录已存在）也可能导致错误。",
+        "reason": "需要区分当前缺陷（因尾部斜杠导致空目录名错误）与其他正常错误情况。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "Issue 中提到的第 77 行具体在 templates.py 的哪个方法中（可能是 handle_template），需要进一步代码分析确认。",
+    "修复后，对于 'directory/' 这样的输入，是应该成功创建名为 'directory' 的应用，还是应该给出一个关于尾部斜杠的更友好错误？Issue 只建议去除尾部斜杠，未明确指定最终行为。",
+    "除了尾部斜杠，是否还有其他路径格式（如 'directory//'、'./directory/'）会导致类似问题？"
+  ],
+  "raw": {
+    "issue_summary": "django-admin startapp 命令在目录名包含尾部斜杠时抛出无效目录名错误。",
+    "trigger_condition": {
+      "text": "使用 django-admin startapp 命令，且目标目录参数包含尾部斜杠（例如 'directory/'）。",
+      "evidence": [
+        "Issue 描述：'django-admin startapp name directory/ results in the error'",
+        "Issue 指出错误由 templates.py 第 77 行调用 basename() 时未考虑尾部斜杠引起"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "抛出 CommandError，提示 '' 不是有效的应用目录，要求目录是有效的标识符。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的错误信息：\"CommandError: '' is not a valid app directory. Please make sure the directory is a valid identifier.\"",
+        "源码片段 2 中 validate_name 方法会抛出 CommandError"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "django-admin startapp 命令应能正确处理包含尾部斜杠的目录参数，成功创建应用或给出与目录名有效性相关的明确错误。",
+      "evidence": [
+        "Issue 建议的修复：'Removing potential trailing slashes would solve the problem'，暗示修复后应能处理尾部斜杠",
+        "相关测试 1 和 3 表明命令应验证目录/名称是否为有效标识符，但未涉及尾部斜杠处理"
+      ],
+      "confidence": "medium"
+    },
+    "target_apis": [
+      {
+        "name": "django.core.management.commands.startapp.Command.handle",
+        "kind": "method",
+        "source_path": "django/core/management/commands/startapp.py",
+        "reason": "这是 startapp 命令的入口点，负责处理命令行参数。"
+      },
+      {
+        "name": "django.core.management.templates.TemplateCommand.validate_name",
+        "kind": "method",
+        "source_path": "django/core/management/templates.py",
+        "reason": "Issue 明确指出错误由调用 validate_name 时传入 basename(path) 引起，且该方法是验证名称/目录有效性的核心。"
+      },
+      {
+        "name": "django.core.management.templates.TemplateCommand.handle_template",
+        "kind": "method",
+        "source_path": "django/core/management/templates.py",
+        "reason": "可能负责处理目标目录路径，并调用 validate_name。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/core/management/templates.py",
+        "object": "TemplateCommand.handle_template 或相关方法中调用 validate_name 的位置",
+        "lines": "",
+        "reason": "Issue 明确指出第 77 行调用 basename() 时未考虑尾部斜杠，导致传入空字符串给 validate_name。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "StartApp.test_invalid_target_name",
+        "test_file": "tests/admin_scripts/tests.py",
+        "why_relevant": "该测试直接验证 startapp 命令对无效目标目录名的处理，包括抛出 CommandError 和检查错误信息，与 Issue 场景高度相似。",
+        "reusable_parts": [
+          "AdminScriptTestCase 基类",
+          "self.run_django_admin 方法调用",
+          "self.assertOutput 断言风格",
+          "错误信息片段匹配模式"
+        ],
+        "possible_gap": "该测试使用 'invalid.dir_name' 等无效标识符作为目录名，但未测试包含尾部斜杠的有效标识符目录名（如 'app/'）。"
+      },
+      {
+        "test_name": "StartApp.test_invalid_name",
+        "test_file": "tests/admin_scripts/tests.py",
+        "why_relevant": "测试 startapp 对无效应用名称的验证，涉及 CommandError 和错误信息断言，展示了名称验证的测试模式。",
+        "reusable_parts": [
+          "使用 for 循环测试多个无效名称",
+          "subTest 上下文",
+          "检查目录是否未创建"
+        ],
+        "possible_gap": "测试的是应用名称参数而非目录参数，且未涉及路径处理或尾部斜杠。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中使用 'invalid.dir_name' 等明显无效的标识符作为目录参数。",
+        "target_pattern": "使用一个本身是有效标识符但附加了尾部斜杠的目录参数，例如 'myapp/' 或 'apps/myapp/'。",
+        "reason": "Issue 表明当目录名是有效标识符但路径包含尾部斜杠时，basename() 可能返回空字符串，导致 validate_name 收到空字符串而报错。",
+        "confidence": "high"
+      },
+      {
+        "slot": "argument",
+        "current_pattern": "测试中目录参数是简单的字符串名称。",
+        "target_pattern": "目录参数包含路径分隔符和尾部斜杠，模拟 bash 补全后的结果。",
+        "reason": "Issue 提到 bash tab-completion 会追加尾部斜杠，因此需要模拟真实用户输入场景。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用 self.run_django_admin 后返回的 err 输出流内容。",
+        "reason": "Issue 的核心错误现象是 CommandError 及其消息，观测错误输出可直接判断是否触发缺陷。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "os.path.basename(target) 在传入 'directory/' 时的返回值。",
+        "reason": "Issue 指出 basename() 对带尾部斜杠的路径返回空字符串，这是缺陷的直接原因。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "目标目录是否被创建（os.path.exists）。",
+        "reason": "相关测试 3 和 4 在验证无效名称后检查目录未创建，可用于确认命令因错误而中止。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当目录参数包含尾部斜杠时，命令应抛出 CommandError，且错误信息应指示目录名无效或为空。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的错误信息字符串，因为具体措辞可能随修复或本地化变化。避免断言不相关的错误类型。",
+        "reason": "Issue 给出了错误信息片段（\"is not a valid app directory\"），但修复后错误信息可能调整（例如指向空目录名）。使用片段断言更稳定。"
+      },
+      {
+        "assertion_goal": "当目录参数是有效标识符且不包含尾部斜杠时，命令应成功执行或抛出其他明确错误（如目录已存在），而非目录名无效错误。",
+        "preferred_assertion_style": "not_contains_fragment",
+        "avoid": "断言绝对成功（无错误输出），因为其他条件（如目录已存在）也可能导致错误。",
+        "reason": "需要区分当前缺陷（因尾部斜杠导致空目录名错误）与其他正常错误情况。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "使用 AdminScriptTestCase 或其类似基类，它提供了 run_django_admin 方法和临时测试目录（self.test_dir）。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要创建临时目录作为命令执行的上下文，确保目标目录路径存在或可创建。",
+        "source": "retrieved_test",
+        "confidence": "medium"
+      },
+      {
+        "hint": "无需特殊数据库或 settings 配置，因为 startapp 是管理命令，主要涉及文件系统操作。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "Issue 中提到的第 77 行具体在 templates.py 的哪个方法中（可能是 handle_template），需要进一步代码分析确认。",
+      "修复后，对于 'directory/' 这样的输入，是应该成功创建名为 'directory' 的应用，还是应该给出一个关于尾部斜杠的更友好错误？Issue 只建议去除尾部斜杠，未明确指定最终行为。",
+      "除了尾部斜杠，是否还有其他路径格式（如 'directory//'、'./directory/'）会导致类似问题？"
+    ]
+  }
+}

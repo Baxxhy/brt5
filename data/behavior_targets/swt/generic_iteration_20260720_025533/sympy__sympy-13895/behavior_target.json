@@ -1,0 +1,216 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "sympy__sympy-13895",
+  "issue_summary": "simplify 函数对表达式 (-x/4 - S(1)/12)**x - 1 进行化简后，得到了一个在数值上不等价的表达式。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 模块，创建符号变量 x，并使用 S 创建精确有理数。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_simplify_expr",
+        "test_file": "sympy/simplify/tests/test_simplify.py",
+        "why_relevant": "该测试直接测试 simplify 函数，包含多种表达式化简的断言，是测试 simplify 功能的典型起点。",
+        "reusable_parts": [
+          "imports (from sympy import *)",
+          "Symbol 的创建",
+          "simplify 的调用方式",
+          "使用 assert simplify(...) == ... 的断言风格"
+        ],
+        "possible_gap": "现有测试用例不包含涉及形如 `(a*x + b)**x` 这类带有变量指数的复杂基底的化简。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "对表达式 (-x/4 - S(1)/12)**x - 1 调用 simplify 函数。",
+      "evidence": [
+        "Issue 中：`e = (-x/4 - S(1)/12)**x - 1`，`f = simplify(e)`"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "原始表达式 e 和化简后的表达式 f 在代入特定数值（如 x = 9/5）后，数值计算结果不同（实数值 vs 复数值），表明化简结果不等价。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中：`N(e.subs(x,a))` 得到 `-1.32255049319339`（实数），`N(f.subs(x,a))` 得到 `-0.739051169462523 - 0.189590423018741*I`（复数）"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "simplify",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 中直接调用了 simplify 函数，并且它是导致错误行为的函数。"
+      },
+      {
+        "name": "Symbol",
+        "kind": "class",
+        "source_path": "sympy/core/symbol.py",
+        "reason": "Issue 中使用了 Symbol('x') 来创建符号变量。"
+      },
+      {
+        "name": "S",
+        "kind": "global_var",
+        "source_path": "",
+        "reason": "Issue 中使用了 S(1)/12 来创建有理数。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/polys/domains/expressiondomain.py",
+        "object": "simplify",
+        "lines": "48-49",
+        "reason": "检索到的源码片段显示了一个 simplify 方法，它调用了 `cancel()`，可能与表达式化简的底层逻辑有关。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用的表达式多为多项式、有理分式、对数、矩阵等。",
+        "target_pattern": "使用 Issue 中的表达式：`(-x/4 - S(1)/12)**x - 1`，其特点是基底为 `(-x/4 - 1/12)`，指数为变量 `x`。",
+        "reason": "Issue 表明，当 simplify 处理这种特定形式的表达式时，可能会产生错误的化简结果。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "simplify 函数返回的表达式应与原表达式在数学上完全等价，对于所有定义域内的输入，其数值计算结果应一致。",
+      "evidence": [
+        "相关测试 1 (test_simplify_expr) 中的断言模式表明 simplify 应返回等价的表达式，例如 `assert simplify(e) == (x + y)/(x*y)`"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "simplify(e) 的返回值，以及 e.subs(x, value) 和 simplify(e).subs(x, value) 的数值计算结果。",
+        "reason": "Issue 的核心是化简前后的表达式在数值上不等价，观测这些值可以直接验证 bug 是否触发。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证对表达式 `(-x/4 - S(1)/12)**x - 1` 调用 simplify 后，结果与原表达式在数值上等价（至少对于实数域内的某些测试点）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免直接断言化简后的完整字符串表示与某个特定形式相等，因为正确的化简形式可能不止一种。",
+        "reason": "Issue 关注的是语义等价性，而非具体的输出形式。使用数值相等性断言更稳定，且直接对应问题本质。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "simplify 函数内部具体是哪个步骤导致了错误的化简。",
+    "除了 x=9/5 之外，是否还有其他值会触发此问题。",
+    "正确的化简结果应该是什么形式。"
+  ],
+  "raw": {
+    "issue_summary": "simplify 函数对表达式 (-x/4 - S(1)/12)**x - 1 进行化简后，得到了一个在数值上不等价的表达式。",
+    "trigger_condition": {
+      "text": "对表达式 (-x/4 - S(1)/12)**x - 1 调用 simplify 函数。",
+      "evidence": [
+        "Issue 中：`e = (-x/4 - S(1)/12)**x - 1`，`f = simplify(e)`"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "原始表达式 e 和化简后的表达式 f 在代入特定数值（如 x = 9/5）后，数值计算结果不同（实数值 vs 复数值），表明化简结果不等价。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中：`N(e.subs(x,a))` 得到 `-1.32255049319339`（实数），`N(f.subs(x,a))` 得到 `-0.739051169462523 - 0.189590423018741*I`（复数）"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "simplify 函数返回的表达式应与原表达式在数学上完全等价，对于所有定义域内的输入，其数值计算结果应一致。",
+      "evidence": [
+        "相关测试 1 (test_simplify_expr) 中的断言模式表明 simplify 应返回等价的表达式，例如 `assert simplify(e) == (x + y)/(x*y)`"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "simplify",
+        "kind": "function",
+        "source_path": "",
+        "reason": "Issue 中直接调用了 simplify 函数，并且它是导致错误行为的函数。"
+      },
+      {
+        "name": "Symbol",
+        "kind": "class",
+        "source_path": "sympy/core/symbol.py",
+        "reason": "Issue 中使用了 Symbol('x') 来创建符号变量。"
+      },
+      {
+        "name": "S",
+        "kind": "global_var",
+        "source_path": "",
+        "reason": "Issue 中使用了 S(1)/12 来创建有理数。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "sympy/polys/domains/expressiondomain.py",
+        "object": "simplify",
+        "lines": "48-49",
+        "reason": "检索到的源码片段显示了一个 simplify 方法，它调用了 `cancel()`，可能与表达式化简的底层逻辑有关。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_simplify_expr",
+        "test_file": "sympy/simplify/tests/test_simplify.py",
+        "why_relevant": "该测试直接测试 simplify 函数，包含多种表达式化简的断言，是测试 simplify 功能的典型起点。",
+        "reusable_parts": [
+          "imports (from sympy import *)",
+          "Symbol 的创建",
+          "simplify 的调用方式",
+          "使用 assert simplify(...) == ... 的断言风格"
+        ],
+        "possible_gap": "现有测试用例不包含涉及形如 `(a*x + b)**x` 这类带有变量指数的复杂基底的化简。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中使用的表达式多为多项式、有理分式、对数、矩阵等。",
+        "target_pattern": "使用 Issue 中的表达式：`(-x/4 - S(1)/12)**x - 1`，其特点是基底为 `(-x/4 - 1/12)`，指数为变量 `x`。",
+        "reason": "Issue 表明，当 simplify 处理这种特定形式的表达式时，可能会产生错误的化简结果。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "simplify(e) 的返回值，以及 e.subs(x, value) 和 simplify(e).subs(x, value) 的数值计算结果。",
+        "reason": "Issue 的核心是化简前后的表达式在数值上不等价，观测这些值可以直接验证 bug 是否触发。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "验证对表达式 `(-x/4 - S(1)/12)**x - 1` 调用 simplify 后，结果与原表达式在数值上等价（至少对于实数域内的某些测试点）。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免直接断言化简后的完整字符串表示与某个特定形式相等，因为正确的化简形式可能不止一种。",
+        "reason": "Issue 关注的是语义等价性，而非具体的输出形式。使用数值相等性断言更稳定，且直接对应问题本质。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入 sympy 模块，创建符号变量 x，并使用 S 创建精确有理数。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "simplify 函数内部具体是哪个步骤导致了错误的化简。",
+      "除了 x=9/5 之外，是否还有其他值会触发此问题。",
+      "正确的化简结果应该是什么形式。"
+    ]
+  }
+}

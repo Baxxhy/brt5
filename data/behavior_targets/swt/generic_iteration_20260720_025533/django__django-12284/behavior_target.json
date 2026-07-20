@@ -1,0 +1,324 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-12284",
+  "issue_summary": "当子模型继承并覆盖父模型的 choices 字段时，get_FIELD_display() 方法无法正确显示新增选项的显示文本。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要使用 SimpleTestCase 或 TransactionTestCase（如果涉及数据库操作，如创建实例）。可能需要使用 @isolate_apps 来隔离动态创建的模型。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要定义抽象基类（abstract=True）和继承它的具体子类，并在子类中覆盖父类的字段定义，特别是 choices 参数。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "GetFieldDisplayTests.test_choices_and_field_display",
+        "test_file": "tests/model_fields/tests.py",
+        "why_relevant": "它直接测试了 get_FIELD_display() 方法在各种 choices 值下的行为，包括有效值、无效值和空白值。这是测试该核心功能的基础模板。",
+        "reusable_parts": [
+          "测试类的结构 (SimpleTestCase)",
+          "调用 get_FIELD_display() 并断言其返回值的模式",
+          "使用 self.assertEqual 进行断言"
+        ],
+        "possible_gap": "该测试没有涉及模型继承和字段覆盖的场景。它测试的是单个模型上 choices 的行为。"
+      },
+      {
+        "test_name": "AbstractInheritanceTests.test_single_parent",
+        "test_file": "tests/model_inheritance/test_abstract_inheritance.py",
+        "why_relevant": "它测试了抽象基类继承和字段覆盖（如 name 字段的 max_length）的行为。这为构建 Issue 描述的继承场景提供了框架。",
+        "reusable_parts": [
+          "使用 @isolate_apps 装饰器",
+          "在测试函数内动态定义抽象基类和子类的模式",
+          "使用 abstract=True Meta 选项",
+          "断言覆盖后字段的属性（如 max_length）"
+        ],
+        "possible_gap": "该测试只检查了字段的元数据属性（max_length），没有测试字段的运行时行为，如 get_FIELD_display()。"
+      },
+      {
+        "test_name": "AbstractInheritanceTests.test_overriding_field_removed_by_concrete_model",
+        "test_file": "tests/model_inheritance/test_abstract_inheritance.py",
+        "why_relevant": "它展示了更复杂的继承链中的字段覆盖场景（覆盖被移除的字段），与 Issue 中覆盖 choices 的场景在“覆盖”概念上相关。",
+        "reusable_parts": [
+          "多层继承的模型定义结构",
+          "使用 foo = None 和 foo = models.CharField(...) 进行字段覆盖的模式"
+        ],
+        "possible_gap": "同样，它只测试字段的元数据，不涉及 choices 或 get_FIELD_display。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "创建一个继承自抽象基类的子模型，该子模型覆盖基类的 choices 列表，添加新的选项元组。然后创建子模型的实例，为该字段设置新增选项的值，并调用 get_FIELD_display() 方法。",
+      "evidence": [
+        "Issue 描述中给出了具体的示例：抽象基类 A 定义了 foo_choice 和 field_foo，子类 B 覆盖 foo_choice 并添加了 ('C', 'output3')。在 B 的实例上调用 get_field_foo_display()，当 field_foo 值为 'C' 时触发问题。",
+        "相关测试 3 和 4 展示了模型继承和字段覆盖的模式。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "对于子模型中新增的 choices 选项，get_FIELD_display() 返回了选项的原始值（例如 'C'），而不是预期的显示文本（例如 'output3'）。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中明确说明：'but for value \"C\" the method returns \"C\" and not \"output3\" which is the expected behaviour'。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "Model.get_FIELD_display",
+        "kind": "method",
+        "source_path": "django/db/models/base.py",
+        "reason": "Issue 的核心就是关于此方法在特定继承场景下的错误行为。"
+      },
+      {
+        "name": "models.CharField",
+        "kind": "class",
+        "source_path": "django/db/models/__init__.py",
+        "reason": "Issue 示例中使用了带有 choices 参数的 CharField。"
+      },
+      {
+        "name": "models.Model",
+        "kind": "class",
+        "source_path": "django/db/models/base.py",
+        "reason": "所有模型类的基类，get_FIELD_display 方法定义于此。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/models/base.py",
+        "object": "Model._get_FIELD_display",
+        "lines": "",
+        "reason": "这是实现 get_FIELD_display 功能的方法，Issue 直接指向其行为。问题可能在于该方法在解析 choices 时，未能正确获取子类覆盖后的字段定义。"
+      },
+      {
+        "path": "django/db/models/options.py",
+        "object": "Options",
+        "lines": "",
+        "reason": "模型元数据（Meta）的管理者，负责存储字段信息。choices 信息可能存储在字段的元数据中，在继承场景下，获取字段定义的逻辑可能存在缺陷。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "object_state",
+        "current_pattern": "相关测试 1 中，Whiz 模型是独立的，没有继承关系，其 choices 在定义时固定。",
+        "target_pattern": "创建一个继承自抽象基类的子模型，子模型覆盖基类字段的 choices 参数，添加新的选项。然后实例化子模型并设置字段值为新增选项。",
+        "reason": "Issue 明确指出缺陷发生在继承并覆盖 choices 的场景下。将测试对象的状态从单一模型变为继承模型，是触发缺陷路径的关键。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中，向 get_c_display() 提供的输入是固定的值（1, 0, 9, None, ''）。",
+        "target_pattern": "向 get_FIELD_display() 提供的输入应为子模型新增 choices 选项对应的值（如 Issue 中的 'C'）。",
+        "reason": "对于继承自父类的选项（'A', 'B'），方法工作正常；问题仅出现在新增选项上。因此输入必须针对新增选项。",
+        "confidence": "high"
+      }
+    ],
+    "safety_constraints": [
+      {
+        "rule": "positive_example_polarity",
+        "severity": "hard",
+        "protected_inputs": [
+          "A",
+          "B"
+        ],
+        "instruction": "Inputs explicitly described by the Issue as accepted, parsed, or successful must not be used as invalid inputs and must not be placed inside assertRaises/pytest.raises.",
+        "evidence": [
+          "Issue describes 'A' on a successful/accepted path.",
+          "Issue describes 'B' on a successful/accepted path."
+        ]
+      }
+    ],
+    "audit_warnings": [
+      "Derived polarity audit: do not reinterpret successful Issue example(s) 'A', 'B' as invalid trigger inputs."
+    ]
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "get_FIELD_display() 方法应正确返回子模型中定义的 choices 列表里所有选项对应的显示文本，包括从父类继承并覆盖后新增的选项。",
+      "evidence": [
+        "Issue 中描述了预期行为：'returns \"output1\" / \"output2\"' 对于继承的选项，以及 'not \"output3\" which is the expected behaviour' 对于新增选项。",
+        "相关测试 1 展示了 get_FIELD_display() 在正常情况下根据 choices 返回显示文本的行为模式。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "instance.get_field_foo_display() 的返回值。",
+        "reason": "Issue 的核心错误现象就是返回值错误。直接观察该方法的输出是判断问题是否存在的直接方式。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "instance._meta.get_field('field_name').choices 在基类和子类实例上的值。",
+        "reason": "需要确认子类实例关联的字段对象是否确实包含了覆盖后的 choices 列表。这有助于定位问题是出在 choices 的存储上，还是出在 get_FIELD_display 的查找逻辑上。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "对于子类实例，当字段值为子类 choices 中新增的选项时，get_FIELD_display() 应返回对应的显示文本，而不是原始值。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的、可能包含内部表示的 choices 数据结构。避免断言与继承链中其他模型无关的字段属性。",
+        "reason": "Issue 明确给出了期望的输出（'output3'）。使用 equals 直接验证返回值是否符合预期，简单且稳定。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "缺陷的确切根源是在 Model._get_FIELD_display 方法内部，还是在模型字段初始化/继承时 choices 数据的存储位置（如 _meta）？",
+    "是否只有抽象基类继承会出现此问题？普通的多表继承或代理模型是否也有类似问题？",
+    "除了新增选项，如果子类完全替换了父类的 choices 列表（即不包含任何父类选项），get_FIELD_display 对于原父类选项的值会如何表现？"
+  ],
+  "raw": {
+    "issue_summary": "当子模型继承并覆盖父模型的 choices 字段时，get_FIELD_display() 方法无法正确显示新增选项的显示文本。",
+    "trigger_condition": {
+      "text": "创建一个继承自抽象基类的子模型，该子模型覆盖基类的 choices 列表，添加新的选项元组。然后创建子模型的实例，为该字段设置新增选项的值，并调用 get_FIELD_display() 方法。",
+      "evidence": [
+        "Issue 描述中给出了具体的示例：抽象基类 A 定义了 foo_choice 和 field_foo，子类 B 覆盖 foo_choice 并添加了 ('C', 'output3')。在 B 的实例上调用 get_field_foo_display()，当 field_foo 值为 'C' 时触发问题。",
+        "相关测试 3 和 4 展示了模型继承和字段覆盖的模式。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "对于子模型中新增的 choices 选项，get_FIELD_display() 返回了选项的原始值（例如 'C'），而不是预期的显示文本（例如 'output3'）。",
+      "symptom_type": "wrong_return",
+      "evidence": [
+        "Issue 中明确说明：'but for value \"C\" the method returns \"C\" and not \"output3\" which is the expected behaviour'。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "get_FIELD_display() 方法应正确返回子模型中定义的 choices 列表里所有选项对应的显示文本，包括从父类继承并覆盖后新增的选项。",
+      "evidence": [
+        "Issue 中描述了预期行为：'returns \"output1\" / \"output2\"' 对于继承的选项，以及 'not \"output3\" which is the expected behaviour' 对于新增选项。",
+        "相关测试 1 展示了 get_FIELD_display() 在正常情况下根据 choices 返回显示文本的行为模式。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "Model.get_FIELD_display",
+        "kind": "method",
+        "source_path": "django/db/models/base.py",
+        "reason": "Issue 的核心就是关于此方法在特定继承场景下的错误行为。"
+      },
+      {
+        "name": "models.CharField",
+        "kind": "class",
+        "source_path": "django/db/models/__init__.py",
+        "reason": "Issue 示例中使用了带有 choices 参数的 CharField。"
+      },
+      {
+        "name": "models.Model",
+        "kind": "class",
+        "source_path": "django/db/models/base.py",
+        "reason": "所有模型类的基类，get_FIELD_display 方法定义于此。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/db/models/base.py",
+        "object": "Model._get_FIELD_display",
+        "lines": "",
+        "reason": "这是实现 get_FIELD_display 功能的方法，Issue 直接指向其行为。问题可能在于该方法在解析 choices 时，未能正确获取子类覆盖后的字段定义。"
+      },
+      {
+        "path": "django/db/models/options.py",
+        "object": "Options",
+        "lines": "",
+        "reason": "模型元数据（Meta）的管理者，负责存储字段信息。choices 信息可能存储在字段的元数据中，在继承场景下，获取字段定义的逻辑可能存在缺陷。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "GetFieldDisplayTests.test_choices_and_field_display",
+        "test_file": "tests/model_fields/tests.py",
+        "why_relevant": "它直接测试了 get_FIELD_display() 方法在各种 choices 值下的行为，包括有效值、无效值和空白值。这是测试该核心功能的基础模板。",
+        "reusable_parts": [
+          "测试类的结构 (SimpleTestCase)",
+          "调用 get_FIELD_display() 并断言其返回值的模式",
+          "使用 self.assertEqual 进行断言"
+        ],
+        "possible_gap": "该测试没有涉及模型继承和字段覆盖的场景。它测试的是单个模型上 choices 的行为。"
+      },
+      {
+        "test_name": "AbstractInheritanceTests.test_single_parent",
+        "test_file": "tests/model_inheritance/test_abstract_inheritance.py",
+        "why_relevant": "它测试了抽象基类继承和字段覆盖（如 name 字段的 max_length）的行为。这为构建 Issue 描述的继承场景提供了框架。",
+        "reusable_parts": [
+          "使用 @isolate_apps 装饰器",
+          "在测试函数内动态定义抽象基类和子类的模式",
+          "使用 abstract=True Meta 选项",
+          "断言覆盖后字段的属性（如 max_length）"
+        ],
+        "possible_gap": "该测试只检查了字段的元数据属性（max_length），没有测试字段的运行时行为，如 get_FIELD_display()。"
+      },
+      {
+        "test_name": "AbstractInheritanceTests.test_overriding_field_removed_by_concrete_model",
+        "test_file": "tests/model_inheritance/test_abstract_inheritance.py",
+        "why_relevant": "它展示了更复杂的继承链中的字段覆盖场景（覆盖被移除的字段），与 Issue 中覆盖 choices 的场景在“覆盖”概念上相关。",
+        "reusable_parts": [
+          "多层继承的模型定义结构",
+          "使用 foo = None 和 foo = models.CharField(...) 进行字段覆盖的模式"
+        ],
+        "possible_gap": "同样，它只测试字段的元数据，不涉及 choices 或 get_FIELD_display。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "object_state",
+        "current_pattern": "相关测试 1 中，Whiz 模型是独立的，没有继承关系，其 choices 在定义时固定。",
+        "target_pattern": "创建一个继承自抽象基类的子模型，子模型覆盖基类字段的 choices 参数，添加新的选项。然后实例化子模型并设置字段值为新增选项。",
+        "reason": "Issue 明确指出缺陷发生在继承并覆盖 choices 的场景下。将测试对象的状态从单一模型变为继承模型，是触发缺陷路径的关键。",
+        "confidence": "high"
+      },
+      {
+        "slot": "input",
+        "current_pattern": "相关测试 1 中，向 get_c_display() 提供的输入是固定的值（1, 0, 9, None, ''）。",
+        "target_pattern": "向 get_FIELD_display() 提供的输入应为子模型新增 choices 选项对应的值（如 Issue 中的 'C'）。",
+        "reason": "对于继承自父类的选项（'A', 'B'），方法工作正常；问题仅出现在新增选项上。因此输入必须针对新增选项。",
+        "confidence": "high"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "return_value",
+        "expression_hint": "instance.get_field_foo_display() 的返回值。",
+        "reason": "Issue 的核心错误现象就是返回值错误。直接观察该方法的输出是判断问题是否存在的直接方式。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "instance._meta.get_field('field_name').choices 在基类和子类实例上的值。",
+        "reason": "需要确认子类实例关联的字段对象是否确实包含了覆盖后的 choices 列表。这有助于定位问题是出在 choices 的存储上，还是出在 get_FIELD_display 的查找逻辑上。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "对于子类实例，当字段值为子类 choices 中新增的选项时，get_FIELD_display() 应返回对应的显示文本，而不是原始值。",
+        "preferred_assertion_style": "equals",
+        "avoid": "避免断言完整的、可能包含内部表示的 choices 数据结构。避免断言与继承链中其他模型无关的字段属性。",
+        "reason": "Issue 明确给出了期望的输出（'output3'）。使用 equals 直接验证返回值是否符合预期，简单且稳定。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要使用 SimpleTestCase 或 TransactionTestCase（如果涉及数据库操作，如创建实例）。可能需要使用 @isolate_apps 来隔离动态创建的模型。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "需要定义抽象基类（abstract=True）和继承它的具体子类，并在子类中覆盖父类的字段定义，特别是 choices 参数。",
+        "source": "issue",
+        "confidence": "high"
+      }
+    ],
+    "uncertainties": [
+      "缺陷的确切根源是在 Model._get_FIELD_display 方法内部，还是在模型字段初始化/继承时 choices 数据的存储位置（如 _meta）？",
+      "是否只有抽象基类继承会出现此问题？普通的多表继承或代理模型是否也有类似问题？",
+      "除了新增选项，如果子类完全替换了父类的 choices 列表（即不包含任何父类选项），get_FIELD_display 对于原父类选项的值会如何表现？"
+    ]
+  }
+}

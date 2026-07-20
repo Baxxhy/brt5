@@ -1,0 +1,388 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "django__django-13321",
+  "issue_summary": "解码无效的会话数据时，由于base64填充不正确导致binascii.Error异常，进而引发服务器崩溃。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要导入`SessionStore`或使用测试基类`SessionTestsMixin`来获取`self.session`对象。可能需要使用文件、数据库或缓存后端的具体会话类。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用`@override_settings`来设置`SECRET_KEY`，因为会话编码/解码依赖于它。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在`TestCase`类中运行，以利用Django的测试工具和清理。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "构造一个base64填充不正确的字符串作为输入。这可以通过手动构造无效的base64字符串或对有效字符串进行截断/修改来实现。",
+        "source": "issue",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_decode_failure_logged_to_security",
+        "test_file": "tests/sessions_tests/tests.py",
+        "why_relevant": "该测试专门测试解码失败（损坏数据）的场景，并验证返回空字典和记录日志的行为。这与Issue中解码无效数据的情况高度相关。",
+        "reusable_parts": [
+          "测试类结构（SessionTestsMixin）",
+          "使用`self.session`对象",
+          "调用`self.session.decode`方法",
+          "使用`assertEqual`验证返回空字典`{}`",
+          "可能使用`assertLogs`检查安全日志"
+        ],
+        "possible_gap": "该测试使用了一个格式错误但base64编码正确的字符串（`base64.b64encode(b'flaskdj:alkdjf').decode('ascii')`），而Issue触发的是base64填充不正确的数据。现有测试可能未覆盖`binascii.Error`这一特定异常路径。"
+      },
+      {
+        "test_name": "test_decode_legacy",
+        "test_file": "tests/sessions_tests/tests.py",
+        "why_relevant": "该测试直接测试`_legacy_decode`路径（解码旧格式数据），与Issue中触发旧格式解码的场景一致。",
+        "reusable_parts": [
+          "测试类结构",
+          "使用`self.session.decode`",
+          "提供旧格式编码的会话数据字符串",
+          "使用`assertEqual`验证解码结果"
+        ],
+        "possible_gap": "该测试使用了一个有效的、格式正确的旧编码数据，目的是验证成功解码。它没有测试无效或损坏的旧格式数据。"
+      },
+      {
+        "test_name": "test_decode",
+        "test_file": "tests/sessions_tests/tests.py",
+        "why_relevant": "这是解码功能的基础测试，展示了如何编码数据然后解码，并验证相等性。提供了调用`decode` API的基本模式。",
+        "reusable_parts": [
+          "调用`self.session.encode`和`self.session.decode`的模式",
+          "使用`assertEqual`验证数据字典"
+        ],
+        "possible_gap": "它只测试了成功路径，没有涉及任何错误或无效输入。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "当会话存储中存在一个使用Django 3.1之前格式编码的无效会话数据，并且该数据的base64编码填充不正确时，尝试解码该数据。",
+      "evidence": [
+        "Issue描述中提到升级到3.1后，旧的会话仍然活跃，并导致崩溃。",
+        "Issue的堆栈跟踪显示异常发生在`_legacy_decode`方法中的`base64.b64decode`调用处，并抛出`binascii.Error: Incorrect padding`。",
+        "源码片段5显示`_legacy_decode`方法用于解码旧格式的会话数据。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "服务器在处理请求时抛出`binascii.Error: Incorrect padding`异常，导致内部服务器错误（500）。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue的堆栈跟踪中明确显示了`binascii.Error: Incorrect padding`。",
+        "Issue描述中提到“On browsing to any URL, I get the crash below.”和“Internal Server Error”。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "SessionBase._legacy_decode",
+        "kind": "method",
+        "source_path": "django/contrib/sessions/backends/base.py",
+        "reason": "Issue的堆栈跟踪显示崩溃发生在该方法内部，它负责解码旧格式的会话数据。"
+      },
+      {
+        "name": "SessionBase.decode",
+        "kind": "method",
+        "source_path": "django/contrib/sessions/backends/base.py",
+        "reason": "这是解码会话数据的主入口点，它调用`_legacy_decode`。"
+      },
+      {
+        "name": "SessionStore.load",
+        "kind": "method",
+        "source_path": "django/contrib/sessions/backends/file.py",
+        "reason": "Issue中使用的可能是文件会话后端，`load`方法调用`decode`。"
+      },
+      {
+        "name": "base64.b64decode",
+        "kind": "function",
+        "source_path": "",
+        "reason": "直接抛出`binascii.Error`异常的函数。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/contrib/sessions/backends/base.py",
+        "object": "SessionBase._legacy_decode",
+        "lines": "133-150",
+        "reason": "Issue的堆栈跟踪指向该方法，其中`base64.b64decode`的调用可能未正确处理`binascii.Error`异常，导致其向上传播。源码片段5显示其`except Exception`子句可能未捕获`binascii.Error`（因为`binascii.Error`不是`ValueError`、`SuspiciousOperation`或unpickling异常）。"
+      },
+      {
+        "path": "django/contrib/sessions/backends/base.py",
+        "object": "SessionBase.decode",
+        "lines": "119-125",
+        "reason": "该方法调用`signing.loads`失败后，会捕获`Exception`并转向`_legacy_decode`。如果`_legacy_decode`抛出异常，它可能未被捕获。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试1（test_decode_legacy）中使用的是一个有效的、base64填充正确的旧格式编码字符串。",
+        "target_pattern": "提供一个base64编码无效（填充不正确）的字符串作为`session_data`输入给`decode`或`_legacy_decode`方法。",
+        "reason": "根据Issue，触发bug的输入是填充不正确的base64数据。将测试输入变异为此类数据可能引导执行流走向抛出`binascii.Error`的路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "测试通常直接调用`self.session.decode(session_data)`。",
+        "target_pattern": "可能需要模拟一个完整的请求流程，使得会话后端（如文件后端）的`load`方法被调用，进而触发`decode`。或者，直接测试`_legacy_decode`方法。",
+        "reason": "Issue中的崩溃发生在完整的请求处理链中。仅调用`decode`可能不足以复现某些后端特定的上下文或状态。但核心缺陷在解码逻辑本身。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "测试通常在默认设置下运行。",
+        "target_pattern": "可能需要确保会话后端是文件后端（`django.contrib.sessions.backends.file`），因为Issue中提到Gunicorn和可能使用文件存储。或者，缺陷与后端无关，是基类逻辑问题。",
+        "reason": "Issue发生在特定部署环境，但堆栈跟踪显示问题在基类`SessionBase`中。然而，使用特定后端可能影响`load`方法的调用。",
+        "confidence": "low"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "当遇到无效的（包括base64填充不正确的）旧格式会话数据时，解码过程应优雅地处理异常，并返回一个空字典（表示空会话），而不是抛出未捕获的异常导致服务器崩溃。",
+      "evidence": [
+        "源码片段5中`_legacy_decode`方法的注释和代码表明，其目的是在遇到各种异常（包括ValueError, SuspiciousOperation, unpickling exceptions）时返回空字典。",
+        "相关测试2（test_decode_failure_logged_to_security）展示了当解码失败时，期望返回空字典`{}`。",
+        "源码片段3中`load`方法在捕获`SuspiciousOperation`异常后调用`self.create()`，暗示了错误恢复行为。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用`session.decode(invalid_b64_data)`或`session._legacy_decode(invalid_b64_data)`时是否抛出`binascii.Error`或其父类`Exception`。",
+        "reason": "Issue的核心错误现象是`binascii.Error`异常未被捕获，导致崩溃。观测是否抛出此异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "`decode`或`_legacy_decode`方法的返回值。",
+        "reason": "根据预期行为，即使输入无效，方法也应返回一个空字典`{}`，而不是让异常传播。观测返回值可以验证行为是否正确。"
+      },
+      {
+        "kind": "warning",
+        "expression_hint": "安全日志（`django.security.SuspiciousSession`）是否被记录。",
+        "reason": "相关测试2和源码片段5表明，在解码损坏数据时，应记录警告。观测日志可以辅助判断是否进入了错误处理路径。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当使用填充不正确的base64字符串调用`decode`或`_legacy_decode`时，不应抛出`binascii.Error`（或任何导致崩溃的异常），而应返回空字典`{}`。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的异常消息字符串或精确的堆栈跟踪。避免断言不相关的会话内容。",
+        "reason": "预期行为是优雅降级，返回空会话。使用`assertEqual(actual, {})`直接验证返回值是最稳定且与Issue语义对齐的断言。也可以结合`assertNotRaises`或`assertRaises`的否定形式，但`equals`更直接。"
+      },
+      {
+        "assertion_goal": "如果实现修复后包含日志记录，可以断言安全警告被记录。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的日志消息字符串。",
+        "reason": "记录警告是现有相关测试和源码中体现的辅助行为，可以作为错误处理路径被执行的佐证。检查日志输出中是否包含相关关键词（如'corrupted'）更稳定。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "`binascii.Error`是否在`_legacy_decode`方法当前的`except Exception:`子句中被捕获？从源码片段5看，该子句捕获`Exception`，而`binascii.Error`是`Exception`的子类，理论上应被捕获。但Issue表明它未被捕获而传播了出去。这可能意味着异常在更早或更晚的地方抛出，或者当前代码版本与Issue报告时的版本有差异。",
+    "Issue中提到的“old session which was still active”具体是何种格式？是Django 3.1之前的序列化格式，还是其他自定义格式？",
+    "缺陷是否与会话后端类型（文件、数据库、缓存）强相关？堆栈跟踪显示问题在基类逻辑中，可能独立于后端。",
+    "`_legacy_decode`方法中的`base64.b64decode`调用是否可能在其他地方（如`signing.loads`）先抛出`BadSignature`，然后被`decode`方法捕获并转向`_legacy_decode`？Issue的堆栈跟踪显示了`BadSignature`，然后进入了`_legacy_decode`。"
+  ],
+  "raw": {
+    "issue_summary": "解码无效的会话数据时，由于base64填充不正确导致binascii.Error异常，进而引发服务器崩溃。",
+    "trigger_condition": {
+      "text": "当会话存储中存在一个使用Django 3.1之前格式编码的无效会话数据，并且该数据的base64编码填充不正确时，尝试解码该数据。",
+      "evidence": [
+        "Issue描述中提到升级到3.1后，旧的会话仍然活跃，并导致崩溃。",
+        "Issue的堆栈跟踪显示异常发生在`_legacy_decode`方法中的`base64.b64decode`调用处，并抛出`binascii.Error: Incorrect padding`。",
+        "源码片段5显示`_legacy_decode`方法用于解码旧格式的会话数据。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "服务器在处理请求时抛出`binascii.Error: Incorrect padding`异常，导致内部服务器错误（500）。",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue的堆栈跟踪中明确显示了`binascii.Error: Incorrect padding`。",
+        "Issue描述中提到“On browsing to any URL, I get the crash below.”和“Internal Server Error”。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "当遇到无效的（包括base64填充不正确的）旧格式会话数据时，解码过程应优雅地处理异常，并返回一个空字典（表示空会话），而不是抛出未捕获的异常导致服务器崩溃。",
+      "evidence": [
+        "源码片段5中`_legacy_decode`方法的注释和代码表明，其目的是在遇到各种异常（包括ValueError, SuspiciousOperation, unpickling exceptions）时返回空字典。",
+        "相关测试2（test_decode_failure_logged_to_security）展示了当解码失败时，期望返回空字典`{}`。",
+        "源码片段3中`load`方法在捕获`SuspiciousOperation`异常后调用`self.create()`，暗示了错误恢复行为。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "SessionBase._legacy_decode",
+        "kind": "method",
+        "source_path": "django/contrib/sessions/backends/base.py",
+        "reason": "Issue的堆栈跟踪显示崩溃发生在该方法内部，它负责解码旧格式的会话数据。"
+      },
+      {
+        "name": "SessionBase.decode",
+        "kind": "method",
+        "source_path": "django/contrib/sessions/backends/base.py",
+        "reason": "这是解码会话数据的主入口点，它调用`_legacy_decode`。"
+      },
+      {
+        "name": "SessionStore.load",
+        "kind": "method",
+        "source_path": "django/contrib/sessions/backends/file.py",
+        "reason": "Issue中使用的可能是文件会话后端，`load`方法调用`decode`。"
+      },
+      {
+        "name": "base64.b64decode",
+        "kind": "function",
+        "source_path": "",
+        "reason": "直接抛出`binascii.Error`异常的函数。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "django/contrib/sessions/backends/base.py",
+        "object": "SessionBase._legacy_decode",
+        "lines": "133-150",
+        "reason": "Issue的堆栈跟踪指向该方法，其中`base64.b64decode`的调用可能未正确处理`binascii.Error`异常，导致其向上传播。源码片段5显示其`except Exception`子句可能未捕获`binascii.Error`（因为`binascii.Error`不是`ValueError`、`SuspiciousOperation`或unpickling异常）。"
+      },
+      {
+        "path": "django/contrib/sessions/backends/base.py",
+        "object": "SessionBase.decode",
+        "lines": "119-125",
+        "reason": "该方法调用`signing.loads`失败后，会捕获`Exception`并转向`_legacy_decode`。如果`_legacy_decode`抛出异常，它可能未被捕获。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_decode_failure_logged_to_security",
+        "test_file": "tests/sessions_tests/tests.py",
+        "why_relevant": "该测试专门测试解码失败（损坏数据）的场景，并验证返回空字典和记录日志的行为。这与Issue中解码无效数据的情况高度相关。",
+        "reusable_parts": [
+          "测试类结构（SessionTestsMixin）",
+          "使用`self.session`对象",
+          "调用`self.session.decode`方法",
+          "使用`assertEqual`验证返回空字典`{}`",
+          "可能使用`assertLogs`检查安全日志"
+        ],
+        "possible_gap": "该测试使用了一个格式错误但base64编码正确的字符串（`base64.b64encode(b'flaskdj:alkdjf').decode('ascii')`），而Issue触发的是base64填充不正确的数据。现有测试可能未覆盖`binascii.Error`这一特定异常路径。"
+      },
+      {
+        "test_name": "test_decode_legacy",
+        "test_file": "tests/sessions_tests/tests.py",
+        "why_relevant": "该测试直接测试`_legacy_decode`路径（解码旧格式数据），与Issue中触发旧格式解码的场景一致。",
+        "reusable_parts": [
+          "测试类结构",
+          "使用`self.session.decode`",
+          "提供旧格式编码的会话数据字符串",
+          "使用`assertEqual`验证解码结果"
+        ],
+        "possible_gap": "该测试使用了一个有效的、格式正确的旧编码数据，目的是验证成功解码。它没有测试无效或损坏的旧格式数据。"
+      },
+      {
+        "test_name": "test_decode",
+        "test_file": "tests/sessions_tests/tests.py",
+        "why_relevant": "这是解码功能的基础测试，展示了如何编码数据然后解码，并验证相等性。提供了调用`decode` API的基本模式。",
+        "reusable_parts": [
+          "调用`self.session.encode`和`self.session.decode`的模式",
+          "使用`assertEqual`验证数据字典"
+        ],
+        "possible_gap": "它只测试了成功路径，没有涉及任何错误或无效输入。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相关测试1（test_decode_legacy）中使用的是一个有效的、base64填充正确的旧格式编码字符串。",
+        "target_pattern": "提供一个base64编码无效（填充不正确）的字符串作为`session_data`输入给`decode`或`_legacy_decode`方法。",
+        "reason": "根据Issue，触发bug的输入是填充不正确的base64数据。将测试输入变异为此类数据可能引导执行流走向抛出`binascii.Error`的路径。",
+        "confidence": "high"
+      },
+      {
+        "slot": "call_chain",
+        "current_pattern": "测试通常直接调用`self.session.decode(session_data)`。",
+        "target_pattern": "可能需要模拟一个完整的请求流程，使得会话后端（如文件后端）的`load`方法被调用，进而触发`decode`。或者，直接测试`_legacy_decode`方法。",
+        "reason": "Issue中的崩溃发生在完整的请求处理链中。仅调用`decode`可能不足以复现某些后端特定的上下文或状态。但核心缺陷在解码逻辑本身。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "config",
+        "current_pattern": "测试通常在默认设置下运行。",
+        "target_pattern": "可能需要确保会话后端是文件后端（`django.contrib.sessions.backends.file`），因为Issue中提到Gunicorn和可能使用文件存储。或者，缺陷与后端无关，是基类逻辑问题。",
+        "reason": "Issue发生在特定部署环境，但堆栈跟踪显示问题在基类`SessionBase`中。然而，使用特定后端可能影响`load`方法的调用。",
+        "confidence": "low"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "调用`session.decode(invalid_b64_data)`或`session._legacy_decode(invalid_b64_data)`时是否抛出`binascii.Error`或其父类`Exception`。",
+        "reason": "Issue的核心错误现象是`binascii.Error`异常未被捕获，导致崩溃。观测是否抛出此异常是判断缺陷是否触发的直接方式。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "`decode`或`_legacy_decode`方法的返回值。",
+        "reason": "根据预期行为，即使输入无效，方法也应返回一个空字典`{}`，而不是让异常传播。观测返回值可以验证行为是否正确。"
+      },
+      {
+        "kind": "warning",
+        "expression_hint": "安全日志（`django.security.SuspiciousSession`）是否被记录。",
+        "reason": "相关测试2和源码片段5表明，在解码损坏数据时，应记录警告。观测日志可以辅助判断是否进入了错误处理路径。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "当使用填充不正确的base64字符串调用`decode`或`_legacy_decode`时，不应抛出`binascii.Error`（或任何导致崩溃的异常），而应返回空字典`{}`。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言完整的异常消息字符串或精确的堆栈跟踪。避免断言不相关的会话内容。",
+        "reason": "预期行为是优雅降级，返回空会话。使用`assertEqual(actual, {})`直接验证返回值是最稳定且与Issue语义对齐的断言。也可以结合`assertNotRaises`或`assertRaises`的否定形式，但`equals`更直接。"
+      },
+      {
+        "assertion_goal": "如果实现修复后包含日志记录，可以断言安全警告被记录。",
+        "preferred_assertion_style": "contains_fragment",
+        "avoid": "断言完整的日志消息字符串。",
+        "reason": "记录警告是现有相关测试和源码中体现的辅助行为，可以作为错误处理路径被执行的佐证。检查日志输出中是否包含相关关键词（如'corrupted'）更稳定。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要导入`SessionStore`或使用测试基类`SessionTestsMixin`来获取`self.session`对象。可能需要使用文件、数据库或缓存后端的具体会话类。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "可能需要使用`@override_settings`来设置`SECRET_KEY`，因为会话编码/解码依赖于它。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在`TestCase`类中运行，以利用Django的测试工具和清理。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "构造一个base64填充不正确的字符串作为输入。这可以通过手动构造无效的base64字符串或对有效字符串进行截断/修改来实现。",
+        "source": "issue",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "`binascii.Error`是否在`_legacy_decode`方法当前的`except Exception:`子句中被捕获？从源码片段5看，该子句捕获`Exception`，而`binascii.Error`是`Exception`的子类，理论上应被捕获。但Issue表明它未被捕获而传播了出去。这可能意味着异常在更早或更晚的地方抛出，或者当前代码版本与Issue报告时的版本有差异。",
+      "Issue中提到的“old session which was still active”具体是何种格式？是Django 3.1之前的序列化格式，还是其他自定义格式？",
+      "缺陷是否与会话后端类型（文件、数据库、缓存）强相关？堆栈跟踪显示问题在基类逻辑中，可能独立于后端。",
+      "`_legacy_decode`方法中的`base64.b64decode`调用是否可能在其他地方（如`signing.loads`）先抛出`BadSignature`，然后被`decode`方法捕获并转向`_legacy_decode`？Issue的堆栈跟踪显示了`BadSignature`，然后进入了`_legacy_decode`。"
+    ]
+  }
+}

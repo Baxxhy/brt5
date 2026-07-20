@@ -1,0 +1,282 @@
+{
+  "schema_version": "behavior_target.lossless.v1",
+  "instance_id": "matplotlib__matplotlib-22711",
+  "issue_summary": "使用 valinit 参数初始化 RangeSlider 时，set_val 方法中索引越界导致 IndexError。",
+  "setup": {
+    "setup_hints": [
+      {
+        "hint": "需要创建 matplotlib 图形和坐标轴 (fig, ax) 作为滑块容器。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在非交互式后端下运行，例如 'Agg'。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_range_slider",
+        "test_file": "lib/matplotlib/tests/test_widgets.py",
+        "why_relevant": "该测试直接针对 RangeSlider，测试了使用 valinit 参数初始化、set_val 方法调用和滑块状态断言。",
+        "reusable_parts": [
+          "imports (pytest, matplotlib.pyplot as plt, matplotlib.widgets)",
+          "测试 fixture (fig, ax)",
+          "RangeSlider 构造方式",
+          "使用 assert_allclose 进行数值断言"
+        ],
+        "possible_gap": "该测试使用的 valinit 值（如 [0.1, 0.34]）可能没有触发索引越界问题。它可能依赖于 self.poly.xy 的特定形状（长度为5），而缺陷场景下该数组长度可能为4。"
+      }
+    ]
+  },
+  "trigger": {
+    "trigger_condition": {
+      "text": "使用 valinit 参数（例如 valinit=[0.0, 0.0]）创建 RangeSlider 对象。",
+      "evidence": [
+        "Issue 中的复现代码：slider = RangeSlider(slider_ax, \"Threshold\", img.min(), img.max(),valinit=[0.0,0.0])",
+        "Issue 中的错误栈：File \"/Users/Vincent/opt/anaconda3/envs/py38/lib/python3.8/site-packages/matplotlib/widgets.py\", line 778, in __init__ self.set_val(valinit)",
+        "源码片段 3 显示 __init__ 中调用了 self.set_val(valinit)。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "IndexError: index 4 is out of bounds for axis 0 with size 4",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的 Actual outcome 部分显示了完整的错误信息。",
+        "Issue 中用户指出错误发生在 widgets.py 第 915 行的 xy[4] = val[0], .25 或 xy[4] = .25, val[0]。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "matplotlib.widgets.RangeSlider.__init__",
+        "kind": "method",
+        "source_path": "lib/matplotlib/widgets.py",
+        "reason": "创建滑块时传入 valinit 参数会触发 bug。"
+      },
+      {
+        "name": "matplotlib.widgets.RangeSlider.set_val",
+        "kind": "method",
+        "source_path": "lib/matplotlib/widgets.py",
+        "reason": "错误直接发生在该方法中，它被 __init__ 调用以设置初始值。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "lib/matplotlib/widgets.py",
+        "object": "RangeSlider.set_val",
+        "lines": "888-919",
+        "reason": "Issue 明确指出错误发生在该方法的第 915 行（或附近），尝试访问索引为 4 的数组元素，但数组大小可能只有 4。用户建议注释掉该行。"
+      },
+      {
+        "path": "lib/matplotlib/widgets.py",
+        "object": "RangeSlider.__init__",
+        "lines": "603-778",
+        "reason": "该方法调用 set_val(valinit) 来初始化滑块，是缺陷的触发入口。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中 valinit 使用非零值，如 [0.1, 0.34]。",
+        "target_pattern": "将 valinit 设置为 [0.0, 0.0] 或可能使 self.poly.xy 长度为 4 的其他值。",
+        "reason": "Issue 的复现代码使用了 valinit=[0.0,0.0]，这可能影响了 self.poly（一个 axvspan/axhspan 对象）的初始坐标数组长度，导致后续 set_val 中索引越界。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "相似测试中 self.poly.xy 可能是一个包含5个点的多边形坐标数组。",
+        "target_pattern": "在调用 set_val 之前，self.poly.xy 可能是一个只包含4个点的数组。",
+        "reason": "错误信息表明 xy 的大小为 4，但代码试图访问索引 4。这暗示了多边形初始状态与 set_val 中的硬编码索引不匹配。",
+        "confidence": "medium"
+      }
+    ],
+    "safety_constraints": [],
+    "audit_warnings": []
+  },
+  "oracle": {
+    "expected_behavior": {
+      "text": "RangeSlider 应能成功使用用户提供的 valinit 值进行初始化，并正确显示滑块。",
+      "evidence": [
+        "Issue 中的 Expected outcome: \"range slider with user initial values\"。",
+        "源码片段 3 中 __init__ 的文档说明 valinit 参数用于设置初始位置。",
+        "相关测试 1 (test_range_slider) 展示了使用 valinit 参数成功初始化的场景。"
+      ],
+      "confidence": "high"
+    },
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "在调用 RangeSlider.__init__(valinit=...) 时捕获 IndexError。",
+        "reason": "这是 Issue 中直接观察到的错误现象。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "在 set_val 方法开始时检查 self.poly.xy 的形状（shape）或长度（len）。",
+        "reason": "确认多边形坐标数组的长度是否为 4，这可以解释索引越界的原因。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "观察 RangeSlider 构造成功后 slider.val 的值。",
+        "reason": "验证初始化值是否被正确设置，这是期望的行为。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "使用给定的 valinit 参数创建 RangeSlider 对象不应抛出 IndexError 异常。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言具体的错误消息字符串完全匹配，因为行号或细节可能变化。",
+        "reason": "Issue 的核心是初始化时抛出异常，修复后应不再抛出。使用 pytest.raises 或类似方式捕获异常是直接验证。"
+      },
+      {
+        "assertion_goal": "成功创建后，滑块的值 (slider.val) 应与提供的初始化值（经排序和边界约束后）一致。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言 self.poly.xy 的完整坐标值，因为这属于内部实现细节。",
+        "reason": "验证滑块功能正确，而不仅仅是避免崩溃。这与相关测试 1 的断言风格一致。"
+      }
+    ]
+  },
+  "uncertainties": [
+    "self.poly.xy 数组长度在什么确切条件下会变成 4 而不是 5？是特定的 valinit 值、图像范围还是其他因素导致的？",
+    "除了注释掉 xy[4] 的赋值行，正确的修复方案是什么？是否需要调整多边形初始化逻辑？",
+    "垂直方向 (orientation=\"vertical\") 的滑块是否受同样问题影响？"
+  ],
+  "raw": {
+    "issue_summary": "使用 valinit 参数初始化 RangeSlider 时，set_val 方法中索引越界导致 IndexError。",
+    "trigger_condition": {
+      "text": "使用 valinit 参数（例如 valinit=[0.0, 0.0]）创建 RangeSlider 对象。",
+      "evidence": [
+        "Issue 中的复现代码：slider = RangeSlider(slider_ax, \"Threshold\", img.min(), img.max(),valinit=[0.0,0.0])",
+        "Issue 中的错误栈：File \"/Users/Vincent/opt/anaconda3/envs/py38/lib/python3.8/site-packages/matplotlib/widgets.py\", line 778, in __init__ self.set_val(valinit)",
+        "源码片段 3 显示 __init__ 中调用了 self.set_val(valinit)。"
+      ],
+      "confidence": "high"
+    },
+    "error_symptom": {
+      "text": "IndexError: index 4 is out of bounds for axis 0 with size 4",
+      "symptom_type": "exception",
+      "evidence": [
+        "Issue 中的 Actual outcome 部分显示了完整的错误信息。",
+        "Issue 中用户指出错误发生在 widgets.py 第 915 行的 xy[4] = val[0], .25 或 xy[4] = .25, val[0]。"
+      ],
+      "confidence": "high"
+    },
+    "expected_behavior": {
+      "text": "RangeSlider 应能成功使用用户提供的 valinit 值进行初始化，并正确显示滑块。",
+      "evidence": [
+        "Issue 中的 Expected outcome: \"range slider with user initial values\"。",
+        "源码片段 3 中 __init__ 的文档说明 valinit 参数用于设置初始位置。",
+        "相关测试 1 (test_range_slider) 展示了使用 valinit 参数成功初始化的场景。"
+      ],
+      "confidence": "high"
+    },
+    "target_apis": [
+      {
+        "name": "matplotlib.widgets.RangeSlider.__init__",
+        "kind": "method",
+        "source_path": "lib/matplotlib/widgets.py",
+        "reason": "创建滑块时传入 valinit 参数会触发 bug。"
+      },
+      {
+        "name": "matplotlib.widgets.RangeSlider.set_val",
+        "kind": "method",
+        "source_path": "lib/matplotlib/widgets.py",
+        "reason": "错误直接发生在该方法中，它被 __init__ 调用以设置初始值。"
+      }
+    ],
+    "suspected_bug_locations": [
+      {
+        "path": "lib/matplotlib/widgets.py",
+        "object": "RangeSlider.set_val",
+        "lines": "888-919",
+        "reason": "Issue 明确指出错误发生在该方法的第 915 行（或附近），尝试访问索引为 4 的数组元素，但数组大小可能只有 4。用户建议注释掉该行。"
+      },
+      {
+        "path": "lib/matplotlib/widgets.py",
+        "object": "RangeSlider.__init__",
+        "lines": "603-778",
+        "reason": "该方法调用 set_val(valinit) 来初始化滑块，是缺陷的触发入口。"
+      }
+    ],
+    "related_test_seeds": [
+      {
+        "test_name": "test_range_slider",
+        "test_file": "lib/matplotlib/tests/test_widgets.py",
+        "why_relevant": "该测试直接针对 RangeSlider，测试了使用 valinit 参数初始化、set_val 方法调用和滑块状态断言。",
+        "reusable_parts": [
+          "imports (pytest, matplotlib.pyplot as plt, matplotlib.widgets)",
+          "测试 fixture (fig, ax)",
+          "RangeSlider 构造方式",
+          "使用 assert_allclose 进行数值断言"
+        ],
+        "possible_gap": "该测试使用的 valinit 值（如 [0.1, 0.34]）可能没有触发索引越界问题。它可能依赖于 self.poly.xy 的特定形状（长度为5），而缺陷场景下该数组长度可能为4。"
+      }
+    ],
+    "mutation_hints": [
+      {
+        "slot": "input",
+        "current_pattern": "相似测试中 valinit 使用非零值，如 [0.1, 0.34]。",
+        "target_pattern": "将 valinit 设置为 [0.0, 0.0] 或可能使 self.poly.xy 长度为 4 的其他值。",
+        "reason": "Issue 的复现代码使用了 valinit=[0.0,0.0]，这可能影响了 self.poly（一个 axvspan/axhspan 对象）的初始坐标数组长度，导致后续 set_val 中索引越界。",
+        "confidence": "medium"
+      },
+      {
+        "slot": "object_state",
+        "current_pattern": "相似测试中 self.poly.xy 可能是一个包含5个点的多边形坐标数组。",
+        "target_pattern": "在调用 set_val 之前，self.poly.xy 可能是一个只包含4个点的数组。",
+        "reason": "错误信息表明 xy 的大小为 4，但代码试图访问索引 4。这暗示了多边形初始状态与 set_val 中的硬编码索引不匹配。",
+        "confidence": "medium"
+      }
+    ],
+    "observation_points": [
+      {
+        "kind": "exception",
+        "expression_hint": "在调用 RangeSlider.__init__(valinit=...) 时捕获 IndexError。",
+        "reason": "这是 Issue 中直接观察到的错误现象。"
+      },
+      {
+        "kind": "state",
+        "expression_hint": "在 set_val 方法开始时检查 self.poly.xy 的形状（shape）或长度（len）。",
+        "reason": "确认多边形坐标数组的长度是否为 4，这可以解释索引越界的原因。"
+      },
+      {
+        "kind": "return_value",
+        "expression_hint": "观察 RangeSlider 构造成功后 slider.val 的值。",
+        "reason": "验证初始化值是否被正确设置，这是期望的行为。"
+      }
+    ],
+    "assertion_hints": [
+      {
+        "assertion_goal": "使用给定的 valinit 参数创建 RangeSlider 对象不应抛出 IndexError 异常。",
+        "preferred_assertion_style": "raises",
+        "avoid": "断言具体的错误消息字符串完全匹配，因为行号或细节可能变化。",
+        "reason": "Issue 的核心是初始化时抛出异常，修复后应不再抛出。使用 pytest.raises 或类似方式捕获异常是直接验证。"
+      },
+      {
+        "assertion_goal": "成功创建后，滑块的值 (slider.val) 应与提供的初始化值（经排序和边界约束后）一致。",
+        "preferred_assertion_style": "equals",
+        "avoid": "断言 self.poly.xy 的完整坐标值，因为这属于内部实现细节。",
+        "reason": "验证滑块功能正确，而不仅仅是避免崩溃。这与相关测试 1 的断言风格一致。"
+      }
+    ],
+    "setup_hints": [
+      {
+        "hint": "需要创建 matplotlib 图形和坐标轴 (fig, ax) 作为滑块容器。",
+        "source": "retrieved_test",
+        "confidence": "high"
+      },
+      {
+        "hint": "测试可能需要在非交互式后端下运行，例如 'Agg'。",
+        "source": "inference",
+        "confidence": "medium"
+      }
+    ],
+    "uncertainties": [
+      "self.poly.xy 数组长度在什么确切条件下会变成 4 而不是 5？是特定的 valinit 值、图像范围还是其他因素导致的？",
+      "除了注释掉 xy[4] 的赋值行，正确的修复方案是什么？是否需要调整多边形初始化逻辑？",
+      "垂直方向 (orientation=\"vertical\") 的滑块是否受同样问题影响？"
+    ]
+  }
+}
