@@ -81,10 +81,11 @@ Do not put that file in the repository, even when the repository is private.
 ## 4. Run the full and ablation experiments
 
 The repository contains the frozen 276-instance BehaviorTarget version from
-`p0_simple_llm_selector_swt_generic_iteration_20260720_025533`:
+the full-method run `p0_simple_llm_selector_full276_20260717`, whose formal
+F2P result was `131/276 = 47.4638%`:
 
 ```bash
-BEHAVIOR_CACHE=data/behavior_targets/swt/generic_iteration_20260720_025533
+BEHAVIOR_CACHE=data/behavior_targets/swt/full_method_f2p_47_46_20260717
 
 # Optional independent integrity check before a run.
 conda run -n icore python scripts/validate_behavior_target_cache.py \

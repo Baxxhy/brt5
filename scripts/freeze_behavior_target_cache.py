@@ -28,6 +28,10 @@ def main() -> int:
     parser.add_argument("--source-run-id", default="")
     parser.add_argument("--source-model", default="")
     parser.add_argument("--source-temperature", type=float, default=None)
+    parser.add_argument("--source-method-variant", default="")
+    parser.add_argument("--source-f2p-success", type=int, default=None)
+    parser.add_argument("--source-f2p-total", type=int, default=None)
+    parser.add_argument("--source-f2p-percent", type=float, default=None)
     args = parser.parse_args()
     metadata = {
         key: value
@@ -35,6 +39,10 @@ def main() -> int:
             "source_run_id": args.source_run_id,
             "source_model": args.source_model,
             "source_temperature": args.source_temperature,
+            "source_method_variant": args.source_method_variant,
+            "source_f2p_success": args.source_f2p_success,
+            "source_f2p_total": args.source_f2p_total,
+            "source_f2p_percent": args.source_f2p_percent,
         }.items()
         if value not in {"", None}
     }
