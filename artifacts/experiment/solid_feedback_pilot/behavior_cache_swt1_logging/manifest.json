@@ -1,0 +1,24 @@
+{
+  "cache_schema_version": "brt5.behavior_target_cache.v1",
+  "cache_id": "solid-feedback-pilot-swt1-logging-frozen-47.46",
+  "created_at": "2026-07-20T17:20:39.177668+08:00",
+  "dataset_mode": "swt",
+  "instance_count": 1,
+  "behavior_schema_version": "behavior_target.lossless.v1",
+  "dataset_sha256": "d7007a7f91d7ba7bfdab3f9d52d8a0a79848693c916e7de49d8019cdbc93ad60",
+  "code_retrieval_sha256": "39d4dbeff604fbf8dfa5a71274a340a158570167cf3009321eec1c069ee44b68",
+  "test_retrieval_sha256": "b24d45601e43836a4fd81856b2b3f0c2486dd21911bd11aef2e03ced60b845e8",
+  "source_run_id": "p0_simple_llm_selector_full276_20260717",
+  "source_model": "deepseek-v3",
+  "source_temperature": 0.1,
+  "source_method_variant": "full",
+  "source_f2p_success": 131,
+  "source_f2p_total": 276,
+  "source_f2p_percent": 47.4638,
+  "behavior_targets": {
+    "django__django-13768": {
+      "path": "django__django-13768/behavior_target.json",
+      "sha256": "a2793efb129886733d4774134e210b3dc6986404f1a9e3985e8b91e420af9a19"
+    }
+  }
+}

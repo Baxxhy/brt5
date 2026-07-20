@@ -8,7 +8,11 @@ import re
 from pathlib import Path
 
 from ..retrieval.icore_runtime import icore_test_command
-from ..core.prompts import PROTOCOL_RECOVERY_SYSTEM_PROMPT, PROTOCOL_RECOVERY_USER_PROMPT
+from ..core.prompts import (
+    JOINT_SEED_PROTOCOL_RECOVERY_SYSTEM_PROMPT,
+    PROTOCOL_RECOVERY_SYSTEM_PROMPT,
+    PROTOCOL_RECOVERY_USER_PROMPT,
+)
 from ..core.ablation import (
     AblationConfig,
     behavior_prompt_payload,
@@ -93,6 +97,56 @@ def _local_symbols(directory: Path, referenced: set[str]) -> tuple[list[dict[str
     return helpers, models
 
 
+def _referenced_class_helpers(
+    cls: ast.ClassDef | None,
+    target: ast.AST | None,
+    source: str,
+    test_file: str,
+) -> list[dict[str, str]]:
+    """Recover class-local helpers that a seed needs in a new test module.
+
+    A retrieved method can execute successfully in its original class while a
+    generated same-directory test fails because a helper such as
+    ``self.assertTestIsClean`` was defined elsewhere in that class.  Follow
+    only ``self``/``cls`` references that resolve to concrete methods in the
+    same class, recursively, so inherited framework assertions are not copied
+    or guessed.
+    """
+
+    if cls is None or target is None:
+        return []
+    methods = {
+        child.name: child
+        for child in cls.body
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    def referenced_methods(node: ast.AST) -> set[str]:
+        return {
+            item.attr
+            for item in ast.walk(node)
+            if isinstance(item, ast.Attribute)
+            and isinstance(item.value, ast.Name)
+            and item.value.id in {"self", "cls"}
+            and item.attr in methods
+        }
+
+    pending = list(referenced_methods(target))
+    seen = {getattr(target, "name", "")}
+    helpers: list[dict[str, str]] = []
+    while pending:
+        name = pending.pop(0)
+        if name in seen:
+            continue
+        seen.add(name)
+        node = methods[name]
+        code = truncate_text(_source(node, source), 6000)
+        if code:
+            helpers.append({"name": name, "file": test_file, "code": code})
+        pending.extend(sorted(referenced_methods(node) - seen))
+    return helpers
+
+
 def recover_test_protocol(
     instance_id: str,
     related_test: RetrievedTest,
@@ -140,6 +194,9 @@ def recover_test_protocol(
     referenced = {node.id for node in ast.walk(target) if isinstance(node, ast.Name)} if target else set()
     directory = test_path.parent
     helpers, models = _local_symbols(directory, referenced)
+    helpers = _referenced_class_helpers(
+        cls, target, source, related_test.file
+    ) + helpers
     conftests: list[dict[str, object]] = []
     cursor = directory
     root = Path(buggy_worktree).resolve()
@@ -199,7 +256,13 @@ def audit_recovered_protocol(
     prompt = render_evidence_prompt(prompt, behavior)
     prompt = render_ablation_prompt(prompt, config)
     system_prompt = render_ablation_prompt(
-        PROTOCOL_RECOVERY_SYSTEM_PROMPT, config, include_banner=False
+        (
+            PROTOCOL_RECOVERY_SYSTEM_PROMPT
+            if config.mutation
+            else JOINT_SEED_PROTOCOL_RECOVERY_SYSTEM_PROMPT
+        ),
+        config,
+        include_banner=False,
     )
     prompt_path = Path(output_dir) / "prompts" / "protocol_recovery_prompt.txt"
     response_path = Path(output_dir) / "responses" / "protocol_recovery_response.txt"

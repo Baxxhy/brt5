@@ -1,26 +1,61 @@
-根据 Issue 目标、单一 seed 和测试协议生成一个小变异计划。最多选择 3 个 mutation_ops；不得重写无关 setup，不得编造 expected value。
+根据完整 Issue 证据、BehaviorTarget Trigger、单一 seed、相关源码和测试协议，生成一个仅修改 Trigger 的最小计划。
 
 BehaviorTarget：{behavior_json}
 HostContext：{host_context_json}
 ProtocolRecovery：{protocol_json}
-上一轮执行反馈：{execution_feedback}
+相关生产代码：
+{source_context}
+
+当前相似测试 seed：
+{seed_test_code}
+
+上一轮真实执行反馈：{execution_feedback}
 Verifier 反馈：{verifier_feedback}
 
-如果 buggy PASS 或 target_not_hit，优先 CALL_CHAIN_EXTEND、LIFECYCLE_TRIGGER、CONFIG_MUTATION。
-如果已进入目标 API 但仍 PASS，优先 ARG_BOUNDARY_EXPAND、ARG_VALUE_REPLACE、OPERATOR_FLIP、STATE_MUTATION、FIXTURE_DATA_MUTATION。
-如果 oracle 可疑，不要继续扩大 trigger。
-BehaviorTarget.trigger.safety_constraints 是硬约束；不得选择受保护的成功/合法输入作为
-异常触发值。验证错误消息时，保留 iCoRe seed 中真正无效的输入，只规划 oracle 语义变异。
+允许的 op 只有：
+- ARG_VALUE_REPLACE
+- ARG_BOUNDARY_EXPAND
+- OPERATOR_FLIP
+- CALL_CHAIN_EXTEND
+- STATE_MUTATION
+- FIXTURE_DATA_MUTATION
+- CONFIG_MUTATION
+- MOCK_BEHAVIOR_MUTATION
+- LIFECYCLE_TRIGGER
+- SERIALIZATION_TRIGGER
+- WARNING_LOG_TRIGGER
 
-只输出：
+选择规则：
+1. 初始轮只规划 Issue 明确要求、且 seed 尚未包含的最小 Trigger 差异。
+2. buggy PASS 或 target_not_hit 时，使用执行日志和 Verifier 指出的具体缺口；不要重新规划 Oracle。
+3. 若 seed 已经包含正确 Trigger，只需 Oracle 变化，则返回 ABSTAIN，由后续 Oracle 模块处理。
+4. 每个 step 的 before、after 和 seed_anchor 必须具体；seed_anchor/before 必须逐 AST 对应 seed 中真实存在的代码，包括常量和关键字参数，不能写“修改输入”“调用目标 API”等泛化描述。
+5. 如果无法同时给出真实文件、符号和 seed anchor，返回 ABSTAIN。
+
+有安全计划时只输出：
 {{
-  "mutation_goal": "",
+  "status": "PROPOSED",
+  "trigger_goal": "",
+  "steps": [
+    {{
+      "op": "ARG_VALUE_REPLACE",
+      "target_file": "真实/相对/路径.py",
+      "target_symbol": "真实类或函数符号",
+      "seed_anchor": "seed 中真实存在的代码表达式",
+      "before": "seed 中的原值或原调用",
+      "after": "Issue 要求的新值或新调用",
+      "rationale": "为什么该修改会进入目标路径",
+      "risk": "low|medium"
+    }}
+  ],
   "preserve_from_seed": [],
-  "target_api": [],
-  "target_path": [],
-  "mutation_ops": [],
-  "expected_behavior": "只复述 Issue 明确行为",
-  "oracle_strategy": "公开行为",
-  "why_this_should_trigger": "",
-  "risk": "low|medium|high"
+  "why_target_will_be_reached": ""
+}}
+没有安全计划时只输出：
+{{
+  "status": "ABSTAIN",
+  "trigger_goal": "",
+  "steps": [],
+  "preserve_from_seed": [],
+  "why_target_will_be_reached": "证据不足的具体原因"
 }}

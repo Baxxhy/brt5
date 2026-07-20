@@ -1,0 +1,40 @@
+{
+  "cache_schema_version": "brt5.behavior_target_cache.v1",
+  "cache_id": "solid-feedback-pilot-swt5-frozen-47.46",
+  "created_at": "2026-07-20T16:46:10.605841+08:00",
+  "dataset_mode": "swt",
+  "instance_count": 5,
+  "behavior_schema_version": "behavior_target.lossless.v1",
+  "dataset_sha256": "8339a357c3b17788542f4f0f7fcb10aa425ff39a7bb0190d12481387f7a952b0",
+  "code_retrieval_sha256": "39d4dbeff604fbf8dfa5a71274a340a158570167cf3009321eec1c069ee44b68",
+  "test_retrieval_sha256": "b24d45601e43836a4fd81856b2b3f0c2486dd21911bd11aef2e03ced60b845e8",
+  "source_run_id": "p0_simple_llm_selector_full276_20260717",
+  "source_model": "deepseek-v3",
+  "source_temperature": 0.1,
+  "source_method_variant": "full",
+  "source_f2p_success": 131,
+  "source_f2p_total": 276,
+  "source_f2p_percent": 47.4638,
+  "behavior_targets": {
+    "django__django-12497": {
+      "path": "django__django-12497/behavior_target.json",
+      "sha256": "092c3c22fdf148a25c669e303d695f98c6b7d4b1001b6da1fe01dcd22e40dca4"
+    },
+    "pytest-dev__pytest-8906": {
+      "path": "pytest-dev__pytest-8906/behavior_target.json",
+      "sha256": "cff439fbc4b01c110e3a2c60ddbe6353618e7a776223de8b6bb9cdb189c666f0"
+    },
+    "sympy__sympy-11400": {
+      "path": "sympy__sympy-11400/behavior_target.json",
+      "sha256": "4816d35f3912520b69c123fa640b9707a8e06e74ea8d1864626d766b9a836108"
+    },
+    "django__django-13768": {
+      "path": "django__django-13768/behavior_target.json",
+      "sha256": "a2793efb129886733d4774134e210b3dc6986404f1a9e3985e8b91e420af9a19"
+    },
+    "matplotlib__matplotlib-23987": {
+      "path": "matplotlib__matplotlib-23987/behavior_target.json",
+      "sha256": "762ab2981beab0d06fdd749d1fcb19a58f181c60207fc9294c7b117594512280"
+    }
+  }
+}

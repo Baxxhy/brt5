@@ -12,6 +12,8 @@ from typing import Any
 
 from ..io.io_utils import format_code_context
 from ..core.prompts import (
+    JOINT_SEED_GENERATION_SYSTEM_PROMPT,
+    JOINT_SEED_GENERATION_USER_PROMPT,
     MUTATION_GENERATION_SYSTEM_PROMPT,
     MUTATION_GENERATION_USER_PROMPT,
     REPAIR_ORACLE_SYSTEM_PROMPT,
@@ -37,8 +39,14 @@ from ..core.behavior_evidence import (
     suspected_bug_locations,
 )
 from ..core.schema import CandidateTest, ExecutionResult, HostContext, MutationPlan, ProtocolRecovery, RetrievedCode, RetrievedTest
+from ..validation.mutation_adherence import (
+    assess_mutation_adherence,
+    mutation_plan_from_candidate,
+    oracle_fingerprint,
+    oracle_kinds,
+)
 from ..validation.semantic_guard import audit_candidate
-from ..core.utils import clean_code_block, ensure_dir, sanitize_instance_id, write_text
+from ..core.utils import clean_code_block, ensure_dir, safe_json_dump, sanitize_instance_id, write_text
 
 
 def _source_window(path: Path, object_name: str, max_chars: int = 10000) -> tuple[str, int, int]:
@@ -337,6 +345,7 @@ def generate_candidate(
     protocol: ProtocolRecovery | None = None,
     mutation_plan: MutationPlan | None = None,
     ablation_config: AblationConfig | None = None,
+    issue_text: str = "",
 ) -> CandidateTest:
     ensure_dir(Path(output_dir) / "prompts")
     ensure_dir(Path(output_dir) / "responses")
@@ -345,30 +354,80 @@ def generate_candidate(
     behavior_json = json.dumps(
         behavior_prompt_payload(behavior, config), ensure_ascii=False
     )
-    user_prompt = MUTATION_GENERATION_USER_PROMPT.format(
-        instance_id=instance_id,
-        safe_instance_id=safe_id,
-        insert_strategy=host.insert_strategy,
-        behavior_json=behavior_json,
-        host_context_json=json.dumps(host.to_dict(), ensure_ascii=False),
-        code_context=format_effective_source_context(
-            behavior, related_source, buggy_repo
-        ),
-        seed_test_code=(related_test.code_content if related_test else host.seed_test_code),
-        feedback=feedback or "无",
+    source_context = format_effective_source_context(
+        behavior, related_source, buggy_repo
     )
+    if config.mutation:
+        user_prompt = MUTATION_GENERATION_USER_PROMPT.format(
+            instance_id=instance_id,
+            safe_instance_id=safe_id,
+            insert_strategy=host.insert_strategy,
+            behavior_json=behavior_json,
+            host_context_json=json.dumps(host.to_dict(), ensure_ascii=False),
+            code_context=source_context,
+            seed_test_code=(
+                related_test.code_content if related_test else host.seed_test_code
+            ),
+            feedback=feedback or "无",
+        )
+        system_prompt = MUTATION_GENERATION_SYSTEM_PROMPT
+    else:
+        reference_seed_tests = list(host.reference_seed_tests)
+        if not reference_seed_tests:
+            reference_seed_tests = [
+                {
+                    "rank": 0,
+                    "file": related_test.file if related_test else host.host_file,
+                    "name": (
+                        related_test.name if related_test else host.seed_test_name
+                    ),
+                    "code_content": (
+                        related_test.code_content
+                        if related_test
+                        else host.seed_test_code
+                    ),
+                }
+            ]
+        user_prompt = JOINT_SEED_GENERATION_USER_PROMPT.format(
+            instance_id=instance_id,
+            safe_instance_id=safe_id,
+            insert_strategy=host.insert_strategy,
+            issue_text=issue_text or issue_evidence_text(behavior),
+            behavior_json=behavior_json,
+            host_context_json=json.dumps(host.to_dict(), ensure_ascii=False),
+            reference_seed_bundle=json.dumps(
+                reference_seed_tests, ensure_ascii=False, indent=2
+            ),
+            code_context=source_context,
+            feedback=feedback or "无",
+        )
+        system_prompt = JOINT_SEED_GENERATION_SYSTEM_PROMPT
     user_prompt = render_evidence_prompt(user_prompt, behavior)
     if protocol is not None:
         user_prompt += "\n\n【必须保留的测试协议】\n" + json.dumps(protocol.to_dict(), ensure_ascii=False)
-    if mutation_plan is not None:
+    direct_user_prompt = user_prompt
+    effective_plan = (
+        mutation_plan if mutation_plan is not None and mutation_plan.is_usable else None
+    )
+    if effective_plan is not None:
         user_prompt += (
-            "\n\n【已经校验的小变异计划】\n"
-            + json.dumps(mutation_plan.to_dict(), ensure_ascii=False)
-            + "\n必须严格按 mutation plan 生成一个完整 Python 文件；不得自由扩大变异或重写无关 setup。"
+            "\n\n【已通过结构与证据校验的 Trigger Mutation Plan】\n"
+            + json.dumps(effective_plan.to_dict(), ensure_ascii=False)
+            + "\n只在 Trigger 部分执行这些有证据的小修改，不得自由扩大场景或重写无关 setup。"
+            + "Oracle 必须独立依据 BehaviorTarget.expected_behavior 构造；不得把计划中的"
+            + " buggy observation、异常或示例文本直接当作 expected value。"
         )
     user_prompt = render_ablation_prompt(user_prompt, config)
+    if config.mutation:
+        direct_user_prompt = render_ablation_prompt(
+            direct_user_prompt
+            + "\n\n显式 Trigger Plan 未能产生可验证候选时，直接依据 Issue、"
+            "BehaviorTarget、源码、ProtocolRecovery 与 seed 构造一个最小 BRT；"
+            "不要猜测计划内容，也不要扩大场景。",
+            config,
+        )
     system_prompt = render_ablation_prompt(
-        MUTATION_GENERATION_SYSTEM_PROMPT, config, include_banner=False
+        system_prompt, config, include_banner=False
     )
     prompt_path = str(Path(output_dir) / "prompts" / f"generation_round_{round_id}.txt")
     response_path = str(Path(output_dir) / "responses" / f"generation_round_{round_id}.txt")
@@ -376,6 +435,31 @@ def generate_candidate(
     response = llm_client.chat(system_prompt, user_prompt)
     write_text(response_path, response)
     code = _wrap_if_needed(response, host, safe_id)
+    for validation_attempt in range(2):
+        semantic_problem = _semantic_path_problem(
+            behavior, source_context, code
+        )
+        if not semantic_problem:
+            break
+        retry_prompt = (
+            user_prompt
+            + "\n\n初始候选执行前语义校验失败："
+            + semantic_problem
+            + "\n当前无效候选如下：\n"
+            + code
+            + "\n请返回修复后的完整 Python 文件。"
+        )
+        retry_response_path = str(
+            Path(output_dir)
+            / "responses"
+            / (
+                f"generation_round_{round_id}_semantic_validation_retry_"
+                f"{validation_attempt + 1}.txt"
+            )
+        )
+        response = llm_client.chat(system_prompt, retry_prompt)
+        write_text(retry_response_path, response)
+        code = _wrap_if_needed(response, host, safe_id)
     rel_path, full_path = _candidate_paths(instance_id, buggy_repo, host)
     candidate = CandidateTest(
         instance_id=instance_id,
@@ -385,7 +469,108 @@ def generate_candidate(
         candidate_repo_path=rel_path,
         prompt_path=prompt_path,
         response_path=response_path,
+        mutation_plan_status=effective_plan.status if effective_plan else "",
+        mutation_plan_risk=effective_plan.risk if effective_plan else "",
+        oracle_contract_kinds=oracle_kinds(code),
     )
+    candidate.mutation_adherence = assess_mutation_adherence(
+        candidate.code, effective_plan, protocol
+    )
+    if effective_plan is not None:
+        safe_json_dump(
+            candidate.mutation_adherence,
+            str(
+                Path(output_dir)
+                / f"mutation_round_{effective_plan.round_id}_adherence.json"
+            ),
+        )
+        if candidate.mutation_adherence.get("status") == "VIOLATED":
+            # A plan that was not actually followed must not be credited to
+            # Mutation or ranked as a plan-derived candidate. Persist it for
+            # audit, then explicitly generate a no-plan fallback from the same
+            # evidence instead of forcing or silently relabeling it.
+            nonadherent_path = str(
+                Path(output_dir)
+                / f"mutation_round_{effective_plan.round_id}_nonadherent.py"
+            )
+            write_text(nonadherent_path, candidate.code)
+            fallback_prompt_path = str(
+                Path(output_dir)
+                / "prompts"
+                / f"generation_round_{round_id}_plan_fallback.txt"
+            )
+            fallback_response_path = str(
+                Path(output_dir)
+                / "responses"
+                / f"generation_round_{round_id}_plan_fallback.txt"
+            )
+            write_text(
+                fallback_prompt_path,
+                system_prompt + "\n\n" + direct_user_prompt,
+            )
+            fallback_response = llm_client.chat(
+                system_prompt, direct_user_prompt
+            )
+            write_text(fallback_response_path, fallback_response)
+            fallback_code = _wrap_if_needed(
+                fallback_response, host, safe_id
+            )
+            for validation_attempt in range(2):
+                semantic_problem = _semantic_path_problem(
+                    behavior, source_context, fallback_code
+                )
+                if not semantic_problem:
+                    break
+                retry_prompt = (
+                    direct_user_prompt
+                    + "\n\n无计划降级候选执行前语义校验失败："
+                    + semantic_problem
+                    + "\n当前无效候选如下：\n"
+                    + fallback_code
+                    + "\n请返回修复后的完整 Python 文件。"
+                )
+                fallback_response = llm_client.chat(
+                    system_prompt, retry_prompt
+                )
+                retry_path = str(
+                    Path(output_dir)
+                    / "responses"
+                    / (
+                        f"generation_round_{round_id}_plan_fallback_retry_"
+                        f"{validation_attempt + 1}.txt"
+                    )
+                )
+                write_text(retry_path, fallback_response)
+                fallback_code = _wrap_if_needed(
+                    fallback_response, host, safe_id
+                )
+            safe_json_dump(
+                {
+                    "status": "FALLBACK_DIRECT",
+                    "reason": "validated plan candidate failed adherence",
+                    "plan_status": effective_plan.status,
+                    "plan_round_id": effective_plan.round_id,
+                    "violations": candidate.mutation_adherence.get(
+                        "violations", []
+                    ),
+                    "nonadherent_candidate": nonadherent_path,
+                    "fallback_prompt": fallback_prompt_path,
+                    "fallback_response": fallback_response_path,
+                },
+                str(
+                    Path(output_dir)
+                    / f"mutation_round_{effective_plan.round_id}_fallback.json"
+                ),
+            )
+            candidate.code = fallback_code
+            candidate.prompt_path = fallback_prompt_path
+            candidate.response_path = fallback_response_path
+            candidate.mutation_plan_status = "FALLBACK_DIRECT"
+            candidate.mutation_plan_risk = ""
+            candidate.mutation_adherence = assess_mutation_adherence(
+                fallback_code, None, protocol
+            )
+            candidate.oracle_contract_kinds = oracle_kinds(fallback_code)
     if write_to_repo:
         write_candidate_to_repo(candidate, buggy_repo)
     else:
@@ -422,6 +607,11 @@ def repair_candidate(
     source_context = format_effective_source_context(
         behavior, related_source or [], buggy_repo
     )
+    reference_seed_payload = (
+        json.dumps(host.reference_seed_tests, ensure_ascii=False, indent=2)
+        if not config.mutation and host.reference_seed_tests
+        else host.seed_test_code
+    )
     if focus == "generic":
         system = REPAIR_GENERIC_SYSTEM_PROMPT
         template = REPAIR_GENERIC_USER_PROMPT
@@ -432,7 +622,7 @@ def repair_candidate(
             "protocol_json": json.dumps(
                 protocol.to_dict() if protocol else {}, ensure_ascii=False
             ),
-            "seed_test_code": host.seed_test_code,
+            "seed_test_code": reference_seed_payload,
             "code_context": source_context,
             "candidate_code": candidate.code,
             "command": execution.command or candidate.command,
@@ -466,18 +656,46 @@ def repair_candidate(
         kwargs = {
             "behavior_json": behavior_json,
             "host_context_json": json.dumps(host.to_dict(), ensure_ascii=False),
-            "seed_test_code": host.seed_test_code,
+            "seed_test_code": reference_seed_payload,
             "code_context": source_context,
             "candidate_code": candidate.code,
             "execution_log": execution.stdout + "\n" + execution.stderr,
             "verifier_feedback": feedback_json,
         }
     user_prompt = render_evidence_prompt(template.format(**kwargs), behavior)
+    if focus != "generic":
+        # Specialized feedback is a focus constraint, not a reduced-evidence
+        # branch. Every semantic repair receives the same complete evidence as
+        # Generic Iteration so the comparison changes routing, not information.
+        user_prompt += (
+            "\n\n【所有反馈类型共享的完整证据】"
+            "\n完整 Issue：" + issue_text
+            + "\nBehaviorTarget/Issue 证据：" + behavior_json
+            + "\nHostContext：" + json.dumps(host.to_dict(), ensure_ascii=False)
+            + "\nProtocolRecovery："
+            + json.dumps(protocol.to_dict() if protocol else {}, ensure_ascii=False)
+            + "\n参考测试证据：" + reference_seed_payload
+            + "\n相关源码：" + source_context
+            + "\n执行命令：" + (execution.command or candidate.command)
+            + "\n执行分类：" + execution.status
+            + "\nVerifier 反馈：" + feedback_json
+        )
     if protocol is not None:
         user_prompt += "\n\nProtocolRecovery：" + json.dumps(protocol.to_dict(), ensure_ascii=False)
-    if mutation_plan is not None:
-        user_prompt += "\n\n本轮校验后的 mutation plan：" + json.dumps(mutation_plan.to_dict(), ensure_ascii=False)
-        user_prompt += "\n只执行 plan 中的小变异，不能修改 oracle。"
+    guidance_plan = (
+        mutation_plan if mutation_plan is not None and mutation_plan.is_usable else None
+    )
+    lineage_plan = guidance_plan or mutation_plan_from_candidate(candidate)
+    if guidance_plan is not None:
+        user_prompt += (
+            "\n\n本轮通过结构与证据校验的 Trigger Mutation Plan："
+            + json.dumps(guidance_plan.to_dict(), ensure_ascii=False)
+        )
+        user_prompt += (
+            "\n只执行 plan 中的 Trigger 修改；当前测试的完整 Oracle 合约必须保持逐 AST 等价。"
+            "不能改写裸 assert、unittest assert*、异常/警告/日志上下文、snapshot/matcher、"
+            "显式 failure guard、NO_EXCEPTION 语义或 expected value。"
+        )
     user_prompt = render_ablation_prompt(user_prompt, config)
     system = render_ablation_prompt(system, config, include_banner=False)
     prompt_path = str(Path(output_dir) / "prompts" / f"repair_prompt_round_{round_id}.txt")
@@ -555,6 +773,62 @@ def repair_candidate(
         code = _wrap_if_needed(
             response, host, sanitize_instance_id(instance_id)
         )
+    oracle_contract_preserved = True
+    oracle_contract_violation = ""
+    if focus in {"setup", "trigger"}:
+        baseline_oracle = oracle_fingerprint(candidate.code)
+        if baseline_oracle != oracle_fingerprint(code):
+            retry_prompt = (
+                user_prompt
+                + "\n\n本轮不是 Oracle 修复，但返回代码改变了 Oracle 合约。"
+                + "Oracle 包括裸 assert、unittest assert*、pytest.raises、"
+                + "assertRaises、pytest.warns、assertWarns、assertLogs、日志/警告"
+                + "上下文、pytest.fail、snapshot/matcher 和显式失败 guard。"
+                + "必须恢复当前测试原有的全部 Oracle 语义，只修改本轮 focus。"
+                + "\n原 Oracle 类型："
+                + json.dumps(oracle_kinds(candidate.code), ensure_ascii=False)
+                + "\n当前无效返回：\n"
+                + code
+            )
+            retry_response = llm_client.chat(system, retry_prompt)
+            retry_path = str(
+                Path(output_dir)
+                / "responses"
+                / f"repair_response_round_{round_id}_oracle_contract_retry.txt"
+            )
+            write_text(retry_path, retry_response)
+            code = _wrap_if_needed(
+                retry_response, host, sanitize_instance_id(instance_id)
+            )
+        oracle_contract_preserved = (
+            baseline_oracle == oracle_fingerprint(code)
+        )
+        if not oracle_contract_preserved:
+            rejected_code_path = str(
+                Path(output_dir)
+                / f"candidate_round_{round_id}_{focus}_oracle_violation.py"
+            )
+            write_text(rejected_code_path, code)
+            safe_json_dump(
+                {
+                    "status": "REJECTED_ORACLE_CONTRACT_CHANGE",
+                    "focus": focus,
+                    "oracle_before": oracle_kinds(candidate.code),
+                    "oracle_after": oracle_kinds(code),
+                    "rejected_code_path": rejected_code_path,
+                },
+                str(
+                    Path(output_dir)
+                    / f"repair_round_{round_id}_{focus}_rejected.json"
+                ),
+            )
+            # Do not rank a setup/trigger repair that still changes the Oracle
+            # after the preservation retry. Continue from the last valid
+            # checkpoint; a subsequent verifier decision may route a genuine
+            # observation problem to Oracle feedback.
+            code = candidate.code
+            oracle_contract_preserved = True
+            oracle_contract_violation = ""
     new_candidate = CandidateTest(
         instance_id=instance_id,
         round_id=round_id,
@@ -563,7 +837,30 @@ def repair_candidate(
         candidate_repo_path=candidate.candidate_repo_path,
         prompt_path=prompt_path,
         response_path=response_path,
+        mutation_plan_status=lineage_plan.status if lineage_plan else "",
+        mutation_plan_risk=lineage_plan.risk if lineage_plan else "",
+        oracle_contract_kinds=oracle_kinds(code),
+        oracle_contract_preserved=oracle_contract_preserved,
+        oracle_contract_violation=oracle_contract_violation,
     )
+    new_candidate.mutation_adherence = assess_mutation_adherence(
+        code,
+        lineage_plan,
+        protocol,
+        oracle_baseline=(
+            candidate.code
+            if focus in {"setup", "trigger"} and lineage_plan is not None
+            else ""
+        ),
+    )
+    if lineage_plan is not None:
+        safe_json_dump(
+            new_candidate.mutation_adherence,
+            str(
+                Path(output_dir)
+                / f"mutation_round_{round_id}_adherence.json"
+            ),
+        )
     write_text(new_candidate.candidate_file_path, code)
     new_candidate.pytest_nodeid = new_candidate.candidate_repo_path
     new_candidate.command = candidate.command

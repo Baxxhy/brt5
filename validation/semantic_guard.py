@@ -6,6 +6,24 @@ import ast
 import re
 
 from ..core.behavior_evidence import BehaviorEvidence, expected_behavior_text
+from .mutation_adherence import oracle_kinds
+
+
+_ORACLE_LITERAL_CALLS = {
+    "raises",
+    "raisesregex",
+    "warns",
+    "warnsregex",
+    "assertwarns",
+    "assertwarnsregex",
+    "assertlogs",
+    "assertnlogs",
+    "fnmatch_lines",
+    "match_lines",
+    "re_match_lines",
+    "snapshot",
+    "match",
+}
 
 
 def _name(node: ast.AST) -> str:
@@ -52,6 +70,125 @@ def _expected_text(behavior: BehaviorEvidence) -> str:
     return expected_behavior_text(behavior).lower()
 
 
+def _oracle_string_literals(tree: ast.AST) -> set[str]:
+    values: set[str] = set()
+    for node in ast.walk(tree):
+        roots: list[ast.AST] = []
+        if isinstance(node, ast.Assert):
+            roots.append(node.test)
+        elif isinstance(node, ast.Call):
+            call_name = _name(node.func).lower()
+            leaf = call_name.rsplit(".", 1)[-1]
+            if (
+                leaf.startswith("assert")
+                or leaf in _ORACLE_LITERAL_CALLS
+            ):
+                roots.extend(node.args)
+        for root in roots:
+            for child in ast.walk(root):
+                if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                    values.add(child.value.lower())
+    return values
+
+
+def _required_message_tokens(behavior: BehaviorEvidence) -> set[str]:
+    hints = getattr(behavior, "assertion_hints", []) or []
+    required: set[str] = set()
+    requirement_markers = (
+        "包含", "提及", "显示", "include", "contain", "mention", "display",
+    )
+    for hint in hints:
+        if not isinstance(hint, dict):
+            continue
+        goal = str(hint.get("assertion_goal") or "")
+        if not any(marker in goal.lower() for marker in requirement_markers):
+            continue
+        required.update(
+            token.lower()
+            for token in re.findall(r"\b[A-Za-z][A-Za-z0-9_]*\b", goal)
+            if "_" in token and len(token) >= 5
+        )
+    return required
+
+
+def oracle_contract_summary(
+    behavior: BehaviorEvidence,
+    code: str,
+) -> dict[str, object]:
+    """Describe whether a candidate has a falsifiable public observation.
+
+    A valid Oracle need not contain a bare ``assert``. Framework exception,
+    warning, logging, matcher, and explicit-failure protocols are explicit
+    Oracles. A direct call is also sufficient for an Issue whose expected
+    behavior is specifically no-exception/no-crash.
+    """
+
+    kinds = oracle_kinds(code)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return {
+            "kinds": kinds,
+            "falsifiable": False,
+            "no_exception_contract": False,
+            "reason": "candidate is not parseable",
+        }
+    explicit = False
+    target_calls = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assert):
+            explicit = True
+        elif isinstance(node, ast.Call):
+            leaf = _name(node.func).rsplit(".", 1)[-1].lower()
+            if leaf.startswith("assert") or leaf in _ORACLE_LITERAL_CALLS or leaf == "fail":
+                explicit = True
+            elif leaf not in {
+                "fixture",
+                "mark",
+                "parametrize",
+                "patch",
+                "mock",
+            }:
+                target_calls += 1
+    if "EXPLICIT_FAILURE_GUARD" in kinds:
+        explicit = True
+    expected = _expected_text(behavior)
+    no_exception = any(
+        marker in expected
+        for marker in (
+            "不应抛",
+            "不再抛",
+            "不应该抛",
+            "不报错",
+            "正常执行",
+            "正常工作",
+            "不崩溃",
+            "should not raise",
+            "without raising",
+            "without error",
+            "must not raise",
+            "should not crash",
+            "without crashing",
+        )
+    ) and target_calls > 0
+    falsifiable = explicit or no_exception
+    reason = (
+        "explicit framework/public observation"
+        if explicit
+        else "expected behavior is falsified by an unexpected exception"
+        if no_exception
+        else "no falsifiable Oracle protocol was found"
+    )
+    if no_exception and "NO_EXCEPTION" not in kinds:
+        kinds = sorted(set(kinds) | {"NO_EXCEPTION"})
+    return {
+        "kinds": kinds,
+        "falsifiable": falsifiable,
+        "no_exception_contract": no_exception,
+        "reason": reason,
+    }
+
+
 def audit_candidate(
     behavior: BehaviorEvidence,
     code: str,
@@ -77,6 +214,14 @@ def audit_candidate(
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             call_name = _name(node.func)
+            if call_name.endswith(".makepyfile") and node.args:
+                return (
+                    "pytester.makepyfile() 使用位置参数时会按当前外层测试函数命名内层"
+                    "模块；生成的 BRT 外层文件采用同名规则，会触发 ImportPathMismatchError。"
+                    "必须改用唯一的关键字文件名，例如 "
+                    "pytester.makepyfile(test_brt_inner_case=content)，并让 runpytest() "
+                    "显式运行该唯一文件。"
+                )
             if call_name in {
                 "pytest.skip",
                 "unittest.skip",
@@ -138,5 +283,18 @@ def audit_candidate(
         return (
             "expected_behavior 要求能力/属性存在，但候选断言 hasattr 为 False，"
             "这是把 buggy 的缺失行为当成正确结果。必须改成正向存在性和语义断言。"
+        )
+    required_message_tokens = _required_message_tokens(behavior)
+    oracle_literals = _oracle_string_literals(tree)
+    if required_message_tokens and not any(
+        token in literal
+        for token in required_message_tokens
+        for literal in oracle_literals
+    ):
+        tokens = ", ".join(sorted(required_message_tokens))
+        return (
+            "BehaviorTarget 的 assertion_hints 明确要求修复后的消息包含/提及标识符 "
+            f"{tokens}，但候选 oracle 没有断言这些新证据。不得正向匹配 buggy 的旧"
+            " error_symptom；应让 buggy 因缺少新标识符而失败、fixed 因包含它而通过。"
         )
     return ""

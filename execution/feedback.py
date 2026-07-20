@@ -23,6 +23,8 @@ from ..generation.generator import (
 from ..context.host_context import build_host_context, rank_related_tests, select_related_test
 from ..context.protocol_recovery import audit_recovered_protocol, recover_test_protocol
 from ..mutation.seed_mutator import build_mutation_plan
+# Kept as a compatibility seam for older callers/tests; the solid feedback
+# path no longer uses buggy-only observation rebinding as its default repair.
 from ..generation.observation_oracle import rebind_observation_oracle
 from ..validation.strict_semantic_verifier import verify_strict_semantics
 from ..retrieval.icore_runtime import (
@@ -37,7 +39,6 @@ from ..retrieval.icore_runtime import (
     make_instance_spec,
 )
 from ..runtime.conda_env_manager import environment_manifest
-from ..generation.oracle import run_observation_probe, synthesize_oracle
 from ..core.behavior_evidence import (
     BehaviorEvidence,
     behavior_target_payload,
@@ -51,11 +52,14 @@ from ..core.schema import (
     ExecutionResult,
     FinalResult,
     InstanceContext,
+    MutationPlan,
     RawIssueContext,
     VerifierDecision,
 )
 from ..core.utils import ensure_dir, safe_json_dump, write_text
 from ..validation.verifier import verify_buggy_only
+from ..validation.oracle_risk import assess_oracle_risk
+from ..validation.semantic_guard import audit_candidate, oracle_contract_summary
 
 
 def _load_cached_behavior(context: InstanceContext, output_dir: str) -> Any:
@@ -138,10 +142,45 @@ def _save_behavior_evidence(evidence: BehaviorEvidence, output_dir: str | Path) 
 
 def _method_version(config: AblationConfig) -> str:
     if config.ablation_id == "full":
-        return "p0-lossless-llm-selector-v1"
+        return "p0-validated-mutation-oracle-feedback-v4"
     if config.ablation_id == "wo_behavior_target":
         return "p0-wo-behavior-target-v1"
+    if config.ablation_id == "wo_mutation":
+        return "p0-wo-mutation-joint-top3-v2"
     return f"p0-{config.ablation_id.replace('_', '-')}-v1"
+
+
+def _uses_adaptive_seed_pipelines(
+    config: AblationConfig,
+    *,
+    adaptive_disabled: bool,
+    generate_only: bool,
+    protocol_recovery_enabled: bool,
+    forced_seed_index: int | None,
+) -> bool:
+    """Whether Top-3 seeds should be executed as separate pipelines."""
+
+    return bool(
+        config.mutation
+        and not adaptive_disabled
+        and not generate_only
+        and protocol_recovery_enabled
+        and forced_seed_index is None
+    )
+
+
+def _joint_seed_references(ranked_tests: list[Any]) -> list[dict[str, Any]]:
+    """Serialize the original iCoRe Top-3 order for one joint generation call."""
+
+    return [
+        {
+            "rank": rank,
+            "file": str(seed.file or ""),
+            "name": str(seed.name or ""),
+            "code_content": str(seed.code_content or ""),
+        }
+        for rank, seed in enumerate(ranked_tests[:3])
+    ]
 
 
 def _empty_repair_route_counts() -> dict[str, int]:
@@ -152,6 +191,121 @@ def _empty_repair_route_counts() -> dict[str, int]:
         "assertion": 0,
         "generic": 0,
     }
+
+
+def _repair_focus(
+    decision: VerifierDecision,
+    strict_result: Any | None,
+    execution: ExecutionResult,
+) -> str:
+    """Normalize semantic routing from mechanics plus failure class.
+
+    In particular, a generic ``reject`` must not silently become Trigger
+    feedback when the verifier's failure class says the Oracle or setup is the
+    actual problem.
+    """
+
+    if execution.status in {"SETUP_ERROR", "SYNTAX_ERROR", "COLLECT_ERROR"}:
+        return "setup"
+    explicit = {
+        "repair_setup": "setup",
+        "repair_trigger": "trigger",
+        "repair_oracle": "oracle",
+    }.get(decision.decision)
+    if explicit:
+        return explicit
+    failure_class = str(getattr(strict_result, "failure_class", "") or "")
+    if failure_class in {"setup", "syntax", "collect"}:
+        return "setup"
+    if failure_class in {"oracle_wrong", "oracle_too_strong"}:
+        return "oracle"
+    if failure_class == "side_path":
+        # A wrong observation protocol is an Oracle problem even when the
+        # verifier labels the resulting failure as a side path.  This matters
+        # for non-assert Oracles such as logger namespace, warning category,
+        # exception type, matcher, or snapshot selection.
+        feedback_text = " ".join(
+            (
+                str(decision.reason or ""),
+                str(decision.next_action or ""),
+                str(getattr(strict_result, "reason", "") or ""),
+            )
+        ).lower()
+        oracle_markers = (
+            "oracle",
+            "assert",
+            "logger",
+            "logging",
+            "日志",
+            "warning",
+            "warns",
+            "警告",
+            "raises",
+            "exception type",
+            "异常类型",
+            "matcher",
+            "snapshot",
+            "expected value",
+            "期望值",
+        )
+        if any(marker in feedback_text for marker in oracle_markers):
+            return "oracle"
+        return "trigger"
+    if failure_class in {"buggy_pass", "target_not_hit"}:
+        return "trigger"
+    return "reject"
+
+
+def _mutation_result_fields(
+    plans: list[Any],
+    trigger_replan_calls: int = 0,
+    candidate: Any | None = None,
+) -> dict[str, Any]:
+    statuses = [str(getattr(plan, "status", "")) for plan in plans]
+    return {
+        "mutation_ops": list(
+            dict.fromkeys(
+                op for plan in plans for op in getattr(plan, "mutation_ops", [])
+            )
+        ),
+        "mutation_plan_calls": len(plans),
+        "mutation_plan_valid_calls": statuses.count("VALID"),
+        "mutation_plan_invalid_calls": statuses.count("INVALID"),
+        "mutation_plan_abstentions": statuses.count("ABSTAIN"),
+        "trigger_replan_calls": trigger_replan_calls,
+        "final_mutation_plan_status": str(
+            getattr(candidate, "mutation_plan_status", "") or ""
+        ),
+        "final_mutation_plan_risk": str(
+            getattr(candidate, "mutation_plan_risk", "") or ""
+        ),
+        "final_mutation_adherence": dict(
+            getattr(candidate, "mutation_adherence", {}) or {}
+        ),
+    }
+
+
+def _build_plan_or_invalid(
+    instance_id: str,
+    round_id: int,
+    output_dir: str,
+    *args: Any,
+    **kwargs: Any,
+) -> MutationPlan:
+    """Keep a planner implementation/service failure local to the current seed."""
+
+    try:
+        return build_mutation_plan(instance_id, round_id, *args, output_dir=output_dir, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        plan = MutationPlan(
+            instance_id=instance_id,
+            round_id=round_id,
+            status="INVALID",
+            validation_errors=[f"planner failed safely at pipeline boundary: {exc}"],
+            validation_evidence={"pipeline_fallback": True},
+        )
+        plan.save_json(str(Path(output_dir) / f"mutation_round_{round_id}_plan.json"))
+        return plan
 
 
 def _evidence_result_fields(
@@ -257,7 +411,7 @@ def _save_checkpoint(
     retrieved_paths: set[str] | None = None,
     strict_result: Any | None = None,
 ) -> CandidateCheckpoint:
-    del behavior, issue_text, retrieved_paths
+    del retrieved_paths
     checkpoint_dir = ensure_dir(Path(output_dir) / "checkpoints")
     code_path = str(Path(checkpoint_dir) / f"candidate_attempt_{attempt_id}.py")
     write_text(code_path, candidate.code)
@@ -269,16 +423,51 @@ def _save_checkpoint(
     target_hit = bool(strict_result and strict_result.target_hit)
     grounded = bool(strict_result and strict_result.oracle_grounded_in_issue)
     public = bool(strict_result and strict_result.uses_public_behavior)
+    mutation_adherence = dict(
+        getattr(candidate, "mutation_adherence", {}) or {}
+    )
+    plan_violated = mutation_adherence.get("status") == "VIOLATED"
+    oracle_contract_preserved = bool(
+        getattr(candidate, "oracle_contract_preserved", True)
+    )
+    oracle_contract_violation = str(
+        getattr(candidate, "oracle_contract_violation", "") or ""
+    )
     executable_fail = execution.returncode != 0 and execution.status not in {
         "SETUP_ERROR", "SYNTAX_ERROR", "COLLECT_ERROR", "TIMEOUT",
     }
+    static_problem = audit_candidate(behavior, candidate.code) if behavior else ""
+    oracle_contract = (
+        oracle_contract_summary(behavior, candidate.code) if behavior else {}
+    )
+    oracle_risk = (
+        assess_oracle_risk(
+            candidate.code,
+            behavior,
+            issue_text=issue_text,
+            execution_log=execution.stdout + "\n" + execution.stderr,
+        )
+        if behavior
+        else {}
+    )
+    hard_eligible = bool(
+        executable_fail
+        and not plan_violated
+        and oracle_contract_preserved
+        and not static_problem
+        and bool(oracle_contract.get("falsifiable"))
+    )
     rank_key = [
+        int(hard_eligible),
         int(accepted),
         int(issue_aligned),
         int(target_hit),
         int(grounded),
         int(public),
         int(executable_fail),
+        int(not plan_violated),
+        int(oracle_contract_preserved),
+        int((oracle_risk or {}).get("level") != "high"),
         -attempt_id,
     ]
     checkpoint = CandidateCheckpoint(
@@ -287,7 +476,7 @@ def _save_checkpoint(
         code_path=code_path,
         score=score,
         reason=reason,
-        oracle_risk={},
+        oracle_risk=oracle_risk,
         surrogate_risk={},
         selector_score_before_risk=score,
         selector_score_after_risk=score,
@@ -299,6 +488,16 @@ def _save_checkpoint(
         target_hit=target_hit,
         oracle_grounded_in_issue=grounded,
         uses_public_behavior=public,
+        mutation_plan_status=str(
+            getattr(candidate, "mutation_plan_status", "") or ""
+        ),
+        mutation_plan_risk=str(
+            getattr(candidate, "mutation_plan_risk", "") or ""
+        ),
+        mutation_adherence=mutation_adherence,
+        oracle_contract_kinds=list(oracle_contract.get("kinds") or []),
+        oracle_contract_preserved=oracle_contract_preserved,
+        oracle_contract_violation=(oracle_contract_violation or static_problem),
         rank_key=rank_key,
     )
     checkpoint.save_json(
@@ -699,11 +898,12 @@ def run_instance_pipeline(
                 "surrogate patch generation/validation is disabled; "
                 "validation_mode must be 'buggy_only'"
             )
-        if (
-            not _adaptive_disabled
-            and not generate_only
-            and enable_protocol_recovery
-            and _forced_seed_index is None
+        if _uses_adaptive_seed_pipelines(
+            config,
+            adaptive_disabled=_adaptive_disabled,
+            generate_only=generate_only,
+            protocol_recovery_enabled=enable_protocol_recovery,
+            forced_seed_index=_forced_seed_index,
         ):
             behavior = _load_behavior_evidence(
                 context, output_dir, enable_behavior_target
@@ -829,6 +1029,24 @@ def run_instance_pipeline(
                     "checkpoint": checkpoint,
                     "summary_path": str(summary_path),
                     "final_test_path": str(seed_dir / "final_test.py"),
+                    "mutation_plan_calls": int(
+                        summary.get("mutation_plan_calls") or 0
+                    ),
+                    "mutation_plan_valid_calls": int(
+                        summary.get("mutation_plan_valid_calls") or 0
+                    ),
+                    "mutation_plan_invalid_calls": int(
+                        summary.get("mutation_plan_invalid_calls") or 0
+                    ),
+                    "mutation_plan_abstentions": int(
+                        summary.get("mutation_plan_abstentions") or 0
+                    ),
+                    "trigger_replan_calls": int(
+                        summary.get("trigger_replan_calls") or 0
+                    ),
+                    "repair_route_counts": dict(
+                        summary.get("repair_route_counts") or {}
+                    ),
                 }
                 attempts.append(attempt)
                 order_key = (score, -seed_index, -int(checkpoint.get("round_id") or 0))
@@ -846,6 +1064,38 @@ def run_instance_pipeline(
             assert best is not None
             _, _, _, selected_dir, selected_summary, selected_checkpoint = best
             selected_seed_index = int(selected_dir.name.rsplit("_", 1)[-1])
+            selected_seed_plan_calls = int(
+                selected_summary.get("mutation_plan_calls") or 0
+            )
+            selected_seed_routes = dict(
+                selected_summary.get("repair_route_counts") or {}
+            )
+            all_seed_plan_calls = sum(
+                int(item.get("mutation_plan_calls") or 0) for item in attempts
+            )
+            all_seed_valid_calls = sum(
+                int(item.get("mutation_plan_valid_calls") or 0)
+                for item in attempts
+            )
+            all_seed_invalid_calls = sum(
+                int(item.get("mutation_plan_invalid_calls") or 0)
+                for item in attempts
+            )
+            all_seed_abstentions = sum(
+                int(item.get("mutation_plan_abstentions") or 0)
+                for item in attempts
+            )
+            all_seed_replans = sum(
+                int(item.get("trigger_replan_calls") or 0)
+                for item in attempts
+            )
+            all_seed_routes = {
+                route: sum(
+                    int((item.get("repair_route_counts") or {}).get(route) or 0)
+                    for item in attempts
+                )
+                for route in _empty_repair_route_counts()
+            }
             for name in (
                 "final_test.py",
                 "summary.json",
@@ -877,6 +1127,16 @@ def run_instance_pipeline(
                     "ablation_id": config.ablation_id,
                     "ablation_signature": config.signature,
                     "ablation_config": config.to_dict(),
+                    "selected_seed_mutation_plan_calls": selected_seed_plan_calls,
+                    "all_seed_mutation_plan_calls": all_seed_plan_calls,
+                    "mutation_plan_calls": all_seed_plan_calls,
+                    "mutation_plan_valid_calls": all_seed_valid_calls,
+                    "mutation_plan_invalid_calls": all_seed_invalid_calls,
+                    "mutation_plan_abstentions": all_seed_abstentions,
+                    "trigger_replan_calls": all_seed_replans,
+                    "selected_seed_repair_route_counts": selected_seed_routes,
+                    "all_seed_repair_route_counts": all_seed_routes,
+                    "repair_route_counts": all_seed_routes,
                 }
             )
             safe_json_dump(attempts, str(Path(output_dir) / "seed_attempts_summary.json"))
@@ -923,10 +1183,36 @@ def run_instance_pipeline(
                 final_oracle_risk={},
                 final_surrogate_risk=selected_summary.get("final_surrogate_risk") or {},
                 final_reason=str(selected_summary.get("final_reason") or ""),
+                mutation_ops=list(selected_summary.get("mutation_ops") or []),
                 mutation_plan_calls=int(
                     selected_summary.get("mutation_plan_calls") or 0
                 ),
-                repair_route_counts=selected_summary.get("repair_route_counts") or {},
+                mutation_plan_valid_calls=int(
+                    selected_summary.get("mutation_plan_valid_calls") or 0
+                ),
+                mutation_plan_invalid_calls=int(
+                    selected_summary.get("mutation_plan_invalid_calls") or 0
+                ),
+                mutation_plan_abstentions=int(
+                    selected_summary.get("mutation_plan_abstentions") or 0
+                ),
+                selected_seed_mutation_plan_calls=selected_seed_plan_calls,
+                all_seed_mutation_plan_calls=all_seed_plan_calls,
+                trigger_replan_calls=int(
+                    selected_summary.get("trigger_replan_calls") or 0
+                ),
+                final_mutation_plan_status=str(
+                    selected_summary.get("final_mutation_plan_status") or ""
+                ),
+                final_mutation_plan_risk=str(
+                    selected_summary.get("final_mutation_plan_risk") or ""
+                ),
+                final_mutation_adherence=dict(
+                    selected_summary.get("final_mutation_adherence") or {}
+                ),
+                repair_route_counts=all_seed_routes,
+                selected_seed_repair_route_counts=selected_seed_routes,
+                all_seed_repair_route_counts=all_seed_routes,
                 surrogate_patch_calls=0,
             )
         if not generate_only:
@@ -992,9 +1278,16 @@ def run_instance_pipeline(
         seed_attempts: list[dict[str, Any]] = []
         ranked_tests = rank_related_tests(context.retrieved_tests, behavior)
         related_test = ranked_tests[0] if ranked_tests else select_related_test(context.retrieved_tests, behavior)
+        if not ranked_tests and related_test is not None:
+            ranked_tests = [related_test]
+        joint_seed_references = (
+            _joint_seed_references(ranked_tests) if not config.mutation else []
+        )
         host = None
         if _forced_seed_index is not None and 0 <= _forced_seed_index < len(ranked_tests):
             seeds_to_try = [ranked_tests[_forced_seed_index]]
+        elif not config.mutation:
+            seeds_to_try = ranked_tests[:1]
         else:
             seeds_to_try = ranked_tests[:3] if enable_protocol_recovery else ([related_test] if related_test else [])
         for seed_index, seed in enumerate(seeds_to_try):
@@ -1030,7 +1323,35 @@ def run_instance_pipeline(
                 skip_execution=generate_only, repo=context.repo,
                 version=str(context.metadata.get("version") or ""),
             )
-        if seed_attempts:
+        if joint_seed_references:
+            primary_execution_status = host.seed_execution_status
+            primary_protocol_risks = protocol.protocol_risks if protocol else []
+            seed_attempts = [
+                {
+                    **seed,
+                    "role": "primary_protocol" if seed["rank"] == 0 else "joint_reference",
+                    "execution_status": (
+                        primary_execution_status
+                        if seed["rank"] == 0
+                        else "REFERENCE_ONLY"
+                    ),
+                    "selected": seed["rank"] == 0,
+                    "protocol_risks": (
+                        primary_protocol_risks if seed["rank"] == 0 else []
+                    ),
+                }
+                for seed in joint_seed_references
+            ]
+            host.reference_seed_tests = joint_seed_references
+            safe_json_dump(
+                {
+                    "mode": "joint_top3_reference",
+                    "primary_protocol_rank": 0,
+                    "reference_seeds": joint_seed_references,
+                },
+                str(Path(output_dir) / "joint_seed_bundle.json"),
+            )
+        elif seed_attempts:
             seed_attempts[-1]["selected"] = True
         safe_json_dump({"fallback_used": seed_fallback_used, "attempts": seed_attempts}, str(Path(output_dir) / "seed_fallback.json"))
         if protocol is not None:
@@ -1054,25 +1375,32 @@ def run_instance_pipeline(
         dual = None
         final_code = ""
         mutation_plans = []
+        trigger_replan_calls = 0
         repair_route_counts = _empty_repair_route_counts()
         strict_result = None
         oracle_type = ""
         oracle_rebound = False
         env_budget = max_env_rounds if max_env_rounds is not None else max_feedback_rounds
         brt_budget = max_brt_rounds if max_brt_rounds is not None else max_feedback_rounds
-        initial_plan = build_mutation_plan(
+        initial_plan = _build_plan_or_invalid(
             context.instance_id,
             0,
+            output_dir,
             behavior,
             host,
             protocol,
             llm_client,
-            output_dir,
             related_source=context.retrieved_code,
             related_test=related_test,
+            buggy_repo=context.buggy_repo_path,
         ) if enable_seed_mutation else None
-        if initial_plan:
+        if initial_plan is not None:
             mutation_plans.append(initial_plan)
+        usable_initial_plan = (
+            initial_plan
+            if initial_plan is not None and initial_plan.is_usable
+            else None
+        )
         candidate = generate_candidate(
             context.instance_id,
             behavior,
@@ -1085,10 +1413,11 @@ def run_instance_pipeline(
             0,
             write_to_repo=not generate_only,
             protocol=protocol,
-            mutation_plan=initial_plan,
+            mutation_plan=usable_initial_plan,
             ablation_config=config,
+            issue_text=context.issue_text,
         )
-        if initial_plan is not None:
+        if usable_initial_plan is not None:
             write_text(
                 str(Path(output_dir) / "mutation_round_0_test.py"), candidate.code
             )
@@ -1115,10 +1444,15 @@ def run_instance_pipeline(
                 selected_seed_file=related_test.file if related_test else "",
                 selected_seed_name=related_test.name if related_test else "",
                 seed_fallback_used=seed_fallback_used,
-                mutation_ops=initial_plan.mutation_ops if initial_plan else [],
-                mutation_plan_calls=len(mutation_plans),
+                **_mutation_result_fields(
+                    mutation_plans, trigger_replan_calls, candidate
+                ),
                 repair_route_counts=repair_route_counts,
                 final_reason="generate_only: generation completed without execution",
+                seed_mode=("joint_top3" if not config.mutation else "single_seed"),
+                selected_seed_index=0,
+                seed_attempts_count=len(seed_attempts),
+                seed_attempts_summary=seed_attempts,
             )
             result.save_json(str(Path(output_dir) / "summary.json"))
             return result
@@ -1200,10 +1534,15 @@ def run_instance_pipeline(
                 selected_seed_file=related_test.file if related_test else "",
                 selected_seed_name=related_test.name if related_test else "",
                 seed_fallback_used=seed_fallback_used,
-                mutation_ops=[op for plan in mutation_plans for op in plan.mutation_ops],
-                mutation_plan_calls=len(mutation_plans),
+                **_mutation_result_fields(
+                    mutation_plans, trigger_replan_calls, candidate
+                ),
                 repair_route_counts=repair_route_counts,
                 final_reason="environment qualification remained unresolved",
+                seed_mode=("joint_top3" if not config.mutation else "single_seed"),
+                selected_seed_index=0,
+                seed_attempts_count=len(seed_attempts),
+                seed_attempts_summary=seed_attempts,
             )
             result.save_json(str(Path(output_dir) / "summary.json"))
             return result
@@ -1313,8 +1652,12 @@ def run_instance_pipeline(
                     _refresh_candidate_command(context, candidate)
                     brt_attempt += 1
                     continue
-                focus = "trigger"
-                if decision.decision == "repair_setup":
+                focus = _repair_focus(decision, strict_result, execution)
+                if focus == "reject":
+                    final_code = candidate.code
+                    write_text(str(Path(output_dir) / "final_test.py"), final_code)
+                    break
+                if focus == "setup":
                     if not config.environment_feedback:
                         final_code = candidate.code
                         write_text(str(Path(output_dir) / "final_test.py"), final_code)
@@ -1323,9 +1666,8 @@ def run_instance_pipeline(
                         final_code = candidate.code
                         write_text(str(Path(output_dir) / "final_test.py"), final_code)
                         break
-                    focus = "setup"
                     late_setup_repairs_used += 1
-                elif decision.decision == "repair_oracle":
+                elif focus == "oracle":
                     if not config.assertion_feedback:
                         final_code = candidate.code
                         write_text(str(Path(output_dir) / "final_test.py"), final_code)
@@ -1335,39 +1677,42 @@ def run_instance_pipeline(
                         write_text(str(Path(output_dir) / "final_test.py"), final_code)
                         break
                     next_round = env_rounds_used + brt_attempt + 1
-                    if enable_observation_oracle:
-                        candidate, observation, oracle_type = rebind_observation_oracle(
-                            behavior, protocol, candidate,
-                            execution.stdout + "\n" + execution.stderr,
-                            llm_client, output_dir, context.buggy_repo_path,
-                            conda_env, timeout, no_conda, context.repo,
-                            str(context.metadata.get("version") or ""), next_round,
-                            ablation_config=config,
-                        )
-                        final_code = candidate.code
-                        oracle_rebound = True
-                    else:
-                        observation = run_observation_probe(
-                            behavior, candidate, llm_client, output_dir,
-                            context.buggy_repo_path, conda_env, timeout, no_conda,
-                            context.repo, str(context.metadata.get("version") or ""),
-                            ablation_config=config,
-                        )
-                        final_code = synthesize_oracle(
-                            behavior, candidate, observation,
-                            execution.stdout + "\n" + execution.stderr,
-                            llm_client, output_dir,
-                            ablation_config=config,
-                        )
-                        candidate.code = final_code
-                    candidate.round_id = next_round
-                    write_text(str(Path(output_dir) / f"candidate_round_{next_round}.py"), final_code)
+                    # Oracle feedback first uses the complete Issue and all
+                    # shared evidence. A buggy-only observation probe is not a
+                    # source of expected values and is therefore not the
+                    # default repair mechanism.
+                    candidate = repair_candidate(
+                        context.instance_id,
+                        behavior,
+                        host,
+                        candidate,
+                        execution,
+                        llm_client,
+                        output_dir,
+                        next_round,
+                        "oracle",
+                        context.retrieved_code,
+                        json.dumps(
+                            observation.to_dict() if observation else {},
+                            ensure_ascii=False,
+                        ),
+                        decision.to_dict(),
+                        context.buggy_repo_path,
+                        protocol,
+                        None,
+                        ablation_config=config,
+                        issue_text=context.issue_text,
+                    )
+                    final_code = candidate.code
+                    contract = oracle_contract_summary(behavior, final_code)
+                    oracle_type = ",".join(contract.get("kinds") or [])
+                    write_text(
+                        str(Path(output_dir) / f"candidate_round_{next_round}.py"),
+                        final_code,
+                    )
                     _refresh_candidate_command(context, candidate)
                     semantic_repairs_used += 1
                     repair_route_counts["assertion"] += 1
-                    # Oracle synthesis already performs the oracle repair using
-                    # runtime observations. Do not immediately rewrite it a
-                    # second time with the stale pre-observation execution log.
                     brt_attempt += 1
                     continue
                 else:
@@ -1381,17 +1726,43 @@ def run_instance_pipeline(
                         break
                     semantic_repairs_used += 1
                 mutation_plan = None
-                if focus == "trigger" and enable_seed_mutation:
-                    mutation_plan = build_mutation_plan(
+                explicit_trigger_failure = bool(
+                    decision.decision == "repair_trigger"
+                    or (
+                        strict_result is not None
+                        and strict_result.failure_class
+                        in {"buggy_pass", "target_not_hit"}
+                    )
+                )
+                if (
+                    focus == "trigger"
+                    and enable_seed_mutation
+                    and explicit_trigger_failure
+                    and trigger_replan_calls < 1
+                ):
+                    mutation_plan = _build_plan_or_invalid(
                         context.instance_id,
                         env_rounds_used + brt_attempt + 1,
-                        behavior, host, protocol, llm_client, output_dir,
-                        execution.stdout + "\n" + execution.stderr,
-                        decision.to_dict(),
-                        context.retrieved_code,
-                        related_test,
+                        output_dir,
+                        behavior,
+                        host,
+                        protocol,
+                        llm_client,
+                        execution_feedback=(
+                            execution.stdout + "\n" + execution.stderr
+                        ),
+                        verifier_feedback=decision.to_dict(),
+                        related_source=context.retrieved_code,
+                        related_test=related_test,
+                        buggy_repo=context.buggy_repo_path,
                     )
                     mutation_plans.append(mutation_plan)
+                    trigger_replan_calls += 1
+                usable_mutation_plan = (
+                    mutation_plan
+                    if mutation_plan is not None and mutation_plan.is_usable
+                    else None
+                )
                 candidate = repair_candidate(
                     context.instance_id,
                     behavior,
@@ -1407,15 +1778,21 @@ def run_instance_pipeline(
                     decision.to_dict(),
                     context.buggy_repo_path,
                     protocol,
-                    mutation_plan,
+                    usable_mutation_plan,
                     ablation_config=config,
                     issue_text=context.issue_text,
                 )
                 repair_route_counts[
                     "environment" if focus == "setup" else "trigger"
                 ] += 1
-                if mutation_plan is not None:
-                    write_text(str(Path(output_dir) / f"mutation_round_{mutation_plan.round_id}_test.py"), candidate.code)
+                if usable_mutation_plan is not None:
+                    write_text(
+                        str(
+                            Path(output_dir)
+                            / f"mutation_round_{usable_mutation_plan.round_id}_test.py"
+                        ),
+                        candidate.code,
+                    )
                 _refresh_candidate_command(context, candidate)
                 brt_attempt += 1
             if best_candidate is not None:
@@ -1439,9 +1816,10 @@ def run_instance_pipeline(
                 safe_json_dump(
                     {
                         "selection_policy": (
-                            "LLM semantic rank: accept > issue_aligned > semantic "
-                            "target_hit > issue-grounded oracle > public behavior > "
-                            "executable buggy fail > earliest repair round"
+                            "Hard eligibility (executable buggy fail, falsifiable Oracle, "
+                            "no semantic/plan/Oracle-preservation violation) > LLM accept > "
+                            "issue_aligned > semantic target_hit > issue-grounded Oracle > "
+                            "public behavior > Oracle risk > earliest repair round"
                         ),
                         "selected_attempt": checkpoints[best_index].round_id,
                         "checkpoints": [item.to_dict() for item in checkpoints],
@@ -1491,17 +1869,26 @@ def run_instance_pipeline(
             selected_seed_file=related_test.file if related_test else "",
             selected_seed_name=related_test.name if related_test else "",
             seed_fallback_used=seed_fallback_used,
-            mutation_ops=list(dict.fromkeys(op for plan in mutation_plans for op in plan.mutation_ops)),
-            mutation_plan_calls=len(mutation_plans),
+            **_mutation_result_fields(
+                mutation_plans, trigger_replan_calls, candidate
+            ),
             repair_route_counts=repair_route_counts,
             oracle_type=oracle_type,
             strict_verifier_decision=strict_result.decision if strict_result else "",
             strict_failure_class=strict_result.failure_class if strict_result else "",
             oracle_rebound=oracle_rebound,
             final_reason=decision.reason if decision else "",
-            seed_mode="single_forced_seed" if _forced_seed_index is not None else "single_seed",
+            seed_mode=(
+                "joint_top3"
+                if not config.mutation
+                else (
+                    "single_forced_seed"
+                    if _forced_seed_index is not None
+                    else "single_seed"
+                )
+            ),
             selected_seed_index=_forced_seed_index if _forced_seed_index is not None else 0,
-            seed_attempts_count=1,
+            seed_attempts_count=len(seed_attempts),
             seed_attempts_summary=seed_attempts,
             final_oracle_risk=final_oracle_risk,
             final_surrogate_risk=final_surrogate_risk,

@@ -145,6 +145,7 @@ class HostContext(JsonMixin):
     host_class: str = ""
     seed_test_name: str = ""
     seed_test_code: str = ""
+    reference_seed_tests: list[dict[str, Any]] = field(default_factory=list)
     imports: str = ""
     setup_context: str = ""
     model_context: str = ""
@@ -184,18 +185,53 @@ class ProtocolRecovery(JsonMixin):
 
 
 @dataclass
+class MutationStep(JsonMixin):
+    """One evidence-grounded trigger edit proposed for a retrieved seed."""
+
+    op: str
+    target_file: str = ""
+    target_symbol: str = ""
+    seed_anchor: str = ""
+    before: str = ""
+    after: str = ""
+    rationale: str = ""
+    risk: str = "medium"
+
+
+@dataclass
 class MutationPlan(JsonMixin):
+    """Validated trigger-only plan.
+
+    ``status`` is ``VALID`` only after structural and evidence validation.
+    ``ABSTAIN`` and ``INVALID`` plans are persisted for auditability but must
+    never be presented to the test generator as instructions.
+    """
+
     instance_id: str
     round_id: int = 0
-    mutation_goal: str = ""
+    status: str = "INVALID"
+    trigger_goal: str = ""
+    steps: list[MutationStep] = field(default_factory=list)
     preserve_from_seed: list[str] = field(default_factory=list)
-    target_api: list[str] = field(default_factory=list)
-    target_path: list[str] = field(default_factory=list)
-    mutation_ops: list[str] = field(default_factory=list)
-    expected_behavior: str = ""
-    oracle_strategy: str = ""
-    why_this_should_trigger: str = ""
+    why_target_will_be_reached: str = ""
     risk: str = "medium"
+    validation_errors: list[str] = field(default_factory=list)
+    validation_evidence: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def mutation_ops(self) -> list[str]:
+        return [step.op for step in self.steps]
+
+    @property
+    def is_usable(self) -> bool:
+        return self.status == "VALID" and bool(self.steps)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = dataclasses.asdict(self)
+        # Keep this derived field in artifacts for compatibility with existing
+        # statistics scripts without allowing callers to construct fake ops.
+        payload["mutation_ops"] = self.mutation_ops
+        return payload
 
 
 @dataclass
@@ -206,6 +242,8 @@ class StrictVerifierResult(JsonMixin):
     target_hit: bool = False
     oracle_grounded_in_issue: bool = False
     uses_public_behavior: bool = False
+    oracle_kind: str = ""
+    oracle_falsifiable: bool = False
     reason: str = ""
     next_action: str = "reject"
 
@@ -223,6 +261,12 @@ class CandidateTest(JsonMixin):
     response_path: str = ""
     status: str = "CREATED"
     notes: str = ""
+    mutation_plan_status: str = ""
+    mutation_plan_risk: str = ""
+    mutation_adherence: dict[str, Any] = field(default_factory=dict)
+    oracle_contract_kinds: list[str] = field(default_factory=list)
+    oracle_contract_preserved: bool = True
+    oracle_contract_violation: str = ""
 
 
 @dataclass
@@ -244,6 +288,12 @@ class CandidateCheckpoint(JsonMixin):
     target_hit: bool = False
     oracle_grounded_in_issue: bool = False
     uses_public_behavior: bool = False
+    mutation_plan_status: str = ""
+    mutation_plan_risk: str = ""
+    mutation_adherence: dict[str, Any] = field(default_factory=dict)
+    oracle_contract_kinds: list[str] = field(default_factory=list)
+    oracle_contract_preserved: bool = True
+    oracle_contract_violation: str = ""
     rank_key: list[Any] = field(default_factory=list)
     selected: bool = False
 
@@ -334,7 +384,18 @@ class FinalResult(JsonMixin):
     seed_fallback_used: bool = False
     mutation_ops: list[str] = field(default_factory=list)
     mutation_plan_calls: int = 0
+    mutation_plan_valid_calls: int = 0
+    mutation_plan_invalid_calls: int = 0
+    mutation_plan_abstentions: int = 0
+    selected_seed_mutation_plan_calls: int = 0
+    all_seed_mutation_plan_calls: int = 0
+    trigger_replan_calls: int = 0
+    final_mutation_plan_status: str = ""
+    final_mutation_plan_risk: str = ""
+    final_mutation_adherence: dict[str, Any] = field(default_factory=dict)
     repair_route_counts: dict[str, int] = field(default_factory=dict)
+    selected_seed_repair_route_counts: dict[str, int] = field(default_factory=dict)
+    all_seed_repair_route_counts: dict[str, int] = field(default_factory=dict)
     oracle_type: str = ""
     strict_verifier_decision: str = ""
     strict_failure_class: str = ""
@@ -355,6 +416,6 @@ class FinalResult(JsonMixin):
     placement_dir: str = ""
     runner_kind: str = ""
     selector: str = ""
-    method_version: str = "p0-lossless-llm-selector-v1"
+    method_version: str = "p0-validated-mutation-oracle-feedback-v4"
     behavior_schema_version: str = "behavior_target.lossless.v1"
     surrogate_patch_calls: int = 0

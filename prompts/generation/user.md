@@ -22,8 +22,10 @@ Issue 给出 MWE、字面输入、参数、operator、调用顺序时必须原�
 如果缺陷是“缺少检查、缺少 warning、缺少状态更新或静默接受错误配置”，不要寻找一个
 buggy 版本已经存在的异常路径。应调用项目真实的检查/验证/状态转换 API，并断言修复后
 应出现的稳定证据；buggy 版本因证据缺失而自然 assertion fail。
-如果缺陷是“缺少日志”，使用 assertLogs/caplog 捕获目标模块的日志命名空间；
-不要 patch buggy 源码中尚不存在的 logger 属性。
+如果缺陷是“缺少日志”，使用 assertLogs/caplog 观察日志；只有 Issue 或相关源码明确给出
+logger 名称时才绑定该名称。名称不确定时使用不指定 logger 的根捕获，或 patch
+logging.Logger.exception 这类已存在的公共日志方法；不得根据模块文件路径猜测 logger 名称，
+也不要 patch buggy 源码中尚不存在的 logger 属性。
 只有 expected_behavior 明确要求抛异常时才使用 assertRaises/pytest.raises。
 BehaviorTarget.trigger.safety_constraints 是硬约束，优先级高于 mutation_hints。
 Issue 明确描述为可接受、可解析或成功的输入，不得重新解释为 invalid input，也不得放入

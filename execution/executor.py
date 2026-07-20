@@ -120,6 +120,21 @@ def classify_execution(returncode: int, stdout: str, stderr: str, timeout: bool,
             x for x in re.split(r"[^A-Za-z0-9_]+", symptom) if len(x) >= 4
         ]
     symptom_low = symptom.lower()
+    nested_collection_observed = any(
+        marker in low for marker in ("error collecting", "collected 0 items")
+    )
+    outer_test_executed = bool(
+        re.search(r"collected\s+[1-9]\d*\s+items?", low)
+        and re.search(r"(?m)^failed\s+\S+::\S+", low)
+    )
+    outer_assertion_failed = any(
+        marker in low
+        for marker in ("assertionerror", "failed: nomatch", "remains unmatched")
+    )
+    if nested_collection_observed and outer_test_executed and outer_assertion_failed:
+        if issue_terms and any(term.lower() in low for term in issue_terms[:20]):
+            return "ISSUE_ALIGNED_FAIL"
+        return "ASSERTION_FAIL"
     if "nameerror:" in low and "nameerror" not in symptom_low:
         return "SETUP_ERROR"
     if (

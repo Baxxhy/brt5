@@ -9,6 +9,15 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from brt5.core.ablation import AblationConfig, behavior_prompt_payload
+from brt5.core.prompts import (
+    JOINT_SEED_GENERATION_SYSTEM_PROMPT,
+    JOINT_SEED_GENERATION_USER_PROMPT,
+    JOINT_SEED_OBSERVATION_ORACLE_SYSTEM_PROMPT,
+    JOINT_SEED_PROTOCOL_RECOVERY_SYSTEM_PROMPT,
+    JOINT_SEED_STRICT_VERIFIER_SYSTEM_PROMPT,
+    JOINT_SEED_VERIFIER_SYSTEM_PROMPT,
+    JOINT_SEED_VERIFIER_USER_PROMPT,
+)
 from brt5.core.schema import (
     BehaviorTarget,
     CandidateTest,
@@ -17,12 +26,18 @@ from brt5.core.schema import (
     HostContext,
     InstanceContext,
     MutationPlan,
+    MutationStep,
     ProtocolRecovery,
     RetrievedTest,
     StrictVerifierResult,
     VerifierDecision,
 )
-from brt5.execution.feedback import run_instance_pipeline
+from brt5.execution.feedback import (
+    _joint_seed_references,
+    _repair_focus,
+    _uses_adaptive_seed_pipelines,
+    run_instance_pipeline,
+)
 from brt5.generation.generator import generate_candidate
 from brt5.pipeline.run import (
     ablation_config_from_args,
@@ -105,6 +120,15 @@ class FeedbackAblationTests(unittest.TestCase):
         host = HostContext(
             "demo__repo-1",
             seed_test_code="def test_seed():\n    assert True\n",
+            reference_seed_tests=[
+                {
+                    "rank": rank,
+                    "file": f"tests/test_seed_{rank}.py",
+                    "name": f"test_seed_{rank}",
+                    "code_content": f"def test_seed_{rank}():\n    assert {rank} >= 0\n",
+                }
+                for rank in range(3)
+            ],
         )
         llm = _FakeLLM()
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,11 +151,129 @@ class FeedbackAblationTests(unittest.TestCase):
             lowered = prompt.lower()
             for forbidden in ("mutationplan", "mutation_plan", "mutation_hints", "mutation", "变异"):
                 self.assertNotIn(forbidden, lowered)
+            for forbidden in ("实验条件", "消融", "关闭", "不使用显式", "不提供显式"):
+                self.assertNotIn(forbidden, prompt)
+            self.assertIn("Top-3 联合参考流程", prompt)
+            positions = [prompt.index(f"test_seed_{rank}") for rank in range(3)]
+            self.assertEqual(positions, sorted(positions))
             mutation_files = [
                 path for path in Path(tmp).rglob("*")
                 if path.is_file() and "mutation" in path.name.lower()
             ]
             self.assertEqual(mutation_files, [])
+
+    def test_joint_seed_bundle_preserves_icore_top3_order(self) -> None:
+        tests = [
+            RetrievedTest(
+                "demo__repo-1",
+                name=f"test_rank_{rank}",
+                file=f"tests/test_{rank}.py",
+                code_content=f"def test_rank_{rank}(): pass",
+            )
+            for rank in range(4)
+        ]
+        bundle = _joint_seed_references(tests)
+        self.assertEqual([item["rank"] for item in bundle], [0, 1, 2])
+        self.assertEqual(
+            [item["name"] for item in bundle],
+            ["test_rank_0", "test_rank_1", "test_rank_2"],
+        )
+
+    def test_joint_prompt_family_describes_only_joint_workflow(self) -> None:
+        prompts = (
+            JOINT_SEED_GENERATION_SYSTEM_PROMPT,
+            JOINT_SEED_GENERATION_USER_PROMPT,
+            JOINT_SEED_PROTOCOL_RECOVERY_SYSTEM_PROMPT,
+            JOINT_SEED_STRICT_VERIFIER_SYSTEM_PROMPT,
+            JOINT_SEED_OBSERVATION_ORACLE_SYSTEM_PROMPT,
+            JOINT_SEED_VERIFIER_SYSTEM_PROMPT,
+            JOINT_SEED_VERIFIER_USER_PROMPT,
+        )
+        forbidden = (
+            "mutation",
+            "变异",
+            "消融",
+            "关闭",
+            "不使用显式",
+            "不提供显式",
+            "另一个流程",
+            "完整方法",
+        )
+        combined = "\n".join(prompts).lower()
+        for token in forbidden:
+            self.assertNotIn(token.lower(), combined)
+        self.assertIn("top-3", combined)
+
+    def test_seed_pipeline_routing_is_single_factor(self) -> None:
+        common = {
+            "adaptive_disabled": False,
+            "generate_only": False,
+            "protocol_recovery_enabled": True,
+            "forced_seed_index": None,
+        }
+        self.assertTrue(_uses_adaptive_seed_pipelines(AblationConfig(), **common))
+        self.assertFalse(
+            _uses_adaptive_seed_pipelines(
+                AblationConfig(mutation=False), **common
+            )
+        )
+
+    def test_nonadherent_plan_candidate_uses_explicit_direct_fallback(self) -> None:
+        behavior = BehaviorTarget(
+            "demo__repo-1",
+            expected_behavior={"text": "target_api returns the public result"},
+        )
+        host = HostContext(
+            "demo__repo-1",
+            host_file="tests/test_mod.py",
+            seed_test_code=(
+                "def test_seed():\n"
+                "    result = target_api(1)\n"
+                "    assert result == 1\n"
+            ),
+        )
+        plan = MutationPlan(
+            "demo__repo-1",
+            status="VALID",
+            steps=[
+                MutationStep(
+                    op="ARG_VALUE_REPLACE",
+                    target_file="pkg/mod.py",
+                    target_symbol="target_api",
+                    seed_anchor="target_api(1)",
+                    before="target_api(1)",
+                    after="target_api(2)",
+                    risk="low",
+                )
+            ],
+            risk="low",
+        )
+        llm = Mock()
+        llm.chat.side_effect = [
+            "def test_generated():\n    assert target_api(3) == 3\n",
+            "def test_generated():\n    assert target_api(4) == 4\n",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = generate_candidate(
+                "demo__repo-1",
+                behavior,
+                host,
+                None,
+                [],
+                llm,
+                tmp,
+                tmp,
+                write_to_repo=False,
+                mutation_plan=plan,
+                ablation_config=AblationConfig(),
+            )
+            fallback = Path(tmp) / "mutation_round_0_fallback.json"
+            self.assertTrue(fallback.is_file())
+
+        self.assertEqual(candidate.mutation_plan_status, "FALLBACK_DIRECT")
+        self.assertEqual(candidate.mutation_adherence["status"], "NOT_APPLICABLE")
+        self.assertIn("target_api(4)", candidate.code)
+        self.assertEqual(llm.chat.call_count, 2)
 
     def _run_forced_decisions(
         self,
@@ -153,12 +295,21 @@ class FeedbackAblationTests(unittest.TestCase):
             file="tests/test_seed.py",
             code_content="def test_seed():\n    assert True\n",
         )
+        retrieved_tests = [seed] + [
+            RetrievedTest(
+                instance_id,
+                name=f"test_reference_{rank}",
+                file=f"tests/test_reference_{rank}.py",
+                code_content=f"def test_reference_{rank}():\n    assert True\n",
+            )
+            for rank in (1, 2)
+        ]
         context = InstanceContext(
             instance_id,
             "full issue text",
             repo="demo/repo",
             buggy_repo_path=str(repo),
-            retrieved_tests=[seed],
+            retrieved_tests=retrieved_tests,
         )
         host = HostContext(
             instance_id,
@@ -211,7 +362,11 @@ class FeedbackAblationTests(unittest.TestCase):
             )
 
         build_plan = Mock(
-            return_value=MutationPlan(instance_id, mutation_ops=["change_input"])
+            return_value=MutationPlan(
+                instance_id,
+                status="VALID",
+                steps=[MutationStep(op="ARG_VALUE_REPLACE")],
+            )
         )
         repair = Mock(side_effect=make_candidate)
         dependency = Mock(return_value=True)
@@ -254,7 +409,20 @@ class FeedbackAblationTests(unittest.TestCase):
         self.assertEqual(result.mutation_plan_calls, 0)
         self.assertEqual(result.mutation_ops, [])
         self.assertEqual(result.repair_route_counts["trigger"], 1)
+        self.assertEqual(result.seed_mode, "joint_top3")
+        self.assertEqual(result.seed_attempts_count, 3)
+        self.assertEqual(len(result.host_context["reference_seed_tests"]), 3)
         self.assertEqual(list(output.rglob("mutation*")), [])
+
+    def test_full_method_limits_trigger_replanning_to_one_call(self) -> None:
+        result, planner, repair, _, _, _, temp = self._run_forced_decisions(
+            AblationConfig(),
+            ["repair_trigger", "repair_trigger", "repair_trigger", "reject"],
+        )
+        self.addCleanup(temp.cleanup)
+        self.assertEqual(planner.call_count, 2)  # initial + one feedback replan
+        self.assertEqual(result.trigger_replan_calls, 1)
+        self.assertGreaterEqual(repair.call_count, 2)
 
     def test_generic_iteration_uses_only_generic_repair(self) -> None:
         result, planner, repair, dependency, rebind, _, temp = self._run_forced_decisions(
@@ -314,6 +482,44 @@ class FeedbackAblationTests(unittest.TestCase):
         repair.assert_not_called()
         rebind.assert_not_called()
         self.assertEqual(result.repair_route_counts["assertion"], 0)
+
+    def test_assertion_feedback_on_uses_general_oracle_repair_without_probe(self) -> None:
+        result, _, repair, _, rebind, _, temp = self._run_forced_decisions(
+            AblationConfig(), ["repair_oracle", "accept"]
+        )
+        self.addCleanup(temp.cleanup)
+        self.assertEqual(repair.call_args_list[0].args[8], "oracle")
+        rebind.assert_not_called()
+        self.assertEqual(result.repair_route_counts["assertion"], 1)
+
+    def test_reject_oracle_failure_class_routes_to_oracle(self) -> None:
+        focus = _repair_focus(
+            VerifierDecision("demo", "reject", "oracle is too strong"),
+            StrictVerifierResult(
+                "demo",
+                decision="reject",
+                failure_class="oracle_too_strong",
+            ),
+            ExecutionResult("demo", returncode=1, status="ASSERTION_FAIL"),
+        )
+        self.assertEqual(focus, "oracle")
+
+    def test_side_path_logging_observation_routes_to_oracle(self) -> None:
+        focus = _repair_focus(
+            VerifierDecision(
+                "demo",
+                "reject",
+                "assertLogs uses the wrong logger name",
+            ),
+            StrictVerifierResult(
+                "demo",
+                decision="reject",
+                failure_class="side_path",
+                reason="logging observation selected an unsupported logger",
+            ),
+            ExecutionResult("demo", returncode=1, status="ASSERTION_FAIL"),
+        )
+        self.assertEqual(focus, "oracle")
 
     def test_shell_rejects_multiple_off_before_runtime_checks(self) -> None:
         launcher = Path(__file__).resolve().parents[1] / "scripts" / "run_p0_simple_llm_selector_full.sh"

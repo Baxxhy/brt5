@@ -1,4 +1,4 @@
-当前测试没有触发 Issue 相关路径或失败无关。保留 setup，只调整输入、参数、状态、mock、配置、调用链或边界条件。
+当前测试没有触发 Issue 相关路径或失败无关。保留 setup 和完整 Oracle 合约，只调整输入、参数、状态、mock、配置、调用链或边界条件。Oracle 合约包括裸 assert、unittest assert*、异常/警告/日志上下文、NO_EXCEPTION、状态/输出观察和 matcher/snapshot。
 必须返回完整 Python 测试文件，后续会保存为同级目录下的 test_brt_<instance_id>.py。
 不要返回 method 片段，不要依赖插入到已有 class/file。
 

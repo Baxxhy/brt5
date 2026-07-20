@@ -1,0 +1,23 @@
+{
+  "experiment_id": "joint_seed_mutation_ablation",
+  "date": "2026-07-20",
+  "branch": "codex/validated-mutation-planning",
+  "command_under_test": "bash scripts/run_p0_simple_llm_selector_full.sh --dataset swt --mutation off",
+  "method_version": "p0-wo-mutation-joint-top3-v2",
+  "ablation_signature_suffix": "seed_generation_mode=joint_top3_v1",
+  "inputs": {
+    "retrieval_order": "iCoRe rank order",
+    "primary_seed": "rank 0",
+    "joint_references": "rank 0 through rank 2",
+    "behavior_target": "same cache with downstream mutation_hints filtered"
+  },
+  "preserved_components": [
+    "environment preparation",
+    "protocol recovery budget",
+    "specialized feedback routing",
+    "strict semantic verifier",
+    "candidate checkpoint ranking",
+    "formal F2P evaluation"
+  ],
+  "host_limitation": "The real /root/conda/ENTER/bin/conda --version timed out during verification; no live benchmark run was started."
+}

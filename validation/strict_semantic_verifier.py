@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.prompts import (
+    JOINT_SEED_STRICT_VERIFIER_SYSTEM_PROMPT,
     STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT,
     STRICT_SEMANTIC_VERIFIER_USER_PROMPT,
 )
@@ -24,6 +25,7 @@ from ..core.schema import (
     VerifierDecision,
 )
 from ..core.utils import extract_json_object, safe_json_dump, truncate_text, write_text
+from .semantic_guard import oracle_contract_summary
 
 
 _DECISIONS = {"accept", "repair_setup", "repair_trigger", "repair_oracle", "reject"}
@@ -70,6 +72,8 @@ def _forced_result(
         target_hit=False,
         oracle_grounded_in_issue=False,
         uses_public_behavior=False,
+        oracle_kind="",
+        oracle_falsifiable=False,
         reason=reason or execution.status,
         next_action=decision,
     )
@@ -91,6 +95,7 @@ def verify_strict_semantics(
     config = (ablation_config or AblationConfig()).validate()
     result = _forced_result(candidate.instance_id, execution, execution.status)
     if result is None:
+        static_oracle = oracle_contract_summary(behavior, candidate.code)
         prompt = STRICT_SEMANTIC_VERIFIER_USER_PROMPT.format(
             issue_text=issue_text,
             behavior_json=json.dumps(
@@ -110,7 +115,11 @@ def verify_strict_semantics(
         prompt = render_evidence_prompt(prompt, behavior)
         prompt = render_ablation_prompt(prompt, config)
         system_prompt = render_ablation_prompt(
-            STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT,
+            (
+                STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT
+                if config.mutation
+                else JOINT_SEED_STRICT_VERIFIER_SYSTEM_PROMPT
+            ),
             config,
             include_banner=False,
         )
@@ -145,6 +154,9 @@ def verify_strict_semantics(
                 data.get("oracle_grounded_in_issue")
             ),
             uses_public_behavior=_as_bool(data.get("uses_public_behavior")),
+            oracle_kind=str(data.get("oracle_kind") or ",".join(static_oracle["kinds"])),
+            oracle_falsifiable=bool(static_oracle["falsifiable"])
+            or _as_bool(data.get("oracle_falsifiable")),
             reason=str(data.get("reason") or ""),
             next_action=str(data.get("next_action") or decision),
         )
@@ -171,12 +183,17 @@ def verify_strict_semantics(
                 result.next_action = result.decision
                 result.reason = "LLM 未确认失败路径与 Issue 对齐。" + result.reason
             elif not (
-                result.oracle_grounded_in_issue and result.uses_public_behavior
+                result.oracle_grounded_in_issue
+                and result.uses_public_behavior
+                and result.oracle_falsifiable
             ):
                 result.decision = "repair_oracle"
                 result.failure_class = "oracle_wrong"
                 result.next_action = result.decision
-                result.reason = "LLM 未确认 oracle 来自 Issue 的公开行为。" + result.reason
+                result.reason = (
+                    "未确认 Oracle 来自 Issue、使用公开行为且具有可证伪协议。"
+                    + result.reason
+                )
 
     safe_json_dump(
         result.to_dict(),

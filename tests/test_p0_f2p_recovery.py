@@ -15,13 +15,14 @@ from brt5.core.schema import (
     RetrievedTest,
     VerifierDecision,
 )
-from brt5.execution.executor import run_command_in_conda
+from brt5.execution.executor import classify_execution, run_command_in_conda
 from brt5.execution.feedback import _checkpoint_score, _save_checkpoint
 from brt5.issue.issue_rewriter import (
     apply_behavior_safety_constraints,
     behavior_from_dict,
 )
 from brt5.validation.strict_semantic_verifier import verify_strict_semantics
+from brt5.validation.semantic_guard import audit_candidate, oracle_contract_summary
 
 
 class _StaticLLM:
@@ -110,6 +111,97 @@ class P0SimpleLLMSelectorTests(unittest.TestCase):
         )
         self.assertEqual(behavior.safety_constraints[0]["protected_inputs"], ["14:00"])
 
+    def test_message_oracle_must_assert_required_fixed_side_token(self) -> None:
+        behavior = BehaviorTarget(
+            "pytest-dev__pytest-8906",
+            expected_behavior={"text": "The error should provide actionable guidance."},
+            assertion_hints=[
+                {
+                    "assertion_goal": (
+                        "验证错误信息包含对 allow_module_level 的提示。"
+                    )
+                }
+            ],
+        )
+        buggy_oracle = '''
+def test_message(pytester):
+    result = pytester.runpytest()
+    result.stdout.fnmatch_lines(["*Using pytest.skip outside of a test is not allowed*"])
+'''
+        fixed_oracle = '''
+def test_message(pytester):
+    result = pytester.runpytest()
+    result.stdout.fnmatch_lines(["*allow_module_level=True*"])
+'''
+
+        problem = audit_candidate(behavior, buggy_oracle)
+
+        self.assertIn("allow_module_level", problem)
+        self.assertEqual(audit_candidate(behavior, fixed_oracle), "")
+
+    def test_oracle_contract_does_not_require_bare_assert(self) -> None:
+        warning = '''
+def test_warning():
+    with pytest.warns(UserWarning):
+        api()
+'''
+        logging = '''
+def test_logging(self):
+    with self.assertLogs("pkg", level="WARNING"):
+        api()
+'''
+        no_exception = '''
+def test_no_crash():
+    api()
+'''
+        regular_behavior = BehaviorTarget("x", expected_behavior={"text": "emit a warning"})
+        no_crash_behavior = BehaviorTarget(
+            "x", expected_behavior={"text": "api should not crash and should work normally"}
+        )
+        self.assertTrue(oracle_contract_summary(regular_behavior, warning)["falsifiable"])
+        self.assertTrue(oracle_contract_summary(regular_behavior, logging)["falsifiable"])
+        summary = oracle_contract_summary(no_crash_behavior, no_exception)
+        self.assertTrue(summary["falsifiable"])
+        self.assertIn("NO_EXCEPTION", summary["kinds"])
+
+    def test_pytester_nested_file_requires_unique_keyword_name(self) -> None:
+        behavior = BehaviorTarget("pytest-dev__pytest-8906")
+        positional = '''
+def test_brt_case(pytester):
+    pytester.makepyfile("def test_inner(): pass")
+    pytester.runpytest()
+'''
+        named = '''
+def test_brt_case(pytester):
+    pytester.makepyfile(test_brt_inner_case="def test_inner(): pass")
+    pytester.runpytest("test_brt_inner_case.py")
+'''
+
+        self.assertIn(
+            "ImportPathMismatchError", audit_candidate(behavior, positional)
+        )
+        self.assertEqual(audit_candidate(behavior, named), "")
+
+    def test_nested_pytest_collection_output_is_not_outer_collect_error(self) -> None:
+        output = '''
+collected 1 item
+testing/test_brt_case.py::test_brt_case FAILED [100%]
+E       Failed: nomatch: '*allow_module_level*'
+Captured stdout call
+collected 0 items / 1 error
+ERROR collecting test_brt_inner_case.py
+FAILED testing/test_brt_case.py::test_brt_case
+'''
+        behavior = BehaviorTarget(
+            "pytest-dev__pytest-8906",
+            error_symptom={"text": "pytest.skip module-level error"},
+            target_apis=[{"name": "pytest.skip"}],
+        )
+
+        status = classify_execution(1, output, "", False, behavior)
+
+        self.assertEqual(status, "ISSUE_ALIGNED_FAIL")
+
     def test_executor_returns_real_buggy_log_without_dynamic_tracing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             result = run_command_in_conda(
@@ -191,6 +283,52 @@ class P0SimpleLLMSelectorTests(unittest.TestCase):
         )
         self.assertEqual(accepted_checkpoint.oracle_risk, {})
         self.assertEqual(accepted_checkpoint.surrogate, {})
+
+    def test_plan_or_oracle_contract_violation_is_selection_ineligible(self) -> None:
+        behavior = BehaviorTarget(
+            "x", expected_behavior={"text": "api should return the public result"}
+        )
+        execution = ExecutionResult(returncode=1, status="ASSERTION_FAIL")
+        strict = SimpleNamespace(
+            failure_class="issue_aligned",
+            target_hit=True,
+            oracle_grounded_in_issue=True,
+            uses_public_behavior=True,
+        )
+        violated = CandidateTest(
+            "x",
+            code="def test_x():\n    assert api() == 2\n",
+            mutation_adherence={"status": "VIOLATED"},
+        )
+        clean = CandidateTest(
+            "x",
+            code="def test_x():\n    assert api() == 2\n",
+            mutation_adherence={"status": "FULL"},
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            bad = _save_checkpoint(
+                raw,
+                0,
+                violated,
+                execution,
+                VerifierDecision("x", "accept"),
+                None,
+                behavior=behavior,
+                issue_text="api should return 2",
+                strict_result=strict,
+            )
+            good = _save_checkpoint(
+                raw,
+                1,
+                clean,
+                execution,
+                VerifierDecision("x", "repair_oracle"),
+                None,
+                behavior=behavior,
+                issue_text="api should return 2",
+                strict_result=strict,
+            )
+        self.assertGreater(tuple(good.rank_key), tuple(bad.rank_key))
 
     def test_active_feedback_has_no_surrogate_call(self) -> None:
         import brt5.execution.feedback as feedback

@@ -1,0 +1,22 @@
+[
+  {
+    "repo": "django/django",
+    "instance_id": "django__django-13768",
+    "base_commit": "965d2d95c630939b53eb60d9c169f5dfc77ee0c6",
+    "problem_statement": "Log exceptions handled in Signal.send_robust()\nDescription\n\t\nAs pointed out by ​Haki Benita on Twitter, by default Signal.send_robust() doesn't have any log messages for exceptions raised in receivers. Since Django logs exceptions in other similar situations, such as missing template variables, I think it would be worth adding a logger.exception() call in the except clause of send_robust() . Users would then see such exceptions in their error handling tools, e.g. Sentry, and be able to figure out what action to take from there. Ultimately any *expected* exception should be caught with a try in the receiver function.\n",
+    "hints_text": "I would like to work on this issue. PS. i am new to this django. so any advice would be appreciated",
+    "created_at": "2020-12-12T07:34:48Z",
+    "version": "3.2",
+    "environment_setup_commit": "65dfb06a1ab56c238cc80f5e1c31f61210c4577d"
+  },
+  {
+    "repo": "matplotlib/matplotlib",
+    "instance_id": "matplotlib__matplotlib-23987",
+    "base_commit": "e98d8d085e8f53ec0467422b326f7738a2dd695e",
+    "problem_statement": "[Bug]: Constrained layout UserWarning even when False\n### Bug summary\r\n\r\nWhen using layout settings such as `plt.subplots_adjust` or `bbox_inches='tight`, a UserWarning is produced due to incompatibility with constrained_layout, even if constrained_layout = False. This was not the case in previous versions.\r\n\r\n### Code for reproduction\r\n\r\n```python\r\nimport matplotlib.pyplot as plt\r\nimport numpy as np\r\na = np.linspace(0,2*np.pi,100)\r\nb = np.sin(a)\r\nc = np.cos(a)\r\nfig,ax = plt.subplots(1,2,figsize=(8,2),constrained_layout=False)\r\nax[0].plot(a,b)\r\nax[1].plot(a,c)\r\nplt.subplots_adjust(wspace=0)\r\n```\r\n\r\n\r\n### Actual outcome\r\n\r\nThe plot works fine but the warning is generated\r\n\r\n`/var/folders/ss/pfgdfm2x7_s4cyw2v0b_t7q80000gn/T/ipykernel_76923/4170965423.py:7: UserWarning: This figure was using a layout engine that is incompatible with subplots_adjust and/or tight_layout; not calling subplots_adjust.\r\n  plt.subplots_adjust(wspace=0)`\r\n\r\n### Expected outcome\r\n\r\nno warning\r\n\r\n### Additional information\r\n\r\nWarning disappears when constrained_layout=False is removed\r\n\r\n### Operating system\r\n\r\nOS/X\r\n\r\n### Matplotlib Version\r\n\r\n3.6.0\r\n\r\n### Matplotlib Backend\r\n\r\n_No response_\r\n\r\n### Python version\r\n\r\n_No response_\r\n\r\n### Jupyter version\r\n\r\n_No response_\r\n\r\n### Installation\r\n\r\nconda\n",
+    "hints_text": "Yup, that is indeed a bug https://github.com/matplotlib/matplotlib/blob/e98d8d085e8f53ec0467422b326f7738a2dd695e/lib/matplotlib/figure.py#L2428-L2431 \r\n\r\nPR on the way.\n@VanWieren Did you mean to close this?  We normally keep bugs open until the PR to fix it is actually merged.\n> @VanWieren Did you mean to close this? We normally keep bugs open until the PR to fix it is actually merged.\r\n\r\noh oops, I did not know that. Will reopen",
+    "created_at": "2022-09-22T21:39:02Z",
+    "version": "3.6",
+    "environment_setup_commit": "73909bcb408886a22e2b84581d6b9e6d9907c813"
+  }
+]

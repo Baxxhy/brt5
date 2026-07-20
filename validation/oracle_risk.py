@@ -12,6 +12,7 @@ from ..core.behavior_evidence import (
     expected_behavior_text,
 )
 from ..core.schema import DualVersionResult
+from .mutation_adherence import oracle_kinds
 
 
 def _name(node: ast.AST) -> str:
@@ -68,7 +69,11 @@ def assess_oracle_risk(
                 reasons.append("medium: assertion contains a very long exact literal")
         if isinstance(node, ast.Call):
             call_name = _name(node.func)
-            if call_name in {"pytest.raises", "raises"} and node.args:
+            leaf = call_name.rsplit(".", 1)[-1].lower()
+            if (
+                call_name in {"pytest.raises", "raises"}
+                or leaf.startswith("assertraises")
+            ) and node.args:
                 raised = _name(node.args[0])
                 if raised in {"Exception", "BaseException"}:
                     reasons.append("high: pytest.raises catches broad Exception/BaseException")
@@ -76,6 +81,23 @@ def assess_oracle_risk(
                     reasons.append("medium: exception assertion may depend on long exact message")
             if call_name.endswith(("assert_called_once", "assert_called_once_with")):
                 reasons.append("medium: oracle checks mock/internal call count")
+            if leaf.startswith("assert") or leaf in {
+                "warns",
+                "assertwarns",
+                "assertwarnsregex",
+                "assertlogs",
+                "assertnlogs",
+                "fnmatch_lines",
+                "match_lines",
+                "re_match_lines",
+                "snapshot",
+                "match",
+            }:
+                source = ast.get_source_segment(candidate_code, node) or ""
+                if re.search(r"['\"][^'\"]{160,}['\"]", source):
+                    reasons.append(
+                        "medium: framework Oracle contains a very long exact literal"
+                    )
         if isinstance(node, ast.Try):
             for handler in node.handlers:
                 broad = handler.type is None or _name(handler.type) in {"Exception", "BaseException"}
@@ -101,6 +123,13 @@ def assess_oracle_risk(
         {
             "assert_count": len(re.findall(r"\bassert\b", candidate_code)),
             "uses_pytest_raises": "pytest.raises" in candidate_code,
+            "oracle_kinds": oracle_kinds(candidate_code),
+            "uses_warning_oracle": bool(
+                re.search(r"(?:pytest\.warns|assertWarns)", candidate_code)
+            ),
+            "uses_logging_oracle": bool(
+                re.search(r"(?:assertLogs|caplog)", candidate_code)
+            ),
             "log_tail_chars": len(log_tail),
         }
     )

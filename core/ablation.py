@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -99,9 +98,12 @@ class AblationConfig:
 
     @property
     def signature(self) -> str:
-        return ";".join(
+        signature = ";".join(
             f"{name}={int(bool(getattr(self, name)))}" for name in _COMPONENTS
         )
+        if not self.mutation:
+            signature += ";seed_generation_mode=joint_top3_v1"
+        return signature
 
     def to_dict(self) -> dict[str, Any]:
         flags = {name: bool(getattr(self, name)) for name in _COMPONENTS}
@@ -114,6 +116,11 @@ class AblationConfig:
             "run_suffix": self.run_suffix,
             "compute_patch_coverage": self.compute_patch_coverage,
             "signature": self.signature,
+            "seed_generation_mode": (
+                "validated_plan_per_seed"
+                if self.mutation
+                else "joint_top3_reference"
+            ),
             "effective_feedback_routes": {
                 "mode": (
                     "specialized" if self.specialized_feedback else "generic"
@@ -158,21 +165,16 @@ def render_ablation_prompt(
     config: AblationConfig,
     include_banner: bool = True,
 ) -> str:
-    """Remove explicit mutation guidance only for the mutation ablation."""
+    """Return an already selected prompt without rewriting user evidence.
 
-    if config.mutation:
-        return prompt
-    rendered = re.sub(r"mutation[_ -]?hints", "trigger evidence", prompt, flags=re.I)
-    rendered = re.sub(r"mutation[_ -]?plan", "trigger guidance", rendered, flags=re.I)
-    rendered = re.sub(r"\bmutation\b", "adjustment", rendered, flags=re.I)
-    rendered = rendered.replace("小变异", "必要调整").replace("变异", "调整")
-    if not include_banner:
-        return rendered
-    return (
-        "【实验条件：不使用显式调整规划】\n"
-        "不提供显式调整提示或规划；仅依据 Issue、检索证据和执行反馈生成或修复测试。\n\n"
-        + rendered
-    )
+    Callers choose the prompt family for the active method.  In particular,
+    the joint Top-3 path uses its own positive prompt, so Issue text, source,
+    test code and logs must never be modified by broad word substitutions.
+    ``include_banner`` is retained for API compatibility.
+    """
+
+    _ = config, include_banner
+    return prompt
 
 
 def ablation_signature_from_summary(summary: dict[str, Any]) -> str:

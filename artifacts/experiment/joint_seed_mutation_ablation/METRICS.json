@@ -1,0 +1,27 @@
+{
+  "experiment_id": "joint_seed_mutation_ablation",
+  "scope": "implementation_and_mocked_routing_validation",
+  "compile_check": "passed",
+  "focused_tests": {
+    "passed": 20,
+    "failed": 0
+  },
+  "full_unit_tests": {
+    "passed": 174,
+    "failed": 0,
+    "test_only_conda_exe": "/bin/true"
+  },
+  "routing_contract": {
+    "mutation_off_seed_mode": "joint_top3",
+    "primary_protocol_rank": 0,
+    "reference_seed_count": 3,
+    "initial_generation_pipelines": 1,
+    "mutation_plan_calls": 0
+  },
+  "prompt_audit": {
+    "positive_joint_workflow": true,
+    "alternate_method_disclosure": false,
+    "global_user_evidence_rewriting": false
+  },
+  "full_swt_run_started": false
+}

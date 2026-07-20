@@ -1,0 +1,32 @@
+{
+  "cache_schema_version": "brt5.behavior_target_cache.v1",
+  "cache_id": "validated-mutation-pilot-swt3",
+  "created_at": "2026-07-20T15:05:53.166558+08:00",
+  "dataset_mode": "swt",
+  "instance_count": 3,
+  "behavior_schema_version": "behavior_target.lossless.v1",
+  "dataset_sha256": "d3c78959d8643c6c799b447f329051cd0157a759dd7968794585c8cd3d523c64",
+  "code_retrieval_sha256": "39d4dbeff604fbf8dfa5a71274a340a158570167cf3009321eec1c069ee44b68",
+  "test_retrieval_sha256": "b24d45601e43836a4fd81856b2b3f0c2486dd21911bd11aef2e03ced60b845e8",
+  "source_run_id": "p0_simple_llm_selector_full276_20260717",
+  "source_model": "deepseek-v3",
+  "source_temperature": 0.1,
+  "source_method_variant": "full",
+  "source_f2p_success": 131,
+  "source_f2p_total": 276,
+  "source_f2p_percent": 47.4638,
+  "behavior_targets": {
+    "django__django-12497": {
+      "path": "django__django-12497/behavior_target.json",
+      "sha256": "092c3c22fdf148a25c669e303d695f98c6b7d4b1001b6da1fe01dcd22e40dca4"
+    },
+    "pytest-dev__pytest-8906": {
+      "path": "pytest-dev__pytest-8906/behavior_target.json",
+      "sha256": "cff439fbc4b01c110e3a2c60ddbe6353618e7a776223de8b6bb9cdb189c666f0"
+    },
+    "sympy__sympy-11400": {
+      "path": "sympy__sympy-11400/behavior_target.json",
+      "sha256": "4816d35f3912520b69c123fa640b9707a8e06e74ea8d1864626d766b9a836108"
+    }
+  }
+}

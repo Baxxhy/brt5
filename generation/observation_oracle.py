@@ -10,6 +10,7 @@ from typing import Any
 from ..execution.executor import run_command_in_conda
 from ..retrieval.icore_runtime import first_test_selector, icore_test_command
 from ..core.prompts import (
+    JOINT_SEED_OBSERVATION_ORACLE_SYSTEM_PROMPT,
     OBSERVATION_ORACLE_PROBE_PROMPT,
     OBSERVATION_ORACLE_REBIND_PROMPT,
     OBSERVATION_ORACLE_SYSTEM_PROMPT,
@@ -21,6 +22,10 @@ from ..core.ablation import (
     render_ablation_prompt,
 )
 from ..core.schema import CandidateTest, ObservationReport, ProtocolRecovery
+from ..validation.mutation_adherence import (
+    assess_mutation_adherence,
+    mutation_plan_from_candidate,
+)
 from ..validation.semantic_guard import audit_candidate
 from ..core.utils import clean_code_block, safe_json_dump, truncate_text, write_text
 
@@ -135,7 +140,13 @@ def rebind_observation_oracle(
     probe_prompt = render_evidence_prompt(probe_prompt, behavior)
     probe_prompt = render_ablation_prompt(probe_prompt, config)
     system_prompt = render_ablation_prompt(
-        OBSERVATION_ORACLE_SYSTEM_PROMPT, config, include_banner=False
+        (
+            OBSERVATION_ORACLE_SYSTEM_PROMPT
+            if config.mutation
+            else JOINT_SEED_OBSERVATION_ORACLE_SYSTEM_PROMPT
+        ),
+        config,
+        include_banner=False,
     )
     write_text(str(Path(output_dir) / "prompts" / f"oracle_probe_round_{round_id}.txt"), system_prompt + "\n\n" + probe_prompt)
     probe_response = llm_client.chat(system_prompt, probe_prompt)
@@ -183,6 +194,7 @@ def rebind_observation_oracle(
         write_text(str(Path(output_dir) / "responses" / f"oracle_rebind_round_{round_id}_retry.txt"), rebuilt_response)
     write_text(str(Path(output_dir) / f"oracle_round_{round_id}_rebuilt_test.py"), rebuilt)
     write_text(candidate.candidate_file_path, rebuilt)
+    lineage_plan = mutation_plan_from_candidate(candidate)
     new_candidate = CandidateTest(
         instance_id=candidate.instance_id,
         round_id=round_id,
@@ -193,5 +205,15 @@ def rebind_observation_oracle(
         command=candidate.command,
         prompt_path=str(Path(output_dir) / "prompts" / f"oracle_rebind_round_{round_id}.txt"),
         response_path=str(Path(output_dir) / "responses" / f"oracle_rebind_round_{round_id}.txt"),
+        mutation_plan_status=lineage_plan.status if lineage_plan else "",
+        mutation_plan_risk=lineage_plan.risk if lineage_plan else "",
     )
+    new_candidate.mutation_adherence = assess_mutation_adherence(
+        rebuilt, lineage_plan, protocol
+    )
+    if lineage_plan is not None:
+        safe_json_dump(
+            new_candidate.mutation_adherence,
+            str(Path(output_dir) / f"mutation_round_{round_id}_adherence.json"),
+        )
     return new_candidate, report, _oracle_type(rebuilt)

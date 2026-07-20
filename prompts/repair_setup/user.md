@@ -1,4 +1,4 @@
-当前测试存在 setup/import/fixture/class/collection/syntax 问题。只修复可执行上下文，不改变缺陷触发目标。
+当前测试存在 setup/import/fixture/class/collection/syntax 问题。只修复可执行上下文，不改变缺陷触发目标或任何 Oracle 协议（包括异常、warning、logging、状态、返回值和框架 matcher）。
 必须返回完整 Python 测试文件，后续会保存为同级目录下的 test_brt_<instance_id>.py。
 不要返回 method 片段，不要依赖插入到已有 class/file。
 优先删除没有上下文依据、环境中不存在的第三方 import，不要建议安装新依赖。
