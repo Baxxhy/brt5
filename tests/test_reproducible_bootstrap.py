@@ -144,6 +144,9 @@ class ReproducibleBootstrapTests(unittest.TestCase):
         self.assertIn("validate_behavior_target_cache.py", bootstrap)
         self.assertIn("bootstrap_repositories.py", bootstrap)
         self.assertIn('PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)', bootstrap)
+        self.assertIn("--controller-python", bootstrap)
+        self.assertIn("reused_controller_python=", bootstrap)
+        self.assertIn("sys.version_info >= (3, 10)", bootstrap)
         self.assertNotIn("EXPECTED_PROJECT_ROOT", bootstrap)
         self.assertNotIn("/root/Baxxhy/BugReproduce/brt5", bootstrap)
 

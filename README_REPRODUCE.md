@@ -52,6 +52,20 @@ On a cluster where operating-system prerequisites are already installed and
 bash scripts/bootstrap_fresh_swt_server.sh --skip-system-packages --prewarm-workers 8
 ```
 
+If the project requirements were already installed in an activated Python
+3.10+ Conda environment, reuse that controller without reinstalling it:
+
+```bash
+bash scripts/bootstrap_fresh_swt_server.sh \
+  --skip-system-packages \
+  --controller-python "$(command -v python)" \
+  --prewarm-workers 8
+```
+
+The supplied controller is validated with `pip check` and imports of the
+framework dependencies. Benchmark dependency templates remain isolated under
+`../.brt5-conda`; the active controller environment is not modified.
+
 The bootstrap does the following:
 
 1. installs Linux build prerequisites with `apt-get`;

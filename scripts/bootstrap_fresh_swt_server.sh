@@ -20,6 +20,7 @@ PREWARM_WORKERS=${BRT_PREWARM_WORKERS:-4}
 RUN_TESTS=true
 NON_INTERACTIVE=false
 REQUESTED_CONDA_EXE=${CONDA_EXE:-}
+REQUESTED_CONTROLLER_PYTHON=
 
 usage() {
   cat <<'EOF'
@@ -31,6 +32,8 @@ Conda distribution.
 
 Options:
   --conda-exe PATH          Explicit path to the installed conda executable.
+  --controller-python PATH  Reuse an already prepared Python 3.10+ controller;
+                            skip creating/installing the brt5_icore controller.
   --skip-system-packages    Skip apt-get (only after installing prerequisites).
   --skip-prewarm            Skip the 52 SWT template environments (not run-ready).
   --prewarm-workers N       Concurrent SWT environment builds, 1-8 (default: 4).
@@ -44,6 +47,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --conda-exe) REQUESTED_CONDA_EXE=${2:?missing path}; shift 2 ;;
     --conda-exe=*) REQUESTED_CONDA_EXE=${1#*=}; shift ;;
+    --controller-python) REQUESTED_CONTROLLER_PYTHON=${2:?missing path}; shift 2 ;;
+    --controller-python=*) REQUESTED_CONTROLLER_PYTHON=${1#*=}; shift ;;
     --skip-system-packages) INSTALL_SYSTEM_PACKAGES=false; shift ;;
     --skip-prewarm) PREWARM=false; shift ;;
     --prewarm-workers) PREWARM_WORKERS=${2:?missing worker count}; shift 2 ;;
@@ -261,27 +266,39 @@ trap cleanup_probe EXIT
 rmdir "$PROBE_PARENT"
 trap - EXIT
 
-echo "== Create the BRT5 controller environment =="
-if "$CONDA_EXE" run -n "$CONTROLLER_ENV" python -c 'import sys' >/dev/null 2>&1; then
-  "$CONDA_EXE" install -n "$CONTROLLER_ENV" -y python=3.12 pip
+if [[ -n "$REQUESTED_CONTROLLER_PYTHON" ]]; then
+  echo "== Validate the user-provided BRT5 controller environment =="
+  if [[ ! -x "$REQUESTED_CONTROLLER_PYTHON" ]]; then
+    echo "Controller Python is not executable: $REQUESTED_CONTROLLER_PYTHON" >&2
+    exit 2
+  fi
+  PYTHON_BIN=$(cd "$(dirname "$REQUESTED_CONTROLLER_PYTHON")" && pwd)/$(basename "$REQUESTED_CONTROLLER_PYTHON")
+  "$PYTHON_BIN" -m pip check
+  "$PYTHON_BIN" -c \
+    'import datasets, packaging, requests, sys; assert sys.version_info >= (3, 10), sys.version; print("reused_controller_python=" + sys.executable)'
 else
-  "$CONDA_EXE" create -n "$CONTROLLER_ENV" -y python=3.12 pip
+  echo "== Create the BRT5 controller environment =="
+  if "$CONDA_EXE" run -n "$CONTROLLER_ENV" python -c 'import sys' >/dev/null 2>&1; then
+    "$CONDA_EXE" install -n "$CONTROLLER_ENV" -y python=3.12 pip
+  else
+    "$CONDA_EXE" create -n "$CONTROLLER_ENV" -y python=3.12 pip
+  fi
+  CONTROLLER_PREFIX=$(
+    "$CONDA_EXE" run -n "$CONTROLLER_ENV" python -c 'import sys; print(sys.prefix)' |
+      tail -n 1 | tr -d '\r'
+  )
+  PYTHON_BIN=$CONTROLLER_PREFIX/bin/python
+  if [[ ! -x "$PYTHON_BIN" ]]; then
+    echo "Controller Python was not created: $PYTHON_BIN" >&2
+    exit 2
+  fi
+  "$PYTHON_BIN" -m pip install --upgrade \
+    pip==26.1.2 setuptools==82.0.1 wheel==0.47.0
+  "$PYTHON_BIN" -m pip install -r "$PROJECT_ROOT/requirements.txt"
+  "$PYTHON_BIN" -m pip check
+  "$PYTHON_BIN" -c \
+    'import datasets, packaging, requests, sys; assert sys.version_info[:2] == (3, 12); print("controller_python=" + sys.executable)'
 fi
-CONTROLLER_PREFIX=$(
-  "$CONDA_EXE" run -n "$CONTROLLER_ENV" python -c 'import sys; print(sys.prefix)' |
-    tail -n 1 | tr -d '\r'
-)
-PYTHON_BIN=$CONTROLLER_PREFIX/bin/python
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  echo "Controller Python was not created: $PYTHON_BIN" >&2
-  exit 2
-fi
-"$PYTHON_BIN" -m pip install --upgrade \
-  pip==26.1.2 setuptools==82.0.1 wheel==0.47.0
-"$PYTHON_BIN" -m pip install -r "$PROJECT_ROOT/requirements.txt"
-"$PYTHON_BIN" -m pip check
-"$PYTHON_BIN" -c \
-  'import datasets, packaging, requests, sys; assert sys.version_info[:2] == (3, 12); print("controller_python=" + sys.executable)'
 
 export PYTHON_BIN
 export PYTHONPATH="$WORKSPACE_ROOT${PYTHONPATH:+:$PYTHONPATH}"
