@@ -1247,6 +1247,31 @@ dependencies:
             },
         )
 
+    def test_inventory_prefers_active_prefix_for_duplicate_environment_name(self) -> None:
+        env_list = {
+            "envs": [
+                "/root/brt5-conda/envs/same-name",
+                "/root/miniconda3/envs/same-name",
+            ]
+        }
+        info = {
+            "root_prefix": "/root/brt5-conda",
+            "envs_dirs": [
+                "/root/brt5-conda/envs",
+                "/root/.conda/envs",
+            ],
+        }
+        responses = [
+            SimpleNamespace(returncode=0, stdout=json.dumps(env_list), stderr=""),
+            SimpleNamespace(returncode=0, stdout=json.dumps(info), stderr=""),
+        ]
+        with mock.patch.object(envm.subprocess, "run", side_effect=responses):
+            inventory = envm.conda_env_inventory(refresh=True)
+        self.assertEqual(
+            inventory,
+            {"same-name": "/root/brt5-conda/envs/same-name"},
+        )
+
     def test_health_check_uses_inventory_prefix_instead_of_global_name(self) -> None:
         response = SimpleNamespace(
             returncode=0,

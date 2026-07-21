@@ -1025,8 +1025,8 @@ def conda_activate_cmd(env_name: str) -> str:
     return f'eval "$({shlex.quote(CONDA_EXE)} shell.bash hook)" && conda activate {shlex.quote(env_name)}'
 
 
-def _parse_conda_env_list_text(stdout: str) -> dict[str, str]:
-    envs: dict[str, str] = {}
+def _parse_conda_env_list_text(stdout: str) -> list[tuple[str, str]]:
+    envs: list[tuple[str, str]] = []
     for line in stdout.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -1037,7 +1037,7 @@ def _parse_conda_env_list_text(stdout: str) -> dict[str, str]:
         if "*" in parts:
             parts = [part for part in parts if part != "*"]
         if len(parts) >= 2 and parts[-1].startswith("/"):
-            envs[parts[0]] = parts[-1]
+            envs.append((parts[0], parts[-1]))
     return envs
 
 
@@ -1046,7 +1046,7 @@ def conda_env_inventory(refresh: bool = False, timeout: int = 30) -> dict[str, s
     cached = _INVENTORY_CACHE.get(cache_key)
     if cached and not refresh and time.time() - cached[0] < 30:
         return dict(cached[1])
-    envs: dict[str, str] = {}
+    env_records: list[tuple[str, str]] = []
     try:
         proc = subprocess.run(
             [CONDA_EXE, "env", "list", "--json"],
@@ -1060,10 +1060,14 @@ def conda_env_inventory(refresh: bool = False, timeout: int = 30) -> dict[str, s
         for path in data.get("envs", []):
             name = Path(str(path)).name
             if name:
-                envs[name] = str(path)
+                # Keep duplicate names until after prefix ownership is known.
+                # Conda's global environments.txt can contain both
+                # /root/miniconda3/envs/X and /root/brt5-conda/envs/X. A dict
+                # at this point lets the stale path overwrite the active one.
+                env_records.append((name, str(path)))
     except Exception:
-        envs = {}
-    if not envs:
+        env_records = []
+    if not env_records:
         try:
             proc = subprocess.run(
                 [CONDA_EXE, "env", "list"],
@@ -1073,16 +1077,17 @@ def conda_env_inventory(refresh: bool = False, timeout: int = 30) -> dict[str, s
                 timeout=timeout,
                 check=False,
             )
-            envs = _parse_conda_env_list_text(proc.stdout or "")
+            env_records = _parse_conda_env_list_text(proc.stdout or "")
         except Exception:
-            envs = {}
+            env_records = []
     # ``conda env list`` includes every prefix recorded in the user's global
     # environments.txt, including environments owned by a different Conda
     # installation.  A name from /root/miniconda3 is not addressable through
     # ``/root/brt5-conda/bin/conda run -n`` even though it appears in that
     # global list.  Keep only prefixes that the active Conda declares in its
     # own envs_dirs (plus its base prefix).
-    if envs:
+    envs: dict[str, str] = {}
+    if env_records:
         try:
             info_proc = subprocess.run(
                 [CONDA_EXE, "info", "--json"],
@@ -1093,29 +1098,47 @@ def conda_env_inventory(refresh: bool = False, timeout: int = 30) -> dict[str, s
                 check=False,
             )
             info = json.loads(info_proc.stdout or "{}")
-            root_prefix = Path(str(info.get("root_prefix") or "")).expanduser()
-            allowed_env_dirs = {
+            root_prefix_text = str(info.get("root_prefix") or "").strip()
+            root_prefix = Path(root_prefix_text).expanduser()
+            allowed_env_dirs = [
                 Path(str(path)).expanduser().resolve()
                 for path in (info.get("envs_dirs") or [])
                 if str(path or "").strip()
-            }
-            resolved_root = root_prefix.resolve() if str(root_prefix) else None
+            ]
+            resolved_root = root_prefix.resolve() if root_prefix_text else None
             if allowed_env_dirs:
-                envs = {
-                    name: path
-                    for name, path in envs.items()
-                    if (
-                        Path(path).expanduser().resolve().parent in allowed_env_dirs
-                        or (
-                            resolved_root is not None
-                            and Path(path).expanduser().resolve() == resolved_root
-                        )
-                    )
+                directory_rank = {
+                    path: index for index, path in enumerate(allowed_env_dirs)
                 }
+                active_env_dir = (
+                    (resolved_root / "envs").resolve()
+                    if resolved_root is not None
+                    else None
+                )
+                ranked: dict[str, tuple[int, str]] = {}
+                for name, path in env_records:
+                    resolved_path = Path(path).expanduser().resolve()
+                    if resolved_root is not None and resolved_path == resolved_root:
+                        rank = -2
+                    elif (
+                        active_env_dir is not None
+                        and resolved_path.parent == active_env_dir
+                    ):
+                        rank = -1
+                    elif resolved_path.parent in directory_rank:
+                        rank = directory_rank[resolved_path.parent]
+                    else:
+                        continue
+                    previous = ranked.get(name)
+                    if previous is None or rank < previous[0]:
+                        ranked[name] = (rank, path)
+                envs = {name: value[1] for name, value in ranked.items()}
+            else:
+                envs = dict(env_records)
         except Exception:
             # Older Conda clients may not expose envs_dirs in JSON. Preserve
             # their historical behavior rather than hiding every environment.
-            pass
+            envs = dict(env_records)
     _INVENTORY_CACHE[cache_key] = (time.time(), dict(envs))
     return envs
 

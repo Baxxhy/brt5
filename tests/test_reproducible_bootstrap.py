@@ -144,11 +144,16 @@ class ReproducibleBootstrapTests(unittest.TestCase):
             {
                 "status": "ENV_HEALTH_ERROR",
                 "returncode": 1,
-                "health": {"ok": False, "category": "ENV_NOT_FOUND"},
+                "health": {
+                    "ok": False,
+                    "category": "ENV_NOT_FOUND",
+                    "reason": "conda environment not found",
+                },
                 "stderr": "generic failure",
             }
         )
         self.assertEqual(diagnostic["category"], "ENV_NOT_FOUND")
+        self.assertEqual(diagnostic["error_line"], "conda environment not found")
 
     def test_swt_attempt_diagnostics_preserves_initial_root_cause(self) -> None:
         diagnostic = attempt_diagnostics(

@@ -168,15 +168,16 @@ def failure_diagnostic(result: dict[str, Any]) -> dict[str, Any]:
         else:
             category = str(result.get("status") or "UNKNOWN")
 
-    error_line = ""
-    for stream in (stderr, stdout, traceback_text):
-        for line in reversed(stream.splitlines()):
-            stripped = line.strip()
-            if stripped and not stripped.startswith("+"):
-                error_line = stripped
+    error_line = str(health.get("reason") or compatibility.get("reason") or "")
+    if not error_line:
+        for stream in (stderr, stdout, traceback_text):
+            for line in reversed(stream.splitlines()):
+                stripped = line.strip()
+                if stripped and not stripped.startswith("+"):
+                    error_line = stripped
+                    break
+            if error_line:
                 break
-        if error_line:
-            break
 
     return {
         "status": str(result.get("status") or ""),
