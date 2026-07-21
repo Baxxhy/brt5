@@ -85,10 +85,12 @@ class ReproducibleBootstrapTests(unittest.TestCase):
             ".env.example",
             "config/api_pool.example.json",
             "scripts/bootstrap_machine.sh",
+            "scripts/bootstrap_fresh_swt_server.sh",
             "scripts/bootstrap_repositories.py",
             "scripts/configure_api_keys.py",
             "scripts/export_clean_repo.py",
             "scripts/check_repository_secrets.py",
+            "scripts/run_swt_experiment.sh",
         ]
         for relative in required:
             self.assertTrue((PROJECT_ROOT / relative).is_file(), relative)
@@ -124,6 +126,28 @@ class ReproducibleBootstrapTests(unittest.TestCase):
         self.assertIn('PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}', launcher)
         self.assertIn('REPO_ROOT=${REPO_ROOT:-$PACKAGE_ROOT/swe_repos}', launcher)
         self.assertNotIn("PROJECT_ROOT=${PROJECT_ROOT:-/root/Baxxhy", launcher)
+
+    def test_fresh_swt_bootstrap_reuses_existing_conda_and_prewarms(self) -> None:
+        bootstrap = (
+            PROJECT_ROOT / "scripts" / "bootstrap_fresh_swt_server.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("must already be installed", bootstrap)
+        self.assertNotIn("Miniconda3-", bootstrap)
+        self.assertNotIn("Miniforge3-", bootstrap)
+        self.assertIn("prewarm_swt_environments.py", bootstrap)
+        self.assertIn("CONDA_ENVS_PATH", bootstrap)
+        self.assertIn("CONDA_PKGS_DIRS", bootstrap)
+        self.assertIn("template_environment_gate=52/52_ready", bootstrap)
+        self.assertIn("validate_behavior_target_cache.py", bootstrap)
+        self.assertIn("bootstrap_repositories.py", bootstrap)
+
+    def test_swt_wrapper_loads_generated_runtime_contract(self) -> None:
+        wrapper = (
+            PROJECT_ROOT / "scripts" / "run_swt_experiment.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(".bootstrap/use_fresh_swt_server.sh", wrapper)
+        self.assertIn("--dataset swt", wrapper)
+        self.assertIn("run_p0_simple_llm_selector_full.sh", wrapper)
 
     def test_swt_failure_diagnostic_identifies_shell_redirection(self) -> None:
         diagnostic = failure_diagnostic(

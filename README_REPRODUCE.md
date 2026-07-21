@@ -1,8 +1,8 @@
 # Fresh-machine reproduction
 
-The repository can prepare a new Debian/Ubuntu Linux machine, but API credentials are never
-stored in Git. A first full run downloads Miniforge, framework dependencies,
-the benchmark repositories, and per-project Conda
+The repository can prepare a new Debian/Ubuntu Linux machine with Conda already
+installed, but API credentials are never stored in Git. Initial setup downloads
+framework dependencies, the benchmark repositories, and per-project Conda
 environments. Expect substantial network traffic, disk use, and setup time.
 
 ## 1. Publish a clean repository
@@ -26,21 +26,31 @@ revoked or its history has been independently purged and verified.
 ## 2. Bootstrap a new Linux machine
 
 ```bash
-git clone <YOUR_NEW_REPOSITORY_URL> brt5
-cd brt5
-bash scripts/bootstrap_machine.sh --dataset swt
+mkdir -p /root/Baxxhy/BugReproduce
+git clone <YOUR_NEW_REPOSITORY_URL> /root/Baxxhy/BugReproduce/brt5
+cd /root/Baxxhy/BugReproduce/brt5
+bash scripts/bootstrap_fresh_swt_server.sh
 ```
+
+The command above is the canonical SWT setup when Conda is already installed.
+It reuses that Conda installation, creates an isolated `brt5_icore` controller
+environment under `/root/Baxxhy/BugReproduce/.brt5-conda`, prepares all 12
+benchmark repositories, serially prewarms all 52 SWT dependency-template
+environments, validates the frozen inputs, and runs local regression checks.
+It does not start the 276-instance experiment.
 
 The bootstrap does the following:
 
 1. installs Linux build prerequisites with `apt-get`;
-2. installs Miniforge when Conda is absent;
-3. creates the `icore` framework environment;
+2. validates and reuses the existing Conda installation (no second Conda);
+3. creates the isolated `brt5_icore` framework environment;
 4. installs the project-only framework dependencies from `requirements.txt`;
 5. prompts for one or more DeepSeek-compatible keys and stores them at
    `.secrets/api_pool.json` with mode `0600`;
 6. clones all repositories required by the selected dataset;
-7. verifies every `base_commit` and `environment_setup_commit`.
+7. verifies every `base_commit` and `environment_setup_commit`;
+8. prewarms all 52 SWT dependency templates and validates the frozen cache;
+9. writes `.bootstrap/use_fresh_swt_server.sh` for every later run.
 
 For both SWT and TDD inputs:
 
@@ -56,7 +66,8 @@ bash scripts/bootstrap_machine.sh --dataset all
 Interactive multi-key configuration:
 
 ```bash
-~/miniforge3/envs/icore/bin/python scripts/configure_api_keys.py
+source .bootstrap/use_fresh_swt_server.sh
+"$PYTHON_BIN" scripts/configure_api_keys.py
 ```
 
 Alternatively copy `config/api_pool.example.json` to
@@ -88,7 +99,8 @@ F2P result was `131/276 = 47.4638%`:
 BEHAVIOR_CACHE=data/behavior_targets/swt/full_method_f2p_47_46_20260717
 
 # Optional independent integrity check before a run.
-conda run -n icore python scripts/validate_behavior_target_cache.py \
+source .bootstrap/use_fresh_swt_server.sh
+"$PYTHON_BIN" scripts/validate_behavior_target_cache.py \
   --cache-dir "$BEHAVIOR_CACHE" \
   --instances-path data/issues/swt276_issues.json \
   --dataset-mode swt \
@@ -103,37 +115,37 @@ IssueRewrite and generates a new BehaviorTarget version for that run.
 
 ```bash
 # Full B*=<Environment, Trigger, Assertion>
-bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --behavior-target on \
+bash scripts/run_swt_experiment.sh \
+  --behavior-target on \
   --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # w/o Behavior Target
-bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --behavior-target off
+bash scripts/run_swt_experiment.sh \
+  --behavior-target off
 
 # w/o Mutation
-bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --mutation off \
+bash scripts/run_swt_experiment.sh \
+  --mutation off \
   --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # Generic Iteration (w/o specialized feedback)
-bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --specialized-feedback off \
+bash scripts/run_swt_experiment.sh \
+  --specialized-feedback off \
   --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # w/o Environment Feedback
-bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --environment-feedback off \
+bash scripts/run_swt_experiment.sh \
+  --environment-feedback off \
   --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # w/o Trigger Feedback
-bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --trigger-feedback off \
+bash scripts/run_swt_experiment.sh \
+  --trigger-feedback off \
   --behavior-target-cache "$BEHAVIOR_CACHE"
 
 # w/o Assertion Feedback
-bash scripts/run_p0_simple_llm_selector_full.sh \
-  --dataset swt --assertion-feedback off \
+bash scripts/run_swt_experiment.sh \
+  --assertion-feedback off \
   --behavior-target-cache "$BEHAVIOR_CACHE"
 ```
 
@@ -145,8 +157,8 @@ also runs the benchmark-specific coverage metric.
 `--behavior-target-cache`, because consuming the cache would invalidate that
 ablation. The launcher rejects that combination.
 
-The launcher uses the repository location dynamically. Generation runs in the
-`icore` framework environment; every benchmark project runs in its own
+The launcher uses the fixed fresh-server runtime contract. Generation runs in
+the `brt5_icore` framework environment; every benchmark project runs in its own
 iCoRe-derived Conda environment. Missing generated tests remain in the formal
 evaluation denominator. Formal output includes F2P and Change Coverage (Delta C).
 

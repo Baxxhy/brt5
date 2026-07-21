@@ -8,8 +8,10 @@ BRT4 从 issue、iCoRe 已生成的源码/测试检索结果和 buggy 仓库出�
 [README_REPRODUCE.md](README_REPRODUCE.md)。真实 API key 不保存在 Git 中。
 
 ```bash
-bash scripts/bootstrap_machine.sh --dataset swt
-bash scripts/run_p0_simple_llm_selector_full.sh --dataset swt --behavior-target on
+bash scripts/bootstrap_fresh_swt_server.sh
+bash scripts/run_swt_experiment.sh \
+  --behavior-target on \
+  --behavior-target-cache data/behavior_targets/swt/full_method_f2p_47_46_20260717
 ```
 
 ## 快速运行
