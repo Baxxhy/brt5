@@ -10,6 +10,8 @@ INSTALL_SYSTEM_PACKAGES=true
 CLONE_REPOSITORIES=true
 NON_INTERACTIVE=false
 CONDA_ROOT=${CONDA_ROOT:-$HOME/miniforge3}
+PREPARE_TEMPLATE_ENVIRONMENTS=true
+TEMPLATE_WORKERS=${BRT_TEMPLATE_WORKERS:-4}
 
 usage() {
   cat <<'EOF'
@@ -20,6 +22,8 @@ Options:
   --conda-root PATH             Miniforge installation path (default: ~/miniforge3).
   --skip-system-packages        Do not use apt-get for build dependencies.
   --skip-repositories           Do not clone/verify benchmark repositories.
+  --skip-template-environments Skip TDD dependency-template preparation.
+  --template-workers N         Concurrent TDD template repairs, 1-8 (default: 4).
   --non-interactive             Do not prompt for API keys.
   -h, --help                    Show this help.
 EOF
@@ -33,6 +37,9 @@ while [[ $# -gt 0 ]]; do
     --conda-root=*) CONDA_ROOT=${1#*=}; shift ;;
     --skip-system-packages) INSTALL_SYSTEM_PACKAGES=false; shift ;;
     --skip-repositories) CLONE_REPOSITORIES=false; shift ;;
+    --skip-template-environments) PREPARE_TEMPLATE_ENVIRONMENTS=false; shift ;;
+    --template-workers) TEMPLATE_WORKERS=${2:?missing worker count}; shift 2 ;;
+    --template-workers=*) TEMPLATE_WORKERS=${1#*=}; shift ;;
     --non-interactive) NON_INTERACTIVE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -40,6 +47,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$DATASET_MODE" in swt|tdd|all) ;; *) echo "dataset must be swt, tdd, or all" >&2; exit 2 ;; esac
+if [[ ! "$TEMPLATE_WORKERS" =~ ^[0-9]+$ ]] ||
+   (( TEMPLATE_WORKERS < 1 || TEMPLATE_WORKERS > 8 )); then
+  echo "--template-workers must be an integer between 1 and 8" >&2
+  exit 2
+fi
 
 if [[ -f "$PROJECT_ROOT/.env" ]]; then
   set -a
@@ -154,6 +166,22 @@ if [[ "$CLONE_REPOSITORIES" == "true" ]]; then
     --manifest "$PROJECT_ROOT/.bootstrap/repositories.json"
 fi
 
+if [[ "$PREPARE_TEMPLATE_ENVIRONMENTS" == "true" ]] &&
+   [[ "$DATASET_MODE" == "tdd" || "$DATASET_MODE" == "all" ]]; then
+  TDD_TEMPLATE_ROOT=$PROJECT_ROOT/.bootstrap/tdd-template-environments
+  "$PYTHON_BIN" "$PROJECT_ROOT/scripts/prepare_tdd_template_environments.py" \
+    --instances_path "$TDD_DATASET" \
+    --work_root "$TDD_TEMPLATE_ROOT" \
+    --timeout 3600 \
+    --retries 3 \
+    --workers "$TEMPLATE_WORKERS"
+  BRT_TDD_STRICT_LOCAL_CONDA=1 "$PYTHON_BIN" \
+    "$PROJECT_ROOT/scripts/preflight_tdd_local_conda.py" \
+    --instances_path "$TDD_DATASET" \
+    --repo_root_base "$REPO_ROOT" \
+    --output_path "$PROJECT_ROOT/.bootstrap/tdd_local_conda_preflight.json"
+fi
+
 cat <<EOF
 
 Bootstrap complete.
@@ -164,4 +192,5 @@ Repository cache: $REPO_ROOT
 Run the experiment from $PROJECT_ROOT:
   bash scripts/run_p0_simple_llm_selector_full.sh --dataset swt --behavior-target on
   bash scripts/run_p0_simple_llm_selector_full.sh --dataset swt --behavior-target off
+  bash scripts/run_p0_simple_llm_selector_full.sh --dataset tdd
 EOF

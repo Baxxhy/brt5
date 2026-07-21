@@ -283,6 +283,14 @@ ISSUE_WORKERS=${ISSUE_WORKERS:-6}
 GENERATION_WORKERS=${GENERATION_WORKERS:-6}
 EVALUATION_WORKERS=${EVALUATION_WORKERS:-6}
 RUNTIME_BACKEND=${RUNTIME_BACKEND:-local_conda}
+TDD_TEMPLATE_REPAIR_WORKERS=${TDD_TEMPLATE_REPAIR_WORKERS:-4}
+
+if [[ "$DATASET_MODE" == "tdd" ]] &&
+   { [[ ! "$TDD_TEMPLATE_REPAIR_WORKERS" =~ ^[0-9]+$ ]] ||
+     (( TDD_TEMPLATE_REPAIR_WORKERS < 1 || TDD_TEMPLATE_REPAIR_WORKERS > 8 )); }; then
+  echo "TDD_TEMPLATE_REPAIR_WORKERS must be an integer between 1 and 8" >&2
+  exit 2
+fi
 
 API_POOL_SIZE=$("$PYTHON_BIN" - <<'PY'
 from brt5.llm.api_pool import configured_apis
@@ -397,6 +405,8 @@ config = {
     "tracked_worktree_clean": sys.argv[5] == "true",
     "dataset_sha256": sys.argv[6],
     "evaluator_contract_sha256": sys.argv[7],
+    "tdd_template_auto_repair": "$DATASET_MODE" == "tdd",
+    "tdd_template_repair_workers": int("$TDD_TEMPLATE_REPAIR_WORKERS"),
 }
 config["ablation_signature"] = ";".join(
     f"{name}={int(config[name])}"
@@ -476,8 +486,33 @@ if [ "$DATASET_MODE" = "tdd" ]; then
   TDD_PREFLIGHT_RC=$?
   echo "__BRT_STAGE__ tdd_local_conda_preflight_end rc=$TDD_PREFLIGHT_RC $(date --iso-8601=seconds)"
   if [ "$TDD_PREFLIGHT_RC" -ne 0 ]; then
-    echo "TDD local-Conda preflight failed; see $TDD_PREFLIGHT_PATH" >&2
-    exit "$TDD_PREFLIGHT_RC"
+    TDD_PREFLIGHT_BEFORE_REPAIR=$RUN_DIR/tdd_local_conda_preflight_before_repair.json
+    cp "$TDD_PREFLIGHT_PATH" "$TDD_PREFLIGHT_BEFORE_REPAIR"
+    echo "__BRT_STAGE__ tdd_template_repair_start workers=$TDD_TEMPLATE_REPAIR_WORKERS $(date --iso-8601=seconds)"
+    "$PYTHON_BIN" "$PROJECT_ROOT/scripts/prepare_tdd_template_environments.py" \
+      --instances_path "$INSTANCES_PATH" \
+      --preflight_report "$TDD_PREFLIGHT_BEFORE_REPAIR" \
+      --work_root "$RUN_DIR/tdd_template_repair" \
+      --timeout 3600 \
+      --retries 3 \
+      --workers "$TDD_TEMPLATE_REPAIR_WORKERS"
+    TDD_REPAIR_RC=$?
+    echo "__BRT_STAGE__ tdd_template_repair_end rc=$TDD_REPAIR_RC $(date --iso-8601=seconds)"
+    if [ "$TDD_REPAIR_RC" -ne 0 ]; then
+      echo "TDD template repair failed; see $RUN_DIR/tdd_template_repair/summary.json" >&2
+      exit "$TDD_REPAIR_RC"
+    fi
+    echo "__BRT_STAGE__ tdd_local_conda_preflight_retry_start $(date --iso-8601=seconds)"
+    "$PYTHON_BIN" "$PROJECT_ROOT/scripts/preflight_tdd_local_conda.py" \
+      --instances_path "$INSTANCES_PATH" \
+      --repo_root_base "$REPO_ROOT" \
+      --output_path "$TDD_PREFLIGHT_PATH"
+    TDD_PREFLIGHT_RC=$?
+    echo "__BRT_STAGE__ tdd_local_conda_preflight_retry_end rc=$TDD_PREFLIGHT_RC $(date --iso-8601=seconds)"
+    if [ "$TDD_PREFLIGHT_RC" -ne 0 ]; then
+      echo "TDD local-Conda preflight still fails after repair; see $TDD_PREFLIGHT_PATH" >&2
+      exit "$TDD_PREFLIGHT_RC"
+    fi
   fi
 fi
 "$PYTHON_BIN" -c 'import sys; print("resolved_framework_python=" + sys.executable)'
