@@ -1237,6 +1237,8 @@ def icore_test_command(
 ) -> str:
     project = repo.split("/")[-1]
     nodeid = test_path if not selector else f"{test_path}::{selector}"
+    if project == "sphinx":
+        return f"tox --current-env -epy39 -v -- {nodeid}"
     if project in {
         "astropy",
         "matplotlib",
@@ -1244,7 +1246,6 @@ def icore_test_command(
         "xarray",
         "pylint",
         "scikit-learn",
-        "sphinx",
         "requests",
     }:
         return (

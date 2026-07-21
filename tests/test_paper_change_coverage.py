@@ -15,9 +15,11 @@ from brt5.evaluation.direct_eval import (
     aggregate_delta_change_coverage,
     collect_patch_side_coverage,
     combine_patch_coverage,
+    direct_test_relpath,
     patch_paths_from_patch,
     patch_target_lines,
     parse_patch_coverage,
+    runner_environment_error_category,
     test_command as build_test_command,
     test_command_for_directives as build_test_command_for_directives,
     test_directives_from_patch as extract_test_directives_from_patch,
@@ -253,7 +255,7 @@ class PaperChangeCoverageTests(unittest.TestCase):
             build_test_command(
                 "sphinx-doc/sphinx", "5.1", "tests/test_brt.py", ""
             ),
-            "tox -epy39 -v -- tests/test_brt.py",
+            "tox --current-env -epy39 -v -- tests/test_brt.py",
         )
         self.assertEqual(
             build_test_command(
@@ -308,9 +310,51 @@ class PaperChangeCoverageTests(unittest.TestCase):
                 "5.1",
                 extract_test_directives_from_patch(patch),
             ),
-            "tox -epy39 -v -- tests/test_feature.py "
+            "tox --current-env -epy39 -v -- tests/test_feature.py "
             "tests/roots/example/index.rst",
         )
+
+    def test_tox_infrastructure_failure_is_not_a_model_fixed_fail(self) -> None:
+        failure = {
+            "returncode": 1,
+            "stdout": "py39: packaging backend failed with FailedToStart",
+            "stderr": "ModuleNotFoundError: No module named 'flit_core'",
+        }
+
+        self.assertEqual(
+            runner_environment_error_category(
+                "tox --current-env -epy39 -v -- tests/test_brt.py", failure
+            ),
+            "ENV_INCOMPLETE",
+        )
+        self.assertEqual(
+            runner_environment_error_category(
+                "pytest tests/test_brt.py", failure
+            ),
+            "",
+        )
+
+    def test_formal_eval_recovers_legacy_adaptive_seed_protocol(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            instance_id = "sphinx-doc__sphinx-1"
+            instance_dir = Path(temporary_dir) / instance_id
+            selected_dir = instance_dir / "seed_candidates" / "seed_2"
+            selected_dir.mkdir(parents=True)
+            (instance_dir / "summary.json").write_text(
+                '{"selected_seed_index": 2, "seed_mode": "adaptive_top3"}',
+                encoding="utf-8",
+            )
+            (selected_dir / "summary.json").write_text(
+                '{"candidate_repo_path": "tests/test_brt.py", '
+                '"command": "tox --current-env -epy39 -v -- tests/test_brt.py", '
+                '"selector": "test_brt"}',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                direct_test_relpath(instance_id, temporary_dir),
+                "tests/test_brt.py",
+            )
 
     def test_reference_cleanup_removes_fixtures_but_preserves_tracked_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

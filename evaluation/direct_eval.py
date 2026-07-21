@@ -474,7 +474,69 @@ def ensure_eval_project_ready(
         return result
 
 
+_PROTOCOL_SUMMARY_FIELDS = (
+    "candidate_repo_path",
+    "direct_test_repo_path_hint",
+    "command",
+    "selector",
+    "pytest_nodeid",
+    "placement_dir",
+    "runner_kind",
+    "protocol_recovery_enabled",
+    "seed_mutation_enabled",
+    "observation_oracle_enabled",
+    "strict_verifier_enabled",
+)
+
+
+def load_generation_summary(instance_id: str, generated_dir: str) -> dict[str, Any]:
+    """Load top-level metadata, recovering legacy adaptive Top-3 omissions."""
+
+    instance_dir = Path(generated_dir) / instance_id
+    summary_path = instance_dir / "summary.json"
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        summary = {}
+    if not isinstance(summary, dict):
+        summary = {}
+    if summary.get("candidate_repo_path") and summary.get("command"):
+        return summary
+    try:
+        selected_seed_index = int(summary.get("selected_seed_index"))
+    except (TypeError, ValueError):
+        return summary
+    seed_path = (
+        instance_dir
+        / "seed_candidates"
+        / f"seed_{selected_seed_index}"
+        / "summary.json"
+    )
+    try:
+        selected = json.loads(seed_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return summary
+    if not isinstance(selected, dict):
+        return summary
+    recovered = dict(summary)
+    for field in _PROTOCOL_SUMMARY_FIELDS:
+        if not recovered.get(field) and selected.get(field) not in {None, ""}:
+            recovered[field] = selected[field]
+    recovered["protocol_metadata_source"] = "selected_seed_summary_fallback"
+    return recovered
+
+
 def direct_test_relpath(instance_id: str, generated_dir: str) -> str:
+    summary = load_generation_summary(instance_id, generated_dir)
+    recorded_path = str(
+        summary.get("candidate_repo_path")
+        or summary.get("direct_test_repo_path_hint")
+        or ""
+    ).strip()
+    if recorded_path:
+        candidate = Path(recorded_path)
+        if not candidate.is_absolute() and ".." not in candidate.parts:
+            return candidate.as_posix()
     host_path = Path(generated_dir) / instance_id / "host_context.json"
     test_dir = "tests"
     if host_path.exists():
@@ -493,14 +555,9 @@ def runner_parity_info(
     formal_command: str,
 ) -> dict[str, Any]:
     instance_dir = Path(generated_dir) / instance_id
-    summary_path = instance_dir / "summary.json"
     host_path = instance_dir / "host_context.json"
-    summary: dict[str, Any] = {}
     host: dict[str, Any] = {}
-    try:
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        summary = {}
+    summary = load_generation_summary(instance_id, generated_dir)
     try:
         host = json.loads(host_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -533,6 +590,9 @@ def runner_parity_info(
         "formal_command": formal_command,
         "generation_selector": generation_selector,
         "formal_selector": formal_selector,
+        "protocol_metadata_source": summary.get(
+            "protocol_metadata_source", "top_level_summary"
+        ),
         "host_file": host.get("host_file", ""),
         "same_dir": same_dir,
         "same_selector": same_selector,
@@ -578,7 +638,7 @@ def swt_test_framework(repo: str, version: str) -> str:
             return "./tests/runtests.py --verbosity 2"
         return "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1"
     if project == "sphinx":
-        return "tox -epy39 -v --"
+        return "tox --current-env -epy39 -v --"
     if project == "sympy":
         return (
             "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' "
@@ -814,6 +874,37 @@ def classify_run(result: dict[str, Any]) -> dict[str, Any]:
         "failed": status not in {"PASS"},
         "error_excerpt": "\n".join(text.splitlines()[-80:]),
     }
+
+
+def runner_environment_error_category(
+    command: str,
+    result: dict[str, Any],
+) -> str:
+    """Classify failures in the test runner itself, not in the generated BRT.
+
+    In particular, a tox backend that cannot start or a tox environment that
+    lacks pytest has not executed the generated test.  Such a run must remain
+    an environment failure instead of being folded into ``FIXED_FAIL``.
+    """
+
+    if "tox" not in shlex.split(command):
+        return ""
+    text = (result.get("stdout") or "") + "\n" + (result.get("stderr") or "")
+    low = text.lower()
+    markers = (
+        "packaging backend failed",
+        "failedtostart",
+        "failed to start backend",
+        "no module named pytest",
+        "no module named 'pytest'",
+        "no module named flit_core",
+        "no module named 'flit_core'",
+        "no module named tox_current_env",
+        "unrecognized arguments: --current-env",
+    )
+    if not any(marker in low for marker in markers):
+        return ""
+    return classify_env_error(text)
 
 
 def write_generated_test(repo_dir: str, rel_file: str, code: str) -> str:
@@ -2427,6 +2518,13 @@ def evaluate_one(
             buggy_run = run_shell(full_command, repo_dir, timeout)
         result["buggy_run"] = buggy_run
         result["buggy"] = classify_run(buggy_run)
+        buggy_runner_env = runner_environment_error_category(command, buggy_run)
+        if buggy_runner_env:
+            result["fixed"] = {}
+            result["success"] = False
+            result["status"] = "BUGGY_RUNTIME_ENV_ERROR"
+            result["env_error_category"] = buggy_runner_env
+            return result
         reference_pre: dict[str, Any] = {}
         if compute_patch_coverage and dataset_mode == "swt":
             reference_pre = collect_reference_patch_coverage(
@@ -2522,6 +2620,12 @@ def evaluate_one(
         result["runtime_manifest_after_evaluation"] = environment_manifest(
             env_name, timeout=min(max(timeout, 120), 300), refresh=True
         )
+        fixed_runner_env = runner_environment_error_category(command, fixed_run)
+        if fixed_runner_env:
+            result["success"] = False
+            result["status"] = "FIXED_RUNTIME_ENV_ERROR"
+            result["env_error_category"] = fixed_runner_env
+            return result
         fixed_patch_coverage: dict[str, Any] = {}
         if compute_patch_coverage and dataset_mode == "swt":
             fixed_patch_coverage = collect_patch_side_coverage(

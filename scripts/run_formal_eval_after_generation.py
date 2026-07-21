@@ -29,6 +29,24 @@ def load_rows(path: Path) -> list[dict]:
     return [dict(value, instance_id=value.get("instance_id", key)) for key, value in data.items() if isinstance(value, dict)]
 
 
+def select_rows(rows: list[dict], instance_ids: str) -> list[dict]:
+    """Select an auditable pilot subset without creating a second dataset."""
+
+    requested = [value.strip() for value in instance_ids.split(",") if value.strip()]
+    if not requested:
+        return rows
+    if len(requested) != len(set(requested)):
+        raise ValueError("--instance_ids contains duplicate instance IDs")
+    by_id = {str(row.get("instance_id") or ""): row for row in rows}
+    missing = [instance_id for instance_id in requested if instance_id not in by_id]
+    if missing:
+        raise ValueError(
+            "--instance_ids contains IDs absent from the dataset: "
+            + ", ".join(missing)
+        )
+    return [by_id[instance_id] for instance_id in requested]
+
+
 def validate_runtime_contract(
     dataset_mode: str,
     runtime_backend: str,
@@ -94,6 +112,11 @@ def main() -> int:
     parser.add_argument("--eval_worktree_root", default="")
     parser.add_argument("--log_path", default="")
     parser.add_argument("--summary_path", default="")
+    parser.add_argument(
+        "--instance_ids",
+        default="",
+        help="Comma-separated pilot subset; denominator becomes this exact subset.",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--compute_patch_coverage", type=parse_bool, default=True)
     parser.add_argument("--dataset_mode", choices=("swt", "tdd"), default="swt")
@@ -122,7 +145,10 @@ def main() -> int:
     # brt5 checkout do not turn a valid generation directory into a false
     # preflight failure.
     outputs = Path(args.outputs_dir).resolve()
-    rows = load_rows(Path(args.dataset_file))
+    try:
+        rows = select_rows(load_rows(Path(args.dataset_file)), args.instance_ids)
+    except ValueError as exc:
+        parser.error(str(exc))
     completed = [row for row in rows if (outputs / str(row.get("instance_id")) / "final_test.py").is_file()]
     missing = [str(row.get("instance_id")) for row in rows if row not in completed]
     print(f"已生成 {len(completed)}/{len(rows)}，未完成 {len(missing)}")

@@ -323,6 +323,29 @@ FORMAL_DIR=$RUN_DIR/evaluation/formal_f2p
 LOG_DIR=$RUN_DIR/logs
 mkdir -p "$ISSUE_DIR" "$GENERATION_DIR" "$FORMAL_DIR" "$LOG_DIR" "$RUN_DIR/tmp"
 
+GIT_COMMIT=$(git -C "$PROJECT_ROOT" rev-parse HEAD) || exit $?
+GIT_BRANCH=$(git -C "$PROJECT_ROOT" branch --show-current) || exit $?
+GIT_BRANCH=${GIT_BRANCH:-DETACHED}
+GIT_TRACKED_STATUS=$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=no)
+GIT_TRACKED_CLEAN=true
+if [[ -n "$GIT_TRACKED_STATUS" ]]; then
+  GIT_TRACKED_CLEAN=false
+fi
+if [[ -n "$GIT_TRACKED_STATUS" && "${BRT_ALLOW_DIRTY_WORKTREE:-0}" != "1" ]]; then
+  echo "tracked source changes are present; commit them before a paper-facing run" >&2
+  echo "$GIT_TRACKED_STATUS" >&2
+  echo "Set BRT_ALLOW_DIRTY_WORKTREE=1 only for a non-comparable development run." >&2
+  exit 2
+fi
+DATASET_SHA256=$(sha256sum "$INSTANCES_PATH" | awk '{print $1}')
+EVALUATOR_CONTRACT_SHA256=$(
+  sha256sum \
+    "$PROJECT_ROOT/evaluation/direct_eval.py" \
+    "$PROJECT_ROOT/evaluation/formal_eval.py" \
+    "$PROJECT_ROOT/scripts/run_formal_eval_after_generation.py" \
+  | sha256sum | awk '{print $1}'
+)
+
 BEHAVIOR_CACHE_VALIDATION_PATH=""
 if [[ -n "$BEHAVIOR_TARGET_CACHE" ]]; then
   BEHAVIOR_CACHE_VALIDATION_PATH=$RUN_DIR/behavior_target_cache_validation.json
@@ -335,8 +358,16 @@ if [[ -n "$BEHAVIOR_TARGET_CACHE" ]]; then
     --output-path "$BEHAVIOR_CACHE_VALIDATION_PATH" >/dev/null || exit $?
 fi
 
-"$PYTHON_BIN" - "$RUN_DIR/run_config.json" "$BEHAVIOR_CACHE_VALIDATION_PATH" <<PY
+"$PYTHON_BIN" - \
+  "$RUN_DIR/run_config.json" \
+  "$BEHAVIOR_CACHE_VALIDATION_PATH" \
+  "$GIT_COMMIT" \
+  "$GIT_BRANCH" \
+  "$GIT_TRACKED_CLEAN" \
+  "$DATASET_SHA256" \
+  "$EVALUATOR_CONTRACT_SHA256" <<PY
 import json
+import hashlib
 import sys
 from pathlib import Path
 
@@ -361,6 +392,11 @@ config = {
     "patch_cov_enabled": "$COMPUTE_PATCH_COVERAGE" == "true",
     "behavior_target_source": behavior_source,
     "behavior_target_source_signature": behavior_source.get("source_signature", ""),
+    "framework_git_commit": sys.argv[3],
+    "framework_git_branch": sys.argv[4],
+    "tracked_worktree_clean": sys.argv[5] == "true",
+    "dataset_sha256": sys.argv[6],
+    "evaluator_contract_sha256": sys.argv[7],
 }
 config["ablation_signature"] = ";".join(
     f"{name}={int(config[name])}"
@@ -369,6 +405,18 @@ config["ablation_signature"] = ";".join(
         "environment_feedback", "trigger_feedback", "assertion_feedback",
     )
 )
+lineage_payload = {
+    "dataset_mode": config["dataset_mode"],
+    "dataset_sha256": config["dataset_sha256"],
+    "framework_git_commit": config["framework_git_commit"],
+    "evaluator_contract_sha256": config["evaluator_contract_sha256"],
+    "behavior_target_source_signature": config[
+        "behavior_target_source_signature"
+    ],
+}
+config["experiment_lineage_signature"] = hashlib.sha256(
+    json.dumps(lineage_payload, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
 Path(sys.argv[1]).write_text(
     json.dumps(config, ensure_ascii=False, indent=2) + "\n",
     encoding="utf-8",
@@ -399,6 +447,8 @@ echo "__BRT_STAGE__ start $(date --iso-8601=seconds)"
 echo "dataset_mode=$DATASET_MODE"
 echo "instances_path=$INSTANCES_PATH"
 echo "dataset_size=$DATASET_SIZE"
+echo "framework_git_commit=$GIT_COMMIT"
+echo "evaluator_contract_sha256=$EVALUATOR_CONTRACT_SHA256"
 echo "behavior_target_enabled=$ENABLE_BEHAVIOR_TARGET"
 echo "behavior_target_source=$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1]))["behavior_target_source"]["mode"])' "$RUN_DIR/run_config.json")"
 if [[ -n "$BEHAVIOR_TARGET_CACHE" ]]; then
@@ -604,6 +654,12 @@ completion = {
     'ablation_config': run_config,
     'behavior_target_source': run_config.get('behavior_target_source', {}),
     'behavior_target_source_signature': run_config.get('behavior_target_source_signature', ''),
+    'framework_git_commit': run_config.get('framework_git_commit', ''),
+    'framework_git_branch': run_config.get('framework_git_branch', ''),
+    'tracked_worktree_clean': run_config.get('tracked_worktree_clean', False),
+    'dataset_sha256': run_config.get('dataset_sha256', ''),
+    'evaluator_contract_sha256': run_config.get('evaluator_contract_sha256', ''),
+    'experiment_lineage_signature': run_config.get('experiment_lineage_signature', ''),
     'instances_path': str(instances_path),
     'issue_rewrite_returncode': issue_rc,
     'generation_returncode': generation_rc,

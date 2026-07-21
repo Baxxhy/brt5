@@ -179,6 +179,61 @@ def _empty_repair_route_counts() -> dict[str, int]:
     }
 
 
+def _selected_protocol_result_fields(
+    selected_summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Preserve the selected seed's executable protocol at adaptive Top-3.
+
+    The recursive seed pipeline writes the authoritative placement, selector,
+    runner command, and validation switches.  Dropping those fields while
+    constructing the outer ``FinalResult`` makes formal evaluation guess a new
+    runner protocol instead of auditing/replaying the selected candidate.
+    """
+
+    return {
+        "protocol_recovery_enabled": bool(
+            selected_summary.get("protocol_recovery_enabled")
+        ),
+        "seed_mutation_enabled": bool(
+            selected_summary.get("seed_mutation_enabled")
+        ),
+        "observation_oracle_enabled": bool(
+            selected_summary.get("observation_oracle_enabled")
+        ),
+        "strict_verifier_enabled": bool(
+            selected_summary.get("strict_verifier_enabled")
+        ),
+        "selected_seed_file": str(
+            selected_summary.get("selected_seed_file") or ""
+        ),
+        "selected_seed_name": str(
+            selected_summary.get("selected_seed_name") or ""
+        ),
+        "seed_fallback_used": bool(
+            selected_summary.get("seed_fallback_used")
+        ),
+        "oracle_type": str(selected_summary.get("oracle_type") or ""),
+        "strict_verifier_decision": str(
+            selected_summary.get("strict_verifier_decision") or ""
+        ),
+        "strict_failure_class": str(
+            selected_summary.get("strict_failure_class") or ""
+        ),
+        "oracle_rebound": bool(selected_summary.get("oracle_rebound")),
+        "candidate_repo_path": str(
+            selected_summary.get("candidate_repo_path") or ""
+        ),
+        "pytest_nodeid": str(selected_summary.get("pytest_nodeid") or ""),
+        "command": str(selected_summary.get("command") or ""),
+        "direct_test_repo_path_hint": str(
+            selected_summary.get("direct_test_repo_path_hint") or ""
+        ),
+        "placement_dir": str(selected_summary.get("placement_dir") or ""),
+        "runner_kind": str(selected_summary.get("runner_kind") or ""),
+        "selector": str(selected_summary.get("selector") or ""),
+    }
+
+
 def _repair_focus(
     decision: VerifierDecision,
     strict_result: Any | None,
@@ -1166,7 +1221,7 @@ def run_instance_pipeline(
                 seed_attempts_summary=attempts,
                 seed_switch_reasons=switch_reasons,
                 selected_seed_reason=str(selected_summary.get("selected_seed_reason") or ""),
-                final_oracle_risk={},
+                final_oracle_risk=selected_summary.get("final_oracle_risk") or {},
                 final_surrogate_risk=selected_summary.get("final_surrogate_risk") or {},
                 final_reason=str(selected_summary.get("final_reason") or ""),
                 mutation_ops=list(selected_summary.get("mutation_ops") or []),
@@ -1200,6 +1255,7 @@ def run_instance_pipeline(
                 selected_seed_repair_route_counts=selected_seed_routes,
                 all_seed_repair_route_counts=all_seed_routes,
                 surrogate_patch_calls=0,
+                **_selected_protocol_result_fields(selected_summary),
             )
         if not generate_only:
             if _prepared_repo_path and _prepare_meta is not None:

@@ -12,6 +12,7 @@ from brt5.retrieval import icore_env_utils, icore_exec_spec, icore_runtime
 from brt5.retrieval.icore_env_constants import (
     MAP_VERSION_TO_INSTALL_ASTROPY,
     MAP_VERSION_TO_INSTALL_MATPLOTLIB,
+    MAP_VERSION_TO_INSTALL_SPHINX,
 )
 from brt5.evaluation.direct_eval import setup_command as formal_setup_command
 from brt5.retrieval.icore_runtime import icore_setup_command
@@ -73,6 +74,20 @@ class CondaEnvManagerTests(unittest.TestCase):
             res = envm.resolve_eval_env(issue(iid), str(self.root), run_prefix="run_x_")
         self.assertEqual(res.resolved_env, recorded)
         self.assertEqual(res.resolution_source, "repo_prepare.json:env_name")
+
+    def test_sphinx_uses_current_isolated_conda_runtime_for_tox(self) -> None:
+        packages = MAP_VERSION_TO_INSTALL_SPHINX["5.1"]["pip_packages"]
+        self.assertIn("tox==4.30.3", packages)
+        self.assertIn("tox-current-env==0.0.17", packages)
+        self.assertEqual(
+            icore_runtime.icore_test_command(
+                "sphinx-doc/sphinx",
+                "5.1",
+                "tests/test_brt.py",
+                "test_brt",
+            ),
+            "tox --current-env -epy39 -v -- tests/test_brt.py::test_brt",
+        )
 
     def test_old_run_uses_recorded_unprefixed_env(self) -> None:
         iid = "django__django-12184"

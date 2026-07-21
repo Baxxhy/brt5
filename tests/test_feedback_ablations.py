@@ -25,6 +25,7 @@ from brt5.core.schema import (
 )
 from brt5.execution.feedback import (
     _repair_focus,
+    _selected_protocol_result_fields,
     _uses_adaptive_seed_pipelines,
     run_instance_pipeline,
 )
@@ -195,6 +196,35 @@ class FeedbackAblationTests(unittest.TestCase):
         )
         self.assertTrue(full)
         self.assertEqual(ablated, full)
+
+    def test_adaptive_top3_preserves_selected_runner_protocol(self) -> None:
+        fields = _selected_protocol_result_fields(
+            {
+                "protocol_recovery_enabled": True,
+                "seed_mutation_enabled": True,
+                "observation_oracle_enabled": True,
+                "strict_verifier_enabled": True,
+                "selected_seed_file": "tests/test_seed.py",
+                "selected_seed_name": "test_seed",
+                "candidate_repo_path": "tests/test_brt.py",
+                "pytest_nodeid": "tests/test_brt.py",
+                "command": "python -m pytest tests/test_brt.py::test_brt",
+                "direct_test_repo_path_hint": "tests/test_brt.py",
+                "placement_dir": "tests",
+                "runner_kind": "sphinx",
+                "selector": "test_brt",
+            }
+        )
+
+        self.assertTrue(fields["protocol_recovery_enabled"])
+        self.assertTrue(fields["seed_mutation_enabled"])
+        self.assertTrue(fields["strict_verifier_enabled"])
+        self.assertEqual(fields["candidate_repo_path"], "tests/test_brt.py")
+        self.assertEqual(fields["selector"], "test_brt")
+        self.assertEqual(
+            fields["command"],
+            "python -m pytest tests/test_brt.py::test_brt",
+        )
 
     def test_mutation_ablation_does_not_reuse_legacy_joint_signature(self) -> None:
         config = AblationConfig(mutation=False)
