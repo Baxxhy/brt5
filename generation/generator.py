@@ -12,8 +12,6 @@ from typing import Any
 
 from ..io.io_utils import format_code_context
 from ..core.prompts import (
-    JOINT_SEED_GENERATION_SYSTEM_PROMPT,
-    JOINT_SEED_GENERATION_USER_PROMPT,
     MUTATION_GENERATION_SYSTEM_PROMPT,
     MUTATION_GENERATION_USER_PROMPT,
     REPAIR_ORACLE_SYSTEM_PROMPT,
@@ -357,51 +355,19 @@ def generate_candidate(
     source_context = format_effective_source_context(
         behavior, related_source, buggy_repo
     )
-    if config.mutation:
-        user_prompt = MUTATION_GENERATION_USER_PROMPT.format(
-            instance_id=instance_id,
-            safe_instance_id=safe_id,
-            insert_strategy=host.insert_strategy,
-            behavior_json=behavior_json,
-            host_context_json=json.dumps(host.to_dict(), ensure_ascii=False),
-            code_context=source_context,
-            seed_test_code=(
-                related_test.code_content if related_test else host.seed_test_code
-            ),
-            feedback=feedback or "无",
-        )
-        system_prompt = MUTATION_GENERATION_SYSTEM_PROMPT
-    else:
-        reference_seed_tests = list(host.reference_seed_tests)
-        if not reference_seed_tests:
-            reference_seed_tests = [
-                {
-                    "rank": 0,
-                    "file": related_test.file if related_test else host.host_file,
-                    "name": (
-                        related_test.name if related_test else host.seed_test_name
-                    ),
-                    "code_content": (
-                        related_test.code_content
-                        if related_test
-                        else host.seed_test_code
-                    ),
-                }
-            ]
-        user_prompt = JOINT_SEED_GENERATION_USER_PROMPT.format(
-            instance_id=instance_id,
-            safe_instance_id=safe_id,
-            insert_strategy=host.insert_strategy,
-            issue_text=issue_text or issue_evidence_text(behavior),
-            behavior_json=behavior_json,
-            host_context_json=json.dumps(host.to_dict(), ensure_ascii=False),
-            reference_seed_bundle=json.dumps(
-                reference_seed_tests, ensure_ascii=False, indent=2
-            ),
-            code_context=source_context,
-            feedback=feedback or "无",
-        )
-        system_prompt = JOINT_SEED_GENERATION_SYSTEM_PROMPT
+    user_prompt = MUTATION_GENERATION_USER_PROMPT.format(
+        instance_id=instance_id,
+        safe_instance_id=safe_id,
+        insert_strategy=host.insert_strategy,
+        behavior_json=behavior_json,
+        host_context_json=json.dumps(host.to_dict(), ensure_ascii=False),
+        code_context=source_context,
+        seed_test_code=(
+            related_test.code_content if related_test else host.seed_test_code
+        ),
+        feedback=feedback or "无",
+    )
+    system_prompt = MUTATION_GENERATION_SYSTEM_PROMPT
     user_prompt = render_evidence_prompt(user_prompt, behavior)
     if protocol is not None:
         user_prompt += "\n\n【必须保留的测试协议】\n" + json.dumps(protocol.to_dict(), ensure_ascii=False)
@@ -607,11 +573,7 @@ def repair_candidate(
     source_context = format_effective_source_context(
         behavior, related_source or [], buggy_repo
     )
-    reference_seed_payload = (
-        json.dumps(host.reference_seed_tests, ensure_ascii=False, indent=2)
-        if not config.mutation and host.reference_seed_tests
-        else host.seed_test_code
-    )
+    reference_seed_payload = host.seed_test_code
     if focus == "generic":
         system = REPAIR_GENERIC_SYSTEM_PROMPT
         template = REPAIR_GENERIC_USER_PROMPT

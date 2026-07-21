@@ -146,7 +146,7 @@ def _method_version(config: AblationConfig) -> str:
     if config.ablation_id == "wo_behavior_target":
         return "p0-wo-behavior-target-v1"
     if config.ablation_id == "wo_mutation":
-        return "p0-wo-mutation-joint-top3-v2"
+        return "p0-wo-explicit-mutation-planning-v1"
     return f"p0-{config.ablation_id.replace('_', '-')}-v1"
 
 
@@ -160,27 +160,13 @@ def _uses_adaptive_seed_pipelines(
 ) -> bool:
     """Whether Top-3 seeds should be executed as separate pipelines."""
 
+    _ = config
     return bool(
-        config.mutation
-        and not adaptive_disabled
+        not adaptive_disabled
         and not generate_only
         and protocol_recovery_enabled
         and forced_seed_index is None
     )
-
-
-def _joint_seed_references(ranked_tests: list[Any]) -> list[dict[str, Any]]:
-    """Serialize the original iCoRe Top-3 order for one joint generation call."""
-
-    return [
-        {
-            "rank": rank,
-            "file": str(seed.file or ""),
-            "name": str(seed.name or ""),
-            "code_content": str(seed.code_content or ""),
-        }
-        for rank, seed in enumerate(ranked_tests[:3])
-    ]
 
 
 def _empty_repair_route_counts() -> dict[str, int]:
@@ -1280,14 +1266,9 @@ def run_instance_pipeline(
         related_test = ranked_tests[0] if ranked_tests else select_related_test(context.retrieved_tests, behavior)
         if not ranked_tests and related_test is not None:
             ranked_tests = [related_test]
-        joint_seed_references = (
-            _joint_seed_references(ranked_tests) if not config.mutation else []
-        )
         host = None
         if _forced_seed_index is not None and 0 <= _forced_seed_index < len(ranked_tests):
             seeds_to_try = [ranked_tests[_forced_seed_index]]
-        elif not config.mutation:
-            seeds_to_try = ranked_tests[:1]
         else:
             seeds_to_try = ranked_tests[:3] if enable_protocol_recovery else ([related_test] if related_test else [])
         for seed_index, seed in enumerate(seeds_to_try):
@@ -1323,35 +1304,7 @@ def run_instance_pipeline(
                 skip_execution=generate_only, repo=context.repo,
                 version=str(context.metadata.get("version") or ""),
             )
-        if joint_seed_references:
-            primary_execution_status = host.seed_execution_status
-            primary_protocol_risks = protocol.protocol_risks if protocol else []
-            seed_attempts = [
-                {
-                    **seed,
-                    "role": "primary_protocol" if seed["rank"] == 0 else "joint_reference",
-                    "execution_status": (
-                        primary_execution_status
-                        if seed["rank"] == 0
-                        else "REFERENCE_ONLY"
-                    ),
-                    "selected": seed["rank"] == 0,
-                    "protocol_risks": (
-                        primary_protocol_risks if seed["rank"] == 0 else []
-                    ),
-                }
-                for seed in joint_seed_references
-            ]
-            host.reference_seed_tests = joint_seed_references
-            safe_json_dump(
-                {
-                    "mode": "joint_top3_reference",
-                    "primary_protocol_rank": 0,
-                    "reference_seeds": joint_seed_references,
-                },
-                str(Path(output_dir) / "joint_seed_bundle.json"),
-            )
-        elif seed_attempts:
+        if seed_attempts:
             seed_attempts[-1]["selected"] = True
         safe_json_dump({"fallback_used": seed_fallback_used, "attempts": seed_attempts}, str(Path(output_dir) / "seed_fallback.json"))
         if protocol is not None:
@@ -1449,7 +1402,11 @@ def run_instance_pipeline(
                 ),
                 repair_route_counts=repair_route_counts,
                 final_reason="generate_only: generation completed without execution",
-                seed_mode=("joint_top3" if not config.mutation else "single_seed"),
+                seed_mode=(
+                    "single_forced_seed"
+                    if _forced_seed_index is not None
+                    else "single_seed"
+                ),
                 selected_seed_index=0,
                 seed_attempts_count=len(seed_attempts),
                 seed_attempts_summary=seed_attempts,
@@ -1539,7 +1496,11 @@ def run_instance_pipeline(
                 ),
                 repair_route_counts=repair_route_counts,
                 final_reason="environment qualification remained unresolved",
-                seed_mode=("joint_top3" if not config.mutation else "single_seed"),
+                seed_mode=(
+                    "single_forced_seed"
+                    if _forced_seed_index is not None
+                    else "single_seed"
+                ),
                 selected_seed_index=0,
                 seed_attempts_count=len(seed_attempts),
                 seed_attempts_summary=seed_attempts,
@@ -1879,13 +1840,9 @@ def run_instance_pipeline(
             oracle_rebound=oracle_rebound,
             final_reason=decision.reason if decision else "",
             seed_mode=(
-                "joint_top3"
-                if not config.mutation
-                else (
-                    "single_forced_seed"
-                    if _forced_seed_index is not None
-                    else "single_seed"
-                )
+                "single_forced_seed"
+                if _forced_seed_index is not None
+                else "single_seed"
             ),
             selected_seed_index=_forced_seed_index if _forced_seed_index is not None else 0,
             seed_attempts_count=len(seed_attempts),

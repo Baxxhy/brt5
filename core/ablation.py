@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,7 +17,7 @@ _COMPONENTS = (
 
 _VARIANTS = {
     "behavior_target": ("wo_behavior_target", "w/o Behavior Target", "_wo_behavior_target"),
-    "mutation": ("wo_mutation", "w/o Mutation", "_wo_mutation"),
+    "mutation": ("wo_mutation", "w/o Mutation Planning", "_wo_mutation"),
     "specialized_feedback": (
         "generic_iteration",
         "Generic Iteration",
@@ -102,7 +101,7 @@ class AblationConfig:
             f"{name}={int(bool(getattr(self, name)))}" for name in _COMPONENTS
         )
         if not self.mutation:
-            signature += ";seed_generation_mode=joint_top3_v1"
+            signature += ";seed_generation_mode=independent_top3_v1"
         return signature
 
     def to_dict(self) -> dict[str, Any]:
@@ -119,7 +118,10 @@ class AblationConfig:
             "seed_generation_mode": (
                 "validated_plan_per_seed"
                 if self.mutation
-                else "joint_top3_reference"
+                else "direct_generation_per_seed"
+            ),
+            "mutation_planning_mode": (
+                "validated_explicit_plan" if self.mutation else "disabled"
             ),
             "effective_feedback_routes": {
                 "mode": (
@@ -139,25 +141,16 @@ class AblationConfig:
         }
 
 
-def _remove_mutation_fields(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _remove_mutation_fields(item)
-            for key, item in value.items()
-            if str(key).lower() not in {"mutation_hints", "mutation_plan"}
-        }
-    if isinstance(value, list):
-        return [_remove_mutation_fields(item) for item in value]
-    return copy.deepcopy(value)
-
-
 def behavior_prompt_payload(behavior: Any, config: AblationConfig) -> dict[str, Any]:
-    """Return prompt evidence without mutating the shared BehaviorTarget cache."""
+    """Return identical BehaviorTarget evidence for every mutation condition.
 
-    payload = behavior.to_dict()
-    if config.mutation:
-        return payload
-    return _remove_mutation_fields(payload)
+    The mutation ablation removes the explicit planning component only.  It
+    must not remove evidence produced by IssueRewrite, otherwise the treatment
+    would change both the planner and the model input.
+    """
+
+    _ = config
+    return behavior.to_dict()
 
 
 def render_ablation_prompt(
@@ -167,10 +160,8 @@ def render_ablation_prompt(
 ) -> str:
     """Return an already selected prompt without rewriting user evidence.
 
-    Callers choose the prompt family for the active method.  In particular,
-    the joint Top-3 path uses its own positive prompt, so Issue text, source,
-    test code and logs must never be modified by broad word substitutions.
-    ``include_banner`` is retained for API compatibility.
+    Issue text, source, test code and logs must never be modified by broad word
+    substitutions. ``include_banner`` is retained for API compatibility.
     """
 
     _ = config, include_banner

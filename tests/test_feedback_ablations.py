@@ -9,15 +9,6 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from brt5.core.ablation import AblationConfig, behavior_prompt_payload
-from brt5.core.prompts import (
-    JOINT_SEED_GENERATION_SYSTEM_PROMPT,
-    JOINT_SEED_GENERATION_USER_PROMPT,
-    JOINT_SEED_OBSERVATION_ORACLE_SYSTEM_PROMPT,
-    JOINT_SEED_PROTOCOL_RECOVERY_SYSTEM_PROMPT,
-    JOINT_SEED_STRICT_VERIFIER_SYSTEM_PROMPT,
-    JOINT_SEED_VERIFIER_SYSTEM_PROMPT,
-    JOINT_SEED_VERIFIER_USER_PROMPT,
-)
 from brt5.core.schema import (
     BehaviorTarget,
     CandidateTest,
@@ -33,7 +24,6 @@ from brt5.core.schema import (
     VerifierDecision,
 )
 from brt5.execution.feedback import (
-    _joint_seed_references,
     _repair_focus,
     _uses_adaptive_seed_pipelines,
     run_instance_pipeline,
@@ -99,123 +89,121 @@ class FeedbackAblationTests(unittest.TestCase):
         self.assertTrue(resume_matches_ablation(summary, full))
         self.assertFalse(resume_matches_ablation(summary, no_mutation))
 
-    def test_mutation_payload_is_filtered_without_changing_cache(self) -> None:
+    def test_mutation_ablation_keeps_identical_behavior_evidence(self) -> None:
         behavior = BehaviorTarget(
             "demo__repo-1",
             mutation_hints=[{"target_pattern": "bad value"}],
             raw={"mutation_hints": [{"raw": True}], "evidence": "kept"},
         )
-        payload = behavior_prompt_payload(behavior, AblationConfig(mutation=False))
-        serialized = json.dumps(payload)
-        self.assertNotIn("mutation_hints", serialized)
-        self.assertEqual(behavior.mutation_hints[0]["target_pattern"], "bad value")
-        self.assertEqual(behavior.raw["mutation_hints"][0]["raw"], True)
+        full_payload = behavior_prompt_payload(behavior, AblationConfig())
+        ablated_payload = behavior_prompt_payload(
+            behavior, AblationConfig(mutation=False)
+        )
+        self.assertEqual(ablated_payload, full_payload)
+        self.assertEqual(
+            ablated_payload["trigger"]["mutation_hints"][0]["target_pattern"],
+            "bad value",
+        )
+        self.assertEqual(ablated_payload["raw"]["mutation_hints"][0]["raw"], True)
 
-    def test_no_mutation_prompt_and_artifacts_contain_no_mutation_language(self) -> None:
+    def test_mutation_ablation_uses_same_generation_prompt_without_plan(self) -> None:
         behavior = BehaviorTarget(
             "demo__repo-1",
             issue_summary="demo",
-            mutation_hints=[{"target_pattern": "hidden"}],
+            mutation_hints=[{"target_pattern": "shared evidence"}],
         )
         host = HostContext(
             "demo__repo-1",
             seed_test_code="def test_seed():\n    assert True\n",
-            reference_seed_tests=[
-                {
-                    "rank": rank,
-                    "file": f"tests/test_seed_{rank}.py",
-                    "name": f"test_seed_{rank}",
-                    "code_content": f"def test_seed_{rank}():\n    assert {rank} >= 0\n",
-                }
-                for rank in range(3)
-            ],
         )
-        llm = _FakeLLM()
+        related_test = RetrievedTest(
+            "demo__repo-1",
+            name="test_seed",
+            file="tests/test_seed.py",
+            code_content=host.seed_test_code,
+        )
+        full_llm = _FakeLLM()
+        ablated_llm = _FakeLLM()
         with tempfile.TemporaryDirectory() as tmp:
-            candidate = generate_candidate(
+            root = Path(tmp)
+            full_candidate = generate_candidate(
                 "demo__repo-1",
                 behavior,
                 host,
-                None,
+                related_test,
                 [],
-                llm,
+                full_llm,
+                str(root / "full"),
                 tmp,
+                write_to_repo=False,
+                ablation_config=AblationConfig(),
+            )
+            ablated_candidate = generate_candidate(
+                "demo__repo-1",
+                behavior,
+                host,
+                related_test,
+                [],
+                ablated_llm,
+                str(root / "ablated"),
                 tmp,
                 write_to_repo=False,
                 ablation_config=AblationConfig(mutation=False),
             )
-            self.assertTrue(candidate.code)
-            prompt = (Path(tmp) / "prompts" / "generation_round_0.txt").read_text(
-                encoding="utf-8"
-            )
-            lowered = prompt.lower()
-            for forbidden in ("mutationplan", "mutation_plan", "mutation_hints", "mutation", "变异"):
-                self.assertNotIn(forbidden, lowered)
-            for forbidden in ("实验条件", "消融", "关闭", "不使用显式", "不提供显式"):
-                self.assertNotIn(forbidden, prompt)
-            self.assertIn("Top-3 联合参考流程", prompt)
-            positions = [prompt.index(f"test_seed_{rank}") for rank in range(3)]
-            self.assertEqual(positions, sorted(positions))
+            full_prompt = (
+                root / "full" / "prompts" / "generation_round_0.txt"
+            ).read_text(encoding="utf-8")
+            ablated_prompt = (
+                root / "ablated" / "prompts" / "generation_round_0.txt"
+            ).read_text(encoding="utf-8")
+            self.assertTrue(full_candidate.code)
+            self.assertTrue(ablated_candidate.code)
+            self.assertEqual(ablated_prompt, full_prompt)
+            self.assertEqual(ablated_llm.calls, full_llm.calls)
+            self.assertIn("mutation_hints", ablated_prompt)
+            self.assertNotIn("Trigger Mutation Plan", ablated_prompt)
             mutation_files = [
-                path for path in Path(tmp).rglob("*")
-                if path.is_file() and "mutation" in path.name.lower()
+                path
+                for path in (root / "ablated").rglob("*")
+                if path.is_file() and "mutation_round" in path.name.lower()
             ]
             self.assertEqual(mutation_files, [])
 
-    def test_joint_seed_bundle_preserves_icore_top3_order(self) -> None:
-        tests = [
-            RetrievedTest(
-                "demo__repo-1",
-                name=f"test_rank_{rank}",
-                file=f"tests/test_{rank}.py",
-                code_content=f"def test_rank_{rank}(): pass",
-            )
-            for rank in range(4)
-        ]
-        bundle = _joint_seed_references(tests)
-        self.assertEqual([item["rank"] for item in bundle], [0, 1, 2])
+    def test_mutation_ablation_records_independent_top3_contract(self) -> None:
+        config = AblationConfig(mutation=False)
+        self.assertIn(
+            "seed_generation_mode=independent_top3_v1", config.signature
+        )
         self.assertEqual(
-            [item["name"] for item in bundle],
-            ["test_rank_0", "test_rank_1", "test_rank_2"],
+            config.to_dict()["seed_generation_mode"],
+            "direct_generation_per_seed",
+        )
+        self.assertEqual(
+            config.to_dict()["mutation_planning_mode"], "disabled"
         )
 
-    def test_joint_prompt_family_describes_only_joint_workflow(self) -> None:
-        prompts = (
-            JOINT_SEED_GENERATION_SYSTEM_PROMPT,
-            JOINT_SEED_GENERATION_USER_PROMPT,
-            JOINT_SEED_PROTOCOL_RECOVERY_SYSTEM_PROMPT,
-            JOINT_SEED_STRICT_VERIFIER_SYSTEM_PROMPT,
-            JOINT_SEED_OBSERVATION_ORACLE_SYSTEM_PROMPT,
-            JOINT_SEED_VERIFIER_SYSTEM_PROMPT,
-            JOINT_SEED_VERIFIER_USER_PROMPT,
-        )
-        forbidden = (
-            "mutation",
-            "变异",
-            "消融",
-            "关闭",
-            "不使用显式",
-            "不提供显式",
-            "另一个流程",
-            "完整方法",
-        )
-        combined = "\n".join(prompts).lower()
-        for token in forbidden:
-            self.assertNotIn(token.lower(), combined)
-        self.assertIn("top-3", combined)
-
-    def test_seed_pipeline_routing_is_single_factor(self) -> None:
+    def test_seed_pipeline_routing_is_identical_for_mutation_ablation(self) -> None:
         common = {
             "adaptive_disabled": False,
             "generate_only": False,
             "protocol_recovery_enabled": True,
             "forced_seed_index": None,
         }
-        self.assertTrue(_uses_adaptive_seed_pipelines(AblationConfig(), **common))
-        self.assertFalse(
-            _uses_adaptive_seed_pipelines(
-                AblationConfig(mutation=False), **common
-            )
+        full = _uses_adaptive_seed_pipelines(AblationConfig(), **common)
+        ablated = _uses_adaptive_seed_pipelines(
+            AblationConfig(mutation=False), **common
+        )
+        self.assertTrue(full)
+        self.assertEqual(ablated, full)
+
+    def test_mutation_ablation_does_not_reuse_legacy_joint_signature(self) -> None:
+        config = AblationConfig(mutation=False)
+        self.assertNotIn("joint_top3", config.signature)
+        self.assertNotEqual(
+            config.signature,
+            "behavior_target=1;mutation=0;specialized_feedback=1;"
+            "environment_feedback=1;trigger_feedback=1;assertion_feedback=1;"
+            "seed_generation_mode=joint_top3_v1",
         )
 
     def test_nonadherent_plan_candidate_uses_explicit_direct_fallback(self) -> None:
@@ -280,6 +268,8 @@ class FeedbackAblationTests(unittest.TestCase):
         config: AblationConfig,
         decisions: list[str],
         executions: list[ExecutionResult] | None = None,
+        *,
+        adaptive_disabled: bool = True,
     ) -> tuple[FinalResult, Mock, Mock, Mock, Mock, Path, tempfile.TemporaryDirectory]:
         temp = tempfile.TemporaryDirectory()
         root = Path(temp.name)
@@ -373,6 +363,15 @@ class FeedbackAblationTests(unittest.TestCase):
         rebind = Mock()
         with ExitStack() as stack:
             stack.enter_context(patch("brt5.execution.feedback._load_behavior_evidence", return_value=behavior))
+            stack.enter_context(
+                patch(
+                    "brt5.execution.feedback.prepare_instance_worktree",
+                    return_value=(
+                        str(repo),
+                        {"status": "PASS", "env_name": "", "setup_execution": {}},
+                    ),
+                )
+            )
             stack.enter_context(patch("brt5.execution.feedback.build_host_context", return_value=host))
             stack.enter_context(patch("brt5.execution.feedback.recover_test_protocol", return_value=protocol))
             stack.enter_context(patch("brt5.execution.feedback.audit_recovered_protocol", side_effect=lambda *args: args[0]))
@@ -393,7 +392,7 @@ class FeedbackAblationTests(unittest.TestCase):
                 max_env_rounds=2,
                 max_brt_rounds=3,
                 ablation_config=config,
-                _adaptive_disabled=True,
+                _adaptive_disabled=adaptive_disabled,
                 _prepared_repo_path=str(repo),
                 _prepare_meta={"status": "PASS", "env_name": ""},
             )
@@ -409,10 +408,33 @@ class FeedbackAblationTests(unittest.TestCase):
         self.assertEqual(result.mutation_plan_calls, 0)
         self.assertEqual(result.mutation_ops, [])
         self.assertEqual(result.repair_route_counts["trigger"], 1)
-        self.assertEqual(result.seed_mode, "joint_top3")
-        self.assertEqual(result.seed_attempts_count, 3)
-        self.assertEqual(len(result.host_context["reference_seed_tests"]), 3)
+        self.assertEqual(result.seed_mode, "single_seed")
+        self.assertEqual(result.seed_attempts_count, 1)
+        self.assertEqual(result.host_context["reference_seed_tests"], [])
         self.assertEqual(list(output.rglob("mutation*")), [])
+
+    def test_mutation_ablation_runs_three_independent_seed_pipelines(self) -> None:
+        result, planner, repair, _, _, output, temp = self._run_forced_decisions(
+            AblationConfig(mutation=False),
+            ["accept", "accept", "accept"],
+            adaptive_disabled=False,
+        )
+        self.addCleanup(temp.cleanup)
+        planner.assert_not_called()
+        repair.assert_not_called()
+        self.assertEqual(result.seed_mode, "adaptive_top3")
+        self.assertEqual(result.seed_attempts_count, 3)
+        self.assertEqual(result.mutation_plan_calls, 0)
+        self.assertEqual(
+            [item["seed_index"] for item in result.seed_attempts_summary],
+            [0, 1, 2],
+        )
+        for seed_index in range(3):
+            seed_dir = output / "seed_candidates" / f"seed_{seed_index}"
+            self.assertTrue((seed_dir / "protocol_recovery.json").is_file())
+            self.assertTrue((seed_dir / "host_context.json").is_file())
+            self.assertFalse((seed_dir / "joint_seed_bundle.json").exists())
+            self.assertEqual(list(seed_dir.glob("mutation_plan_round_*.json")), [])
 
     def test_full_method_limits_trigger_replanning_to_one_call(self) -> None:
         result, planner, repair, _, _, _, temp = self._run_forced_decisions(

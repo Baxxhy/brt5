@@ -10,7 +10,6 @@ from typing import Any
 from ..execution.executor import run_command_in_conda
 from ..retrieval.icore_runtime import first_test_selector, icore_test_command
 from ..core.prompts import (
-    JOINT_SEED_OBSERVATION_ORACLE_SYSTEM_PROMPT,
     OBSERVATION_ORACLE_PROBE_PROMPT,
     OBSERVATION_ORACLE_REBIND_PROMPT,
     OBSERVATION_ORACLE_SYSTEM_PROMPT,
@@ -140,13 +139,7 @@ def rebind_observation_oracle(
     probe_prompt = render_evidence_prompt(probe_prompt, behavior)
     probe_prompt = render_ablation_prompt(probe_prompt, config)
     system_prompt = render_ablation_prompt(
-        (
-            OBSERVATION_ORACLE_SYSTEM_PROMPT
-            if config.mutation
-            else JOINT_SEED_OBSERVATION_ORACLE_SYSTEM_PROMPT
-        ),
-        config,
-        include_banner=False,
+        OBSERVATION_ORACLE_SYSTEM_PROMPT, config, include_banner=False
     )
     write_text(str(Path(output_dir) / "prompts" / f"oracle_probe_round_{round_id}.txt"), system_prompt + "\n\n" + probe_prompt)
     probe_response = llm_client.chat(system_prompt, probe_prompt)

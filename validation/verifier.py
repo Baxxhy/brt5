@@ -9,8 +9,6 @@ from typing import Any
 from ..core.prompts import (
     BUGGY_ONLY_VERIFIER_SYSTEM_PROMPT,
     BUGGY_ONLY_VERIFIER_USER_PROMPT,
-    JOINT_SEED_VERIFIER_SYSTEM_PROMPT,
-    JOINT_SEED_VERIFIER_USER_PROMPT,
 )
 from ..core.ablation import (
     AblationConfig,
@@ -77,12 +75,7 @@ def _ask_llm(
     ablation_config: AblationConfig | None = None,
 ) -> VerifierDecision:
     config = (ablation_config or AblationConfig()).validate()
-    prompt_template = (
-        BUGGY_ONLY_VERIFIER_USER_PROMPT
-        if config.mutation
-        else JOINT_SEED_VERIFIER_USER_PROMPT
-    )
-    prompt = prompt_template.format(
+    prompt = BUGGY_ONLY_VERIFIER_USER_PROMPT.format(
         issue_text=issue_text,
         behavior_json=json.dumps(
             behavior_prompt_payload(behavior, config), ensure_ascii=False
@@ -95,13 +88,7 @@ def _ask_llm(
     prompt = render_evidence_prompt(prompt, behavior)
     prompt = render_ablation_prompt(prompt, config)
     system_prompt = render_ablation_prompt(
-        (
-            BUGGY_ONLY_VERIFIER_SYSTEM_PROMPT
-            if config.mutation
-            else JOINT_SEED_VERIFIER_SYSTEM_PROMPT
-        ),
-        config,
-        include_banner=False,
+        BUGGY_ONLY_VERIFIER_SYSTEM_PROMPT, config, include_banner=False
     )
     data = extract_json_object(
         llm_client.chat(system_prompt, prompt)

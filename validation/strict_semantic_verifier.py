@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from ..core.prompts import (
-    JOINT_SEED_STRICT_VERIFIER_SYSTEM_PROMPT,
     STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT,
     STRICT_SEMANTIC_VERIFIER_USER_PROMPT,
 )
@@ -115,11 +114,7 @@ def verify_strict_semantics(
         prompt = render_evidence_prompt(prompt, behavior)
         prompt = render_ablation_prompt(prompt, config)
         system_prompt = render_ablation_prompt(
-            (
-                STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT
-                if config.mutation
-                else JOINT_SEED_STRICT_VERIFIER_SYSTEM_PROMPT
-            ),
+            STRICT_SEMANTIC_VERIFIER_SYSTEM_PROMPT,
             config,
             include_banner=False,
         )

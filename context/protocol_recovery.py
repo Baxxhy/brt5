@@ -9,7 +9,6 @@ from pathlib import Path
 
 from ..retrieval.icore_runtime import icore_test_command
 from ..core.prompts import (
-    JOINT_SEED_PROTOCOL_RECOVERY_SYSTEM_PROMPT,
     PROTOCOL_RECOVERY_SYSTEM_PROMPT,
     PROTOCOL_RECOVERY_USER_PROMPT,
 )
@@ -256,13 +255,7 @@ def audit_recovered_protocol(
     prompt = render_evidence_prompt(prompt, behavior)
     prompt = render_ablation_prompt(prompt, config)
     system_prompt = render_ablation_prompt(
-        (
-            PROTOCOL_RECOVERY_SYSTEM_PROMPT
-            if config.mutation
-            else JOINT_SEED_PROTOCOL_RECOVERY_SYSTEM_PROMPT
-        ),
-        config,
-        include_banner=False,
+        PROTOCOL_RECOVERY_SYSTEM_PROMPT, config, include_banner=False
     )
     prompt_path = Path(output_dir) / "prompts" / "protocol_recovery_prompt.txt"
     response_path = Path(output_dir) / "responses" / "protocol_recovery_response.txt"
