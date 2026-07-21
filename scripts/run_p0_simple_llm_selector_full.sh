@@ -284,6 +284,14 @@ GENERATION_WORKERS=${GENERATION_WORKERS:-6}
 EVALUATION_WORKERS=${EVALUATION_WORKERS:-6}
 RUNTIME_BACKEND=${RUNTIME_BACKEND:-local_conda}
 TDD_TEMPLATE_REPAIR_WORKERS=${TDD_TEMPLATE_REPAIR_WORKERS:-4}
+BRT_CONDA_PROBE_TIMEOUT_SECONDS=${BRT_CONDA_PROBE_TIMEOUT_SECONDS:-120}
+
+if [[ ! "$BRT_CONDA_PROBE_TIMEOUT_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+   ! awk -v value="$BRT_CONDA_PROBE_TIMEOUT_SECONDS" 'BEGIN { exit !(value > 0) }'; then
+  echo "BRT_CONDA_PROBE_TIMEOUT_SECONDS must be a positive number" >&2
+  exit 2
+fi
+export BRT_CONDA_PROBE_TIMEOUT_SECONDS
 
 if [[ "$DATASET_MODE" == "tdd" ]] &&
    { [[ ! "$TDD_TEMPLATE_REPAIR_WORKERS" =~ ^[0-9]+$ ]] ||
@@ -407,6 +415,7 @@ config = {
     "evaluator_contract_sha256": sys.argv[7],
     "tdd_template_auto_repair": "$DATASET_MODE" == "tdd",
     "tdd_template_repair_workers": int("$TDD_TEMPLATE_REPAIR_WORKERS"),
+    "conda_probe_timeout_seconds": float("$BRT_CONDA_PROBE_TIMEOUT_SECONDS"),
 }
 config["ablation_signature"] = ";".join(
     f"{name}={int(config[name])}"
@@ -473,6 +482,7 @@ echo "patch_coverage_enabled=$COMPUTE_PATCH_COVERAGE"
 echo "ablation_id=$ABLATION_ID"
 echo "method_variant=$METHOD_VARIANT"
 echo "framework_python=$PYTHON_BIN"
+echo "conda_probe_timeout_seconds=$BRT_CONDA_PROBE_TIMEOUT_SECONDS"
 if [ "$DATASET_MODE" = "tdd" ]; then
   echo "runtime_backend=$RUNTIME_BACKEND"
   echo "docker_harness_invoked=false"

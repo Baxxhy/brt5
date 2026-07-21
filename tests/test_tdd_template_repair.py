@@ -62,6 +62,11 @@ class TddTemplateRepairTests(unittest.TestCase):
         self.assertIn("prepare_tdd_template_environments.py", launcher)
         self.assertIn("tdd_local_conda_preflight_retry_start", launcher)
         self.assertIn("TDD_TEMPLATE_REPAIR_WORKERS", launcher)
+        self.assertIn(
+            "BRT_CONDA_PROBE_TIMEOUT_SECONDS=${BRT_CONDA_PROBE_TIMEOUT_SECONDS:-120}",
+            launcher,
+        )
+        self.assertIn("export BRT_CONDA_PROBE_TIMEOUT_SECONDS", launcher)
 
     def test_machine_bootstrap_prepares_tdd_templates(self) -> None:
         bootstrap = (PROJECT_ROOT / "scripts/bootstrap_machine.sh").read_text(

@@ -41,6 +41,7 @@ DEFAULT_CONDA_EXE = next(
 CONDA_EXE = os.environ.get("CONDA_EXE", DEFAULT_CONDA_EXE)
 ENV_NAMING_SCHEME_VERSION = "brt5-conda-env-v4"
 ENV_CACHE_STATE_VERSION = "brt5-environment-cache-v1"
+DEFAULT_CONDA_PROBE_TIMEOUT_SECONDS = 20.0
 
 _INVENTORY_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
 _HEALTH_CACHE: dict[str, dict[str, Any]] = {}
@@ -1496,10 +1497,28 @@ def preflight_system(paths: list[str], min_free_gb: float = 2.0, min_free_inodes
             item = {"path": str(path), "ok": False, "error": repr(exc)}
         checks.append(item)
         ok = ok and bool(item.get("ok"))
+    raw_conda_probe_timeout = os.environ.get(
+        "BRT_CONDA_PROBE_TIMEOUT_SECONDS",
+        str(DEFAULT_CONDA_PROBE_TIMEOUT_SECONDS),
+    )
+    try:
+        conda_probe_timeout = float(raw_conda_probe_timeout)
+    except (TypeError, ValueError):
+        conda_probe_timeout = DEFAULT_CONDA_PROBE_TIMEOUT_SECONDS
+    if conda_probe_timeout <= 0:
+        conda_probe_timeout = DEFAULT_CONDA_PROBE_TIMEOUT_SECONDS
+
     conda_ok = Path(CONDA_EXE).exists()
     if conda_ok:
         try:
-            proc = subprocess.run([CONDA_EXE, "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, check=False)
+            proc = subprocess.run(
+                [CONDA_EXE, "--version"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=conda_probe_timeout,
+                check=False,
+            )
             conda_ok = proc.returncode == 0
             conda_version = (proc.stdout or proc.stderr).strip()
         except Exception as exc:
@@ -1514,6 +1533,7 @@ def preflight_system(paths: list[str], min_free_gb: float = 2.0, min_free_inodes
         "minimum_free_inodes": min_free_inodes,
         "checks": checks,
         "conda_exe": CONDA_EXE,
+        "conda_probe_timeout_seconds": conda_probe_timeout,
         "conda_ok": conda_ok,
         "conda_version": conda_version,
     }

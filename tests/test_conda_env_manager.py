@@ -1227,6 +1227,32 @@ dependencies:
             data = envm.preflight_system([str(self.root)], min_free_gb=1, min_free_inodes=10)
         self.assertFalse(data["ok"])
 
+    def test_preflight_uses_configurable_conda_probe_timeout(self) -> None:
+        usage = mock.Mock(total=20 * 1024**3, used=1, free=10 * 1024**3)
+        stat = mock.Mock(f_favail=100_000)
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="conda 25.9.1\n",
+            stderr="",
+        )
+        with mock.patch.dict(
+            envm.os.environ,
+            {"BRT_CONDA_PROBE_TIMEOUT_SECONDS": "180"},
+        ), mock.patch.object(
+            envm.shutil, "disk_usage", return_value=usage
+        ), mock.patch.object(
+            envm.os, "statvfs", return_value=stat
+        ), mock.patch.object(
+            envm.Path, "exists", return_value=True
+        ), mock.patch.object(
+            envm.subprocess, "run", return_value=completed
+        ) as run:
+            data = envm.preflight_system([str(self.root)])
+
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["conda_probe_timeout_seconds"], 180.0)
+        self.assertEqual(run.call_args.kwargs["timeout"], 180.0)
+
     def test_conda_nonzero_health_is_incomplete(self) -> None:
         with self.patch_envs({"env_a": "/envs/a"}, unhealthy={"env_a"}):
             health = envm.env_health_check("env_a")
