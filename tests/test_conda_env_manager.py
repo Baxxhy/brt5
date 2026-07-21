@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
@@ -1040,6 +1041,29 @@ install_requires =
         self.assertIn("numpy==1.23.5", requirements)
         self.assertIn("cython<3", requirements)
         self.assertNotIn("numpy==1.25.2", requirements)
+
+    def test_astropy_13_upper_bound_is_shell_quoted(self) -> None:
+        spec = icore_exec_spec.make_exec_spec(
+            {
+                "instance_id": "astropy__astropy-6938",
+                "repo": "astropy/astropy",
+                "version": "1.3",
+                "base_commit": "base123",
+                "environment_setup_commit": "setup123",
+                "test_patch": "",
+            }
+        )
+        command = next(
+            line
+            for line in spec.env_script_list
+            if line.startswith("python -m pip install attrs==")
+        )
+        self.assertIn("'cython<3'", command)
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+        self.assertIn("cython<3", tokens)
+        self.assertNotIn("<", tokens)
 
     def test_environment_yml_python_is_pinned_before_create(self) -> None:
         source = """name: original

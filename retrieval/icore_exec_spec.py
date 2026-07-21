@@ -2,6 +2,7 @@ import hashlib
 import json
 import platform
 import re
+import shlex
 
 from dataclasses import dataclass, asdict
 from typing import Union, List, Optional
@@ -345,7 +346,15 @@ class ExecSpec:
 
         # Install additional packages if specified
         if "pip_packages" in install:
-            pip_packages = " ".join(install["pip_packages"])
+            # PEP 440 constraints such as ``cython<3`` contain shell
+            # metacharacters.  Passing the raw text to bash turns ``<3`` into
+            # input redirection and fails before pip starts.  Quote every
+            # requirement independently so markers, extras and constraints
+            # remain one argv item.
+            pip_packages = " ".join(
+                shlex.quote(str(package))
+                for package in install["pip_packages"]
+            )
             cmd = f"python -m pip install {pip_packages}"
             reqs_commands.append(cmd)
         if self.repo == "pylint-dev/pylint" and self.version == "3.0":

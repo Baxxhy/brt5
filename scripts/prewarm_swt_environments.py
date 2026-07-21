@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import traceback
@@ -103,6 +104,125 @@ def write_json(path: Path, payload: Any) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def failure_diagnostic(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one environment failure without hiding its raw evidence."""
+
+    try:
+        returncode = int(result.get("returncode", 1))
+    except (TypeError, ValueError):
+        returncode = 1
+    stdout = str(result.get("stdout") or "")
+    stderr = str(result.get("stderr") or "")
+    traceback_text = str(result.get("traceback") or "")
+    combined = "\n".join((stdout, stderr, traceback_text))
+    lowered = combined.lower()
+    health = result.get("health") if isinstance(result.get("health"), dict) else {}
+    compatibility = (
+        result.get("compatibility")
+        if isinstance(result.get("compatibility"), dict)
+        else {}
+    )
+    category = str(health.get("category") or compatibility.get("category") or "")
+    if not category:
+        if re.search(r"line \d+:\s*\d+: no such file or directory", lowered):
+            category = "SHELL_REDIRECTION"
+        elif (
+            "retry.__init__() got an unexpected keyword argument" in lowered
+            or "respect_retry_after_header" in lowered
+        ):
+            category = "CONDA_RUNTIME_DEPENDENCY_CONFLICT"
+        elif "no space left on device" in lowered or "disk quota exceeded" in lowered:
+            category = "DISK_FULL"
+        elif "numpy.dtype size changed" in lowered:
+            category = "BINARY_ABI_MISMATCH"
+        elif "packagesnotfounderror" in lowered or "resolvepackagenotfound" in lowered:
+            category = "CONDA_SOLVER"
+        elif (
+            "environmentlocationnotfound" in lowered
+            or "could not find conda environment" in lowered
+        ):
+            category = "ENV_NOT_FOUND"
+        elif any(
+            marker in lowered
+            for marker in (
+                "temporary failure in name resolution",
+                "connectionerror",
+                "read timed out",
+                "sslerror",
+                "could not fetch url",
+            )
+        ):
+            category = "NETWORK"
+        elif "requires-python" in lowered or "no matching distribution found" in lowered:
+            category = "PYTHON_COMPATIBILITY"
+        elif (
+            "subprocess-exited-with-error" in lowered
+            or "failed building wheel" in lowered
+            or "metadata-generation-failed" in lowered
+        ):
+            category = "PIP_BUILD"
+        elif "modulenotfounderror" in lowered or "importerror" in lowered:
+            category = "IMPORT_FAILURE"
+        else:
+            category = str(result.get("status") or "UNKNOWN")
+
+    error_line = ""
+    for stream in (stderr, stdout, traceback_text):
+        for line in reversed(stream.splitlines()):
+            stripped = line.strip()
+            if stripped and not stripped.startswith("+"):
+                error_line = stripped
+                break
+        if error_line:
+            break
+
+    return {
+        "status": str(result.get("status") or ""),
+        "returncode": returncode,
+        "category": category,
+        "error_line": error_line,
+        "error": str(result.get("error") or ""),
+        "resolution_source": str(result.get("resolution_source") or ""),
+        "script_path": str(result.get("script_path") or ""),
+        "requirements_path": str(result.get("requirements_path") or ""),
+        "stdout_tail": stdout[-4000:],
+        "stderr_tail": stderr[-4000:],
+        "traceback_tail": traceback_text[-4000:],
+        "health": health,
+        "compatibility": compatibility,
+        "dependency_repair": (
+            result.get("dependency_repair")
+            if isinstance(result.get("dependency_repair"), dict)
+            else {}
+        ),
+    }
+
+
+def attempt_diagnostics(attempts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Retain retry history and select the first substantive root cause."""
+
+    history: list[dict[str, Any]] = []
+    for attempt in attempts:
+        result = attempt.get("result") if isinstance(attempt, dict) else {}
+        result = result if isinstance(result, dict) else {}
+        history.append(
+            {
+                "attempt": int(attempt.get("attempt") or len(history) + 1),
+                "elapsed_seconds": attempt.get("elapsed_seconds"),
+                **failure_diagnostic(result),
+            }
+        )
+    root_cause = next(
+        (
+            item
+            for item in history
+            if item["category"] not in {"ENV_NOT_FOUND", "ENV_INCOMPLETE"}
+        ),
+        history[0] if history else {},
+    )
+    return {"root_cause": root_cause, "attempt_history": history}
 
 
 def prepare_template(
@@ -202,9 +322,32 @@ def main() -> int:
             f"{template['env_name']}",
             flush=True,
         )
+        if result["status"] != "READY":
+            diagnostic_bundle = attempt_diagnostics(result.get("attempts") or [])
+            diagnostic = diagnostic_bundle["root_cause"]
+            print(
+                "  failure: "
+                f"status={diagnostic['status']} "
+                f"rc={diagnostic['returncode']} "
+                f"category={diagnostic['category']}",
+                flush=True,
+            )
+            if diagnostic["error_line"]:
+                print(f"  error: {diagnostic['error_line']}", flush=True)
 
     ready = [item["env_name"] for item in results if item["status"] == "READY"]
     failed = [item["env_name"] for item in results if item["status"] != "READY"]
+    failure_details = [
+        {
+            "env_name": item["env_name"],
+            "instance_id": item["instance_id"],
+            "repo": item["repo"],
+            "version": item["version"],
+            **attempt_diagnostics(item.get("attempts") or []),
+        }
+        for item in results
+        if item["status"] != "READY"
+    ]
     summary = {
         "dataset": str(dataset),
         "work_root": str(work_root),
@@ -213,8 +356,10 @@ def main() -> int:
         "failed_count": len(failed),
         "ready": ready,
         "failed": failed,
+        "failure_details": failure_details,
     }
     write_json(work_root / "summary.json", summary)
+    write_json(work_root / "failure_diagnostics.json", failure_details)
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
     return 1 if failed else 0
 

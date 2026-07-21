@@ -147,6 +147,9 @@ chmod 600 "$ENV_FILE"
 if [[ "$PREWARM_RC" -ne 0 ]]; then
   echo "One or more SWT template environments failed; inspect:" >&2
   echo "  $PROJECT_ROOT/.bootstrap/swt-template-environments/summary.json" >&2
+  echo "  $PROJECT_ROOT/.bootstrap/swt-template-environments/failure_diagnostics.json" >&2
+  echo "Or print the preserved retry root causes with:" >&2
+  echo "  $PYTHON_BIN $PROJECT_ROOT/scripts/diagnose_swt_environment_failures.py" >&2
   echo "The dedicated Conda activation file was still written to:" >&2
   echo "  $ENV_FILE" >&2
   exit "$PREWARM_RC"

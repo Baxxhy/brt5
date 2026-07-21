@@ -8,6 +8,10 @@ from pathlib import Path
 from unittest import mock
 
 from brt5.llm import api_pool
+from brt5.scripts.prewarm_swt_environments import (
+    attempt_diagnostics,
+    failure_diagnostic,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -120,6 +124,65 @@ class ReproducibleBootstrapTests(unittest.TestCase):
         self.assertIn('PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}', launcher)
         self.assertIn('REPO_ROOT=${REPO_ROOT:-$PACKAGE_ROOT/swe_repos}', launcher)
         self.assertNotIn("PROJECT_ROOT=${PROJECT_ROOT:-/root/Baxxhy", launcher)
+
+    def test_swt_failure_diagnostic_identifies_shell_redirection(self) -> None:
+        diagnostic = failure_diagnostic(
+            {
+                "status": "CREATE_ERROR",
+                "returncode": 1,
+                "stderr": (
+                    "/tmp/brt3_icore_env_setup.sh: line 6: "
+                    "3: No such file or directory"
+                ),
+            }
+        )
+        self.assertEqual(diagnostic["category"], "SHELL_REDIRECTION")
+        self.assertEqual(diagnostic["returncode"], 1)
+
+    def test_swt_failure_diagnostic_prefers_health_category(self) -> None:
+        diagnostic = failure_diagnostic(
+            {
+                "status": "ENV_HEALTH_ERROR",
+                "returncode": 1,
+                "health": {"ok": False, "category": "ENV_NOT_FOUND"},
+                "stderr": "generic failure",
+            }
+        )
+        self.assertEqual(diagnostic["category"], "ENV_NOT_FOUND")
+
+    def test_swt_attempt_diagnostics_preserves_initial_root_cause(self) -> None:
+        diagnostic = attempt_diagnostics(
+            [
+                {
+                    "attempt": 1,
+                    "elapsed_seconds": 7.1,
+                    "result": {
+                        "status": "CREATE_ERROR",
+                        "returncode": 1,
+                        "stderr": (
+                            "/tmp/brt3_icore_env_setup.sh: line 6: "
+                            "3: No such file or directory"
+                        ),
+                    },
+                },
+                {
+                    "attempt": 2,
+                    "elapsed_seconds": 1.0,
+                    "result": {
+                        "status": "ENV_HEALTH_ERROR",
+                        "returncode": 1,
+                        "health": {
+                            "ok": False,
+                            "category": "ENV_NOT_FOUND",
+                        },
+                    },
+                },
+            ]
+        )
+        self.assertEqual(
+            diagnostic["root_cause"]["category"], "SHELL_REDIRECTION"
+        )
+        self.assertEqual(len(diagnostic["attempt_history"]), 2)
 
 
 if __name__ == "__main__":
