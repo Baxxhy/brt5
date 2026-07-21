@@ -143,6 +143,9 @@ class ReproducibleBootstrapTests(unittest.TestCase):
         self.assertIn("template_environment_gate=52/52_ready", bootstrap)
         self.assertIn("validate_behavior_target_cache.py", bootstrap)
         self.assertIn("bootstrap_repositories.py", bootstrap)
+        self.assertIn('PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)', bootstrap)
+        self.assertNotIn("EXPECTED_PROJECT_ROOT", bootstrap)
+        self.assertNotIn("/root/Baxxhy/BugReproduce/brt5", bootstrap)
 
     def test_swt_wrapper_loads_generated_runtime_contract(self) -> None:
         wrapper = (
@@ -151,6 +154,9 @@ class ReproducibleBootstrapTests(unittest.TestCase):
         self.assertIn(".bootstrap/use_fresh_swt_server.sh", wrapper)
         self.assertIn("--dataset swt", wrapper)
         self.assertIn("run_p0_simple_llm_selector_full.sh", wrapper)
+        self.assertIn('PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)', wrapper)
+        self.assertNotIn("EXPECTED_PROJECT_ROOT", wrapper)
+        self.assertNotIn("/root/Baxxhy/BugReproduce/brt5", wrapper)
 
     def test_swt_failure_diagnostic_identifies_shell_redirection(self) -> None:
         diagnostic = failure_diagnostic(

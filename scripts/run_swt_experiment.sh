@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-EXPECTED_PROJECT_ROOT=/root/Baxxhy/BugReproduce/brt5
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 RUNTIME_ENV_FILE=$PROJECT_ROOT/.bootstrap/use_fresh_swt_server.sh
 
-if [[ "$PROJECT_ROOT" != "$EXPECTED_PROJECT_ROOT" ]]; then
-  echo "Project path mismatch: expected $EXPECTED_PROJECT_ROOT, got $PROJECT_ROOT" >&2
+if [[ "$PROJECT_ROOT" == "/" ]]; then
+  echo "Refusing to launch from an unsafe project root." >&2
   exit 2
 fi
 if [[ ! -f "$RUNTIME_ENV_FILE" ]]; then

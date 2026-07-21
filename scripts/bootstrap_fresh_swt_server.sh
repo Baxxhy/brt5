@@ -2,10 +2,9 @@
 set -Eeuo pipefail
 
 # Prepare a fresh SWT experiment server that already has Conda installed.
-# This script is deliberately tied to the user-approved project location so a
-# typo cannot populate repositories and environments under a different tree.
+# Resolve every managed location from this checkout so the same command works
+# on workstations and clusters without editing machine-specific absolute paths.
 
-EXPECTED_PROJECT_ROOT=/root/Baxxhy/BugReproduce/brt5
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 WORKSPACE_ROOT=$(cd "$PROJECT_ROOT/.." && pwd)
@@ -62,10 +61,10 @@ if [[ ! "$PREWARM_WORKERS" =~ ^[0-9]+$ ]] ||
   exit 2
 fi
 
-if [[ "$PROJECT_ROOT" != "$EXPECTED_PROJECT_ROOT" ]]; then
-  echo "Project path mismatch." >&2
-  echo "Expected: $EXPECTED_PROJECT_ROOT" >&2
-  echo "Actual:   $PROJECT_ROOT" >&2
+if [[ "$PROJECT_ROOT" == "/" || "$WORKSPACE_ROOT" == "/" ]]; then
+  echo "Refusing to bootstrap from an unsafe project/workspace root." >&2
+  echo "Project:   $PROJECT_ROOT" >&2
+  echo "Workspace: $WORKSPACE_ROOT" >&2
   exit 2
 fi
 if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then

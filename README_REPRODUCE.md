@@ -26,19 +26,31 @@ revoked or its history has been independently purged and verified.
 ## 2. Bootstrap a new Linux machine
 
 ```bash
-mkdir -p /root/Baxxhy/BugReproduce
-git clone <YOUR_NEW_REPOSITORY_URL> /root/Baxxhy/BugReproduce/brt5
-cd /root/Baxxhy/BugReproduce/brt5
+mkdir -p BugReproduce
+cd BugReproduce
+git clone <YOUR_NEW_REPOSITORY_URL> brt5
+cd brt5
 bash scripts/bootstrap_fresh_swt_server.sh
 ```
 
 The command above is the canonical SWT setup when Conda is already installed.
 It reuses that Conda installation, creates an isolated `brt5_icore` controller
-environment under `/root/Baxxhy/BugReproduce/.brt5-conda`, prepares all 12
+environment under the checkout's sibling `../.brt5-conda`, prepares all 12
 benchmark repositories, prewarms all 52 SWT dependency-template environments
 with four concurrent workers by default, validates the frozen inputs, and runs
 local regression checks.
 It does not start the 276-instance experiment.
+
+All managed paths are derived from the checkout. For example, if the repository
+is `.../BugReproduce/brt5`, benchmark repositories are placed in
+`.../BugReproduce/swe_repos` and Conda environments/packages in
+`.../BugReproduce/.brt5-conda`; no machine-specific project path is embedded.
+On a cluster where operating-system prerequisites are already installed and
+`apt-get` is unavailable, use:
+
+```bash
+bash scripts/bootstrap_fresh_swt_server.sh --skip-system-packages --prewarm-workers 8
+```
 
 The bootstrap does the following:
 
