@@ -147,6 +147,10 @@ class ReproducibleBootstrapTests(unittest.TestCase):
         self.assertIn("--controller-python", bootstrap)
         self.assertIn("reused_controller_python=", bootstrap)
         self.assertIn("sys.version_info >= (3, 10)", bootstrap)
+        self.assertGreaterEqual(
+            bootstrap.count('rmdir "$PROBE_PARENT" >/dev/null 2>&1 || true'),
+            2,
+        )
         self.assertNotIn("EXPECTED_PROJECT_ROOT", bootstrap)
         self.assertNotIn("/root/Baxxhy/BugReproduce/brt5", bootstrap)
 

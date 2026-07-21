@@ -263,7 +263,9 @@ trap cleanup_probe EXIT
 "$CONDA_EXE" run -p "$PROBE_PREFIX" python -c \
   'import sys; assert sys.version_info[:2] == (3, 6); print("legacy_python_probe=" + sys.version)'
 "$CONDA_EXE" env remove -p "$PROBE_PREFIX" -y
-rmdir "$PROBE_PARENT"
+# Some Conda releases remove the now-empty parent directory together with the
+# environment prefix.  Cleanup is complete in either case.
+rmdir "$PROBE_PARENT" >/dev/null 2>&1 || true
 trap - EXIT
 
 if [[ -n "$REQUESTED_CONTROLLER_PYTHON" ]]; then
