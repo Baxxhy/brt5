@@ -122,12 +122,13 @@ mkdir -p "$PROJECT_ROOT/.bootstrap"
   --repo-root "$WORKSPACE_ROOT/swe_repos" \
   --manifest "$PROJECT_ROOT/.bootstrap/repositories.json"
 
+PREWARM_RC=0
 if [[ "$PREWARM" == "true" ]]; then
   "$PYTHON_BIN" "$PROJECT_ROOT/scripts/prewarm_swt_environments.py" \
     --dataset "$PROJECT_ROOT/data/issues/swt276_issues.json" \
     --work-root "$PROJECT_ROOT/.bootstrap/swt-template-environments" \
     --timeout 3600 \
-    --retries 3
+    --retries 3 || PREWARM_RC=$?
 fi
 
 ENV_FILE=$PROJECT_ROOT/.bootstrap/use_swt_conda.sh
@@ -142,6 +143,14 @@ export PATH='$CONDA_ROOT/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/
 export PYTHONPATH='$WORKSPACE_ROOT'
 EOF
 chmod 600 "$ENV_FILE"
+
+if [[ "$PREWARM_RC" -ne 0 ]]; then
+  echo "One or more SWT template environments failed; inspect:" >&2
+  echo "  $PROJECT_ROOT/.bootstrap/swt-template-environments/summary.json" >&2
+  echo "The dedicated Conda activation file was still written to:" >&2
+  echo "  $ENV_FILE" >&2
+  exit "$PREWARM_RC"
+fi
 
 cat <<EOF
 

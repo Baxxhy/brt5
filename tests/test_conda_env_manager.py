@@ -42,6 +42,7 @@ class CondaEnvManagerTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
 
     def tearDown(self) -> None:
+        envm._INVENTORY_CACHE.clear()
         envm._DEPENDENCY_COMPAT_CACHE.clear()
         envm._HEALTH_CACHE.clear()
         envm._MANIFEST_CACHE.clear()
@@ -348,7 +349,9 @@ class CondaEnvManagerTests(unittest.TestCase):
             },
         }
         proc = mock.Mock(returncode=0, stdout=json.dumps(snapshot) + "\n", stderr="")
-        with mock.patch.object(envm.subprocess, "run", return_value=proc):
+        with mock.patch.object(
+            envm, "conda_env_inventory", return_value={"legacy": "/envs/legacy"}
+        ), mock.patch.object(envm.subprocess, "run", return_value=proc):
             compatible = envm.dependency_env_compatibility(
                 "legacy", {"python": "3.9", "pip_packages": ["numpy==1.25.2", "pytest"]}
             )
@@ -380,7 +383,9 @@ class CondaEnvManagerTests(unittest.TestCase):
             "marker_environment": {},
         }
         proc = mock.Mock(returncode=0, stdout=json.dumps(snapshot) + "\n", stderr="")
-        with mock.patch.object(envm.subprocess, "run", return_value=proc):
+        with mock.patch.object(
+            envm, "conda_env_inventory", return_value={"legacy": "/envs/legacy"}
+        ), mock.patch.object(envm.subprocess, "run", return_value=proc):
             result = envm.dependency_env_compatibility(
                 "legacy", {"python": "3.10", "pip_packages": ["numpy==1.23.0"]}
             )
@@ -413,7 +418,9 @@ class CondaEnvManagerTests(unittest.TestCase):
             "marker_environment": {},
         }
         proc = mock.Mock(returncode=0, stdout=json.dumps(snapshot) + "\n", stderr="")
-        with mock.patch.object(envm.subprocess, "run", return_value=proc):
+        with mock.patch.object(
+            envm, "conda_env_inventory", return_value={"legacy": "/envs/legacy"}
+        ), mock.patch.object(envm.subprocess, "run", return_value=proc):
             result = envm.dependency_env_compatibility(
                 "legacy",
                 {
@@ -442,7 +449,9 @@ class CondaEnvManagerTests(unittest.TestCase):
             "marker_environment": {},
         }
         proc = mock.Mock(returncode=0, stdout=json.dumps(snapshot) + "\n", stderr="")
-        with mock.patch.object(envm.subprocess, "run", return_value=proc):
+        with mock.patch.object(
+            envm, "conda_env_inventory", return_value={"legacy": "/envs/legacy"}
+        ), mock.patch.object(envm.subprocess, "run", return_value=proc):
             result = envm.dependency_env_compatibility(
                 "legacy", {"python": "3.11", "pip_packages": ["pyparsing==3.0.9"]}
             )
@@ -482,7 +491,9 @@ class CondaEnvManagerTests(unittest.TestCase):
             "marker_environment": {},
         }
         proc = mock.Mock(returncode=0, stdout=json.dumps(snapshot) + "\n", stderr="")
-        with mock.patch.object(envm.subprocess, "run", return_value=proc):
+        with mock.patch.object(
+            envm, "conda_env_inventory", return_value={"legacy": "/envs/legacy"}
+        ), mock.patch.object(envm.subprocess, "run", return_value=proc):
             result = envm.dependency_env_compatibility(
                 "legacy",
                 {
@@ -680,7 +691,9 @@ python -m pip install -r $HOME/requirements.txt
 
     def test_dependency_inventory_script_has_python36_fallback(self) -> None:
         proc = mock.Mock(returncode=1, stdout="", stderr="expected")
-        with mock.patch.object(envm.subprocess, "run", return_value=proc) as run:
+        with mock.patch.object(
+            envm, "conda_env_inventory", return_value={"legacy": "/envs/legacy"}
+        ), mock.patch.object(envm.subprocess, "run", return_value=proc) as run:
             envm.dependency_env_compatibility("legacy", {"pip_packages": []})
         script = run.call_args.args[0][-1]
         self.assertIn("except ImportError", script)
@@ -1180,6 +1193,50 @@ dependencies:
             health = envm.env_health_check("env_a")
         self.assertFalse(health["ok"])
         self.assertEqual(health["category"], "ENV_INCOMPLETE")
+
+    def test_inventory_ignores_environment_registered_by_other_conda_prefix(self) -> None:
+        env_list = {
+            "envs": [
+                "/root/miniconda3/envs/stale",
+                "/root/brt5-conda/envs/current",
+                "/root/.conda/envs/user-env",
+            ]
+        }
+        info = {
+            "root_prefix": "/root/brt5-conda",
+            "envs_dirs": [
+                "/root/brt5-conda/envs",
+                "/root/.conda/envs",
+            ],
+        }
+        responses = [
+            SimpleNamespace(returncode=0, stdout=json.dumps(env_list), stderr=""),
+            SimpleNamespace(returncode=0, stdout=json.dumps(info), stderr=""),
+        ]
+        with mock.patch.object(envm.subprocess, "run", side_effect=responses):
+            inventory = envm.conda_env_inventory(refresh=True)
+        self.assertEqual(
+            inventory,
+            {
+                "current": "/root/brt5-conda/envs/current",
+                "user-env": "/root/.conda/envs/user-env",
+            },
+        )
+
+    def test_health_check_uses_inventory_prefix_instead_of_global_name(self) -> None:
+        response = SimpleNamespace(
+            returncode=0,
+            stdout='{"executable":"/active/env/bin/python","version":"3.9.0","purelib":"/active/env/lib"}\n',
+            stderr="",
+        )
+        with mock.patch.object(
+            envm,
+            "conda_env_inventory",
+            return_value={"same-name": "/active/env"},
+        ), mock.patch.object(envm.subprocess, "run", return_value=response) as run:
+            health = envm.env_health_check("same-name", refresh=True)
+        self.assertTrue(health["ok"])
+        self.assertEqual(run.call_args.args[0][2:4], ["-p", "/active/env"])
 
     def test_no_suffix_fallback_to_other_run_env(self) -> None:
         iid = "django__django-12184"
