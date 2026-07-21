@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serially create the canonical SWT dependency-template environments.
+"""Create the canonical SWT dependency-template environments with bounded parallelism.
 
 This intentionally reuses the same iCoRe execution specifications and
 ``ensure_icore_environment`` implementation as generation.  It does not
@@ -10,6 +10,7 @@ clone and installs the corresponding checkout there.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 import json
 import re
 import sys
@@ -33,7 +34,7 @@ from brt5.retrieval.icore_runtime import (  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Prebuild SWT dependency-template Conda environments serially."
+        description="Prebuild SWT dependency-template Conda environments concurrently."
     )
     parser.add_argument(
         "--dataset",
@@ -47,6 +48,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Concurrent template preparations (default: 4, maximum: 8).",
+    )
     parser.add_argument(
         "--list-only",
         action="store_true",
@@ -285,16 +292,91 @@ def prepare_template(
     }
 
 
+def prepare_templates(
+    templates: list[dict[str, str]],
+    work_root: Path,
+    timeout: int,
+    retries: int,
+    workers: int,
+) -> list[dict[str, Any]]:
+    """Prepare independent templates concurrently and persist ordered progress."""
+
+    results: list[dict[str, Any] | None] = [None] * len(templates)
+    future_metadata: dict[Future[dict[str, Any]], tuple[int, dict[str, str]]] = {}
+    with ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="brt5-swt-env",
+    ) as executor:
+        for index, template in enumerate(templates):
+            print(
+                f"[{index + 1:02d}/{len(templates):02d}] "
+                f"QUEUED {template['env_name']}",
+                flush=True,
+            )
+            future = executor.submit(
+                prepare_template,
+                template,
+                work_root,
+                timeout,
+                retries,
+            )
+            future_metadata[future] = (index, template)
+
+        completed = 0
+        for future in as_completed(future_metadata):
+            index, template = future_metadata[future]
+            try:
+                result = future.result()
+            except Exception as exc:  # Preserve failures outside prepare_template.
+                result = {
+                    **template,
+                    "status": "FAILED",
+                    "attempts": [],
+                    "result": {
+                        "status": "EXCEPTION",
+                        "returncode": 1,
+                        "error": repr(exc),
+                        "traceback": traceback.format_exc(),
+                    },
+                }
+            results[index] = result
+            completed += 1
+            ordered_completed = [item for item in results if item is not None]
+            write_json(work_root / "prewarm_results.json", ordered_completed)
+            print(
+                f"[{completed:02d}/{len(templates):02d}] {result['status']} "
+                f"{template['env_name']}",
+                flush=True,
+            )
+            if result["status"] != "READY":
+                diagnostic_bundle = attempt_diagnostics(result.get("attempts") or [])
+                diagnostic = diagnostic_bundle["root_cause"]
+                print(
+                    "  failure: "
+                    f"status={diagnostic.get('status', '')} "
+                    f"rc={diagnostic.get('returncode', 1)} "
+                    f"category={diagnostic.get('category', 'UNKNOWN')}",
+                    flush=True,
+                )
+                if diagnostic.get("error_line"):
+                    print(f"  error: {diagnostic['error_line']}", flush=True)
+
+    return [item for item in results if item is not None]
+
+
 def main() -> int:
     args = parse_args()
     if args.timeout <= 0 or args.retries <= 0:
         raise ValueError("--timeout and --retries must be positive")
+    if not 1 <= args.workers <= 8:
+        raise ValueError("--workers must be between 1 and 8")
     dataset = args.dataset.expanduser().resolve()
     work_root = args.work_root.expanduser().resolve()
     templates = load_unique_templates(dataset)
 
     print(f"dataset={dataset}", flush=True)
     print(f"unique_template_environments={len(templates)}", flush=True)
+    print(f"parallel_workers={args.workers}", flush=True)
     if args.list_only:
         for index, template in enumerate(templates, 1):
             print(
@@ -304,37 +386,13 @@ def main() -> int:
         return 0
 
     work_root.mkdir(parents=True, exist_ok=True)
-    results: list[dict[str, Any]] = []
-    for index, template in enumerate(templates, 1):
-        print(
-            f"[{index:02d}/{len(templates):02d}] PREPARE {template['env_name']}",
-            flush=True,
-        )
-        result = prepare_template(
-            template,
-            work_root,
-            args.timeout,
-            args.retries,
-        )
-        results.append(result)
-        write_json(work_root / "prewarm_results.json", results)
-        print(
-            f"[{index:02d}/{len(templates):02d}] {result['status']} "
-            f"{template['env_name']}",
-            flush=True,
-        )
-        if result["status"] != "READY":
-            diagnostic_bundle = attempt_diagnostics(result.get("attempts") or [])
-            diagnostic = diagnostic_bundle["root_cause"]
-            print(
-                "  failure: "
-                f"status={diagnostic['status']} "
-                f"rc={diagnostic['returncode']} "
-                f"category={diagnostic['category']}",
-                flush=True,
-            )
-            if diagnostic["error_line"]:
-                print(f"  error: {diagnostic['error_line']}", flush=True)
+    results = prepare_templates(
+        templates,
+        work_root,
+        args.timeout,
+        args.retries,
+        args.workers,
+    )
 
     ready = [item["env_name"] for item in results if item["status"] == "READY"]
     failed = [item["env_name"] for item in results if item["status"] != "READY"]
@@ -352,6 +410,7 @@ def main() -> int:
     summary = {
         "dataset": str(dataset),
         "work_root": str(work_root),
+        "workers": args.workers,
         "total": len(results),
         "ready_count": len(ready),
         "failed_count": len(failed),

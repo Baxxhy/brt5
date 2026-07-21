@@ -17,6 +17,7 @@ CONTROLLER_ENV=brt5_icore
 ENV_PREFIX=brt5_
 INSTALL_SYSTEM_PACKAGES=true
 PREWARM=true
+PREWARM_WORKERS=${BRT_PREWARM_WORKERS:-4}
 RUN_TESTS=true
 NON_INTERACTIVE=false
 REQUESTED_CONDA_EXE=${CONDA_EXE:-}
@@ -33,6 +34,7 @@ Options:
   --conda-exe PATH          Explicit path to the installed conda executable.
   --skip-system-packages    Skip apt-get (only after installing prerequisites).
   --skip-prewarm            Skip the 52 SWT template environments (not run-ready).
+  --prewarm-workers N       Concurrent SWT environment builds, 1-8 (default: 4).
   --skip-tests              Skip the local regression test suite.
   --non-interactive         Do not prompt for API keys; require a configured key.
   -h, --help                Show this help.
@@ -45,12 +47,20 @@ while [[ $# -gt 0 ]]; do
     --conda-exe=*) REQUESTED_CONDA_EXE=${1#*=}; shift ;;
     --skip-system-packages) INSTALL_SYSTEM_PACKAGES=false; shift ;;
     --skip-prewarm) PREWARM=false; shift ;;
+    --prewarm-workers) PREWARM_WORKERS=${2:?missing worker count}; shift 2 ;;
+    --prewarm-workers=*) PREWARM_WORKERS=${1#*=}; shift ;;
     --skip-tests) RUN_TESTS=false; shift ;;
     --non-interactive) NON_INTERACTIVE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [[ ! "$PREWARM_WORKERS" =~ ^[0-9]+$ ]] ||
+   (( PREWARM_WORKERS < 1 || PREWARM_WORKERS > 8 )); then
+  echo "--prewarm-workers must be an integer between 1 and 8" >&2
+  exit 2
+fi
 
 if [[ "$PROJECT_ROOT" != "$EXPECTED_PROJECT_ROOT" ]]; then
   echo "Project path mismatch." >&2
@@ -377,7 +387,8 @@ if [[ "$PREWARM" == true ]]; then
     --dataset "$PROJECT_ROOT/data/issues/swt276_issues.json" \
     --work-root "$BOOTSTRAP_ROOT/swt-template-environments" \
     --timeout 3600 \
-    --retries 3
+    --retries 3 \
+    --workers "$PREWARM_WORKERS"
 else
   echo "WARNING: --skip-prewarm was used; this server is not yet ready for a full run."
 fi
@@ -434,6 +445,7 @@ Conda:              $CONDA_EXE
 Controller Python:  $PYTHON_BIN
 Repository cache:   $REPO_ROOT
 Conda env/package storage: $CONDA_STORAGE_ROOT
+Prewarm workers:     $PREWARM_WORKERS
 Runtime environment:$RUNTIME_ENV_FILE
 Bootstrap log:      $LOG_FILE
 

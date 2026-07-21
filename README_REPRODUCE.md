@@ -35,8 +35,9 @@ bash scripts/bootstrap_fresh_swt_server.sh
 The command above is the canonical SWT setup when Conda is already installed.
 It reuses that Conda installation, creates an isolated `brt5_icore` controller
 environment under `/root/Baxxhy/BugReproduce/.brt5-conda`, prepares all 12
-benchmark repositories, serially prewarms all 52 SWT dependency-template
-environments, validates the frozen inputs, and runs local regression checks.
+benchmark repositories, prewarms all 52 SWT dependency-template environments
+with four concurrent workers by default, validates the frozen inputs, and runs
+local regression checks.
 It does not start the 276-instance experiment.
 
 The bootstrap does the following:

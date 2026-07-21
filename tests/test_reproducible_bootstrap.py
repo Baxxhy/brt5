@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -11,6 +13,7 @@ from brt5.llm import api_pool
 from brt5.scripts.prewarm_swt_environments import (
     attempt_diagnostics,
     failure_diagnostic,
+    prepare_templates,
 )
 
 
@@ -212,6 +215,56 @@ class ReproducibleBootstrapTests(unittest.TestCase):
             diagnostic["root_cause"]["category"], "SHELL_REDIRECTION"
         )
         self.assertEqual(len(diagnostic["attempt_history"]), 2)
+
+    def test_swt_template_prewarm_uses_bounded_parallelism(self) -> None:
+        templates = [
+            {
+                "env_name": f"env_{index}",
+                "instance_id": f"instance_{index}",
+                "repo": "owner/repo",
+                "version": str(index),
+                "base_commit": f"base_{index}",
+                "environment_setup_commit": f"setup_{index}",
+            }
+            for index in range(4)
+        ]
+        active = 0
+        maximum_active = 0
+        counter_lock = threading.Lock()
+
+        def fake_prepare(template, work_root, timeout, retries):
+            nonlocal active, maximum_active
+            with counter_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            time.sleep(0.05)
+            with counter_lock:
+                active -= 1
+            return {
+                **template,
+                "status": "READY",
+                "attempts": [],
+                "result": {"returncode": 0},
+            }
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch(
+            "brt5.scripts.prewarm_swt_environments.prepare_template",
+            side_effect=fake_prepare,
+        ):
+            results = prepare_templates(
+                templates,
+                Path(tmp),
+                timeout=10,
+                retries=1,
+                workers=3,
+            )
+
+        self.assertGreater(maximum_active, 1)
+        self.assertLessEqual(maximum_active, 3)
+        self.assertEqual(
+            [item["env_name"] for item in results],
+            [item["env_name"] for item in templates],
+        )
 
 
 if __name__ == "__main__":

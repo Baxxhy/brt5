@@ -13,18 +13,20 @@ INSTALLER_URL=https://repo.anaconda.com/miniconda/$INSTALLER
 INSTALLER_SHA256=498ddb7c091002e4fd76e3496d91d2d915b183d1d850bef6e060fd45e2523213
 INSTALL_SYSTEM_PACKAGES=true
 PREWARM=true
+PREWARM_WORKERS=${BRT_PREWARM_WORKERS:-4}
 
 usage() {
   cat <<'EOF'
 Usage: bash scripts/bootstrap_swt_template_envs.sh [options]
 
-Creates an isolated, pinned Conda installation and serially prebuilds all SWT
+Creates an isolated, pinned Conda installation and concurrently prebuilds SWT
 dependency-template environments using brt5's production environment code.
 
 Options:
   --conda-root PATH          Dedicated Conda prefix.
   --skip-system-packages    Skip apt-get build dependencies.
   --skip-prewarm            Prepare controller/repositories only.
+  --prewarm-workers N       Concurrent environment builds, 1-8 (default: 4).
   -h, --help                Show this help.
 EOF
 }
@@ -35,10 +37,18 @@ while [[ $# -gt 0 ]]; do
     --conda-root=*) CONDA_ROOT=${1#*=}; shift ;;
     --skip-system-packages) INSTALL_SYSTEM_PACKAGES=false; shift ;;
     --skip-prewarm) PREWARM=false; shift ;;
+    --prewarm-workers) PREWARM_WORKERS=${2:?missing worker count}; shift 2 ;;
+    --prewarm-workers=*) PREWARM_WORKERS=${1#*=}; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [[ ! "$PREWARM_WORKERS" =~ ^[0-9]+$ ]] ||
+   (( PREWARM_WORKERS < 1 || PREWARM_WORKERS > 8 )); then
+  echo "--prewarm-workers must be an integer between 1 and 8" >&2
+  exit 2
+fi
 
 if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
   echo "This pinned bootstrap currently supports Linux x86_64 only." >&2
@@ -128,7 +138,8 @@ if [[ "$PREWARM" == "true" ]]; then
     --dataset "$PROJECT_ROOT/data/issues/swt276_issues.json" \
     --work-root "$PROJECT_ROOT/.bootstrap/swt-template-environments" \
     --timeout 3600 \
-    --retries 3 || PREWARM_RC=$?
+    --retries 3 \
+    --workers "$PREWARM_WORKERS" || PREWARM_RC=$?
 fi
 
 ENV_FILE=$PROJECT_ROOT/.bootstrap/use_swt_conda.sh
