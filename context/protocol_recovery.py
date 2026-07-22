@@ -31,6 +31,91 @@ def _source(node: ast.AST, text: str) -> str:
     return ast.get_source_segment(text, node) or ""
 
 
+def _bound_names(node: ast.AST) -> set[str]:
+    return {
+        child.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+    }
+
+
+def _loaded_names(node: ast.AST) -> set[str]:
+    bound = _bound_names(node)
+    return {
+        child.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name)
+        and isinstance(child.ctx, ast.Load)
+        and child.id not in bound
+    }
+
+
+def _module_setup_context(
+    tree: ast.Module,
+    cls: ast.ClassDef | None,
+    target: ast.AST | None,
+    source: str,
+) -> list[str]:
+    """Recover module assignments and setup calls required by the seed.
+
+    Class-level expressions execute while the class is being defined.  Copying
+    ``as_view_args = {'admin_site': site}`` without the preceding module-level
+    ``site = AdminSite(...)`` produces a collection-time NameError even though
+    the retrieved seed passes in its original file.  Follow those names back
+    to module assignments and retain setup calls on the recovered objects.
+    """
+
+    references: set[str] = set()
+    if target is not None:
+        references.update(_loaded_names(target))
+    if cls is not None:
+        for base in cls.bases:
+            references.update(_loaded_names(base))
+        for decorator in cls.decorator_list:
+            references.update(_loaded_names(decorator))
+        for child in cls.body:
+            if isinstance(child, ast.Assign):
+                references.update(_loaded_names(child.value))
+            elif isinstance(child, ast.AnnAssign) and child.value is not None:
+                references.update(_loaded_names(child.value))
+
+    boundary = getattr(cls or target, "lineno", 10**9)
+    prefix = [node for node in tree.body if getattr(node, "lineno", 0) < boundary]
+    selected: set[int] = set()
+    recovered_names: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for index, node in enumerate(prefix):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                continue
+            bound = _bound_names(node)
+            if not bound.intersection(references) or index in selected:
+                continue
+            selected.add(index)
+            recovered_names.update(bound)
+            references.update(_loaded_names(node))
+            changed = True
+
+    if recovered_names:
+        for index, node in enumerate(prefix):
+            if isinstance(node, ast.Expr) and _loaded_names(node).intersection(
+                recovered_names
+            ):
+                selected.add(index)
+
+    context: list[str] = []
+    remaining = 8000
+    for index in sorted(selected):
+        text = _source(prefix[index], source).strip()
+        if not text or remaining <= 0:
+            continue
+        text = truncate_text(text, min(remaining, 2500))
+        context.append(text)
+        remaining -= len(text)
+    return context
+
+
 def _target_test(tree: ast.Module, name: str) -> tuple[ast.AST | None, ast.ClassDef | None]:
     class_name, _, function_name = name.rpartition(".")
     if not function_name:
@@ -190,6 +275,7 @@ def recover_test_protocol(
                 teardown_methods.append(_source(child, source))
             elif isinstance(child, (ast.Assign, ast.AnnAssign)):
                 class_context += "\n" + _source(child, source)
+    module_context = _module_setup_context(tree, cls, target, source)
     referenced = {node.id for node in ast.walk(target) if isinstance(node, ast.Name)} if target else set()
     directory = test_path.parent
     helpers, models = _local_symbols(directory, referenced)
@@ -222,6 +308,7 @@ def recover_test_protocol(
         fixtures=fixtures,
         pytest_marks=[item for item in marks if item],
         decorators=[item for item in decorators if item],
+        module_context=module_context,
         class_context=truncate_text(class_context, 6000),
         setup_methods=[truncate_text(item, 6000) for item in setup_methods],
         teardown_methods=[truncate_text(item, 6000) for item in teardown_methods],

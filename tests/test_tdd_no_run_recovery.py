@@ -9,6 +9,7 @@ from brt5.scripts.rerun_tdd_no_run_140 import (
     STATIC_CATEGORIES,
     audited_categories,
     generation_regeneration_ids,
+    non_executable_generation_ids,
     prepare_resume_workers,
 )
 
@@ -89,6 +90,39 @@ class TddNoRunRecoveryTests(unittest.TestCase):
             )
 
             self.assertEqual(selected, {"valid", "env", "legacy", "missing"})
+
+    def test_post_generation_gate_requires_complete_runner_protocol(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            generation = Path(raw)
+            for instance_id, status, command in (
+                ("valid", "ISSUE_ALIGNED_FAIL", "python -m pytest test.py"),
+                ("bad_status", "ENV_UNRESOLVED", ""),
+                ("missing_protocol", "PASS", ""),
+            ):
+                instance = generation / instance_id
+                instance.mkdir()
+                (instance / "final_test.py").write_text(
+                    "def test_case(): assert api()\n", encoding="utf-8"
+                )
+                (instance / "summary.json").write_text(
+                    json.dumps(
+                        {
+                            "status": status,
+                            "command": command,
+                            "candidate_repo_path": "tests/test_case.py" if command else "",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            bad = non_executable_generation_ids(
+                generation,
+                {"valid", "bad_status", "missing_protocol", "missing"},
+            )
+
+            self.assertEqual(
+                bad, {"bad_status", "missing_protocol", "missing"}
+            )
 
 
 if __name__ == "__main__":

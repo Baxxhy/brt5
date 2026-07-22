@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import re
 
 from ..core.behavior_evidence import BehaviorEvidence, expected_behavior_text
@@ -89,6 +90,76 @@ def _oracle_string_literals(tree: ast.AST) -> set[str]:
                 if isinstance(child, ast.Constant) and isinstance(child.value, str):
                     values.add(child.value.lower())
     return values
+
+
+def _assigned_names(node: ast.AST) -> set[str]:
+    return {
+        child.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+    }
+
+
+def _unresolved_class_scope_name(tree: ast.Module) -> str:
+    module_names = set(dir(builtins)) | {
+        "__file__",
+        "__name__",
+        "__package__",
+    }
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            module_names.update(alias.asname or alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module_names.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            module_names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            module_names.update(_assigned_names(node))
+
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        class_names: set[str] = set()
+        expressions: list[ast.AST] = [*node.bases, *node.decorator_list]
+        for keyword in node.keywords:
+            expressions.append(keyword.value)
+        for child in node.body:
+            value: ast.AST | None = None
+            if isinstance(child, ast.Assign):
+                value = child.value
+            elif isinstance(child, ast.AnnAssign):
+                value = child.value
+            elif isinstance(child, ast.AugAssign):
+                value = child.value
+            if value is not None:
+                expressions.append(value)
+                locally_bound = _assigned_names(value)
+                missing = sorted(
+                    {
+                        item.id
+                        for item in ast.walk(value)
+                        if isinstance(item, ast.Name)
+                        and isinstance(item.ctx, ast.Load)
+                        and item.id not in locally_bound
+                    }
+                    - module_names
+                    - class_names
+                )
+                if missing:
+                    return missing[0]
+            class_names.update(_assigned_names(child))
+        for expression in expressions[: len(node.bases) + len(node.decorator_list) + len(node.keywords)]:
+            missing = sorted(
+                {
+                    item.id
+                    for item in ast.walk(expression)
+                    if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
+                }
+                - module_names
+            )
+            if missing:
+                return missing[0]
+    return ""
 
 
 def _required_message_tokens(behavior: BehaviorEvidence) -> set[str]:
@@ -215,6 +286,14 @@ def audit_candidate(
         return (
             "不得把 ExitCode.NO_TESTS_COLLECTED 当作成功；"
             "候选必须证明至少一个目标测试真实执行。"
+        )
+
+    unresolved_class_name = _unresolved_class_scope_name(tree)
+    if unresolved_class_name:
+        return (
+            "类定义阶段引用了未恢复的模块级名称 "
+            f"{unresolved_class_name!r}；请从 ProtocolRecovery.module_context "
+            "恢复对应赋值和必要 setup 调用，或移除该类级依赖。"
         )
 
     for node in ast.walk(tree):

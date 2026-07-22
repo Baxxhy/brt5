@@ -252,6 +252,28 @@ def test_case():
 
         self.assertIn("Python 3.5", audit_candidate(behavior, candidate))
 
+    def test_generated_class_requires_recovered_module_setup(self) -> None:
+        behavior = BehaviorTarget("django__django-14752")
+        missing = '''
+class ViewTests:
+    as_view_args = {"admin_site": site}
+
+    def test_case(self):
+        assert api()
+'''
+        restored = '''
+site = object()
+
+class ViewTests:
+    as_view_args = {"admin_site": site}
+
+    def test_case(self):
+        assert api()
+'''
+
+        self.assertIn("module_context", audit_candidate(behavior, missing))
+        self.assertEqual(audit_candidate(behavior, restored), "")
+
     def test_executor_returns_real_buggy_log_without_dynamic_tracing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             result = run_command_in_conda(

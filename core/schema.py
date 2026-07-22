@@ -172,6 +172,7 @@ class ProtocolRecovery(JsonMixin):
     fixtures: list[str] = field(default_factory=list)
     pytest_marks: list[str] = field(default_factory=list)
     decorators: list[str] = field(default_factory=list)
+    module_context: list[str] = field(default_factory=list)
     class_context: str = ""
     setup_methods: list[str] = field(default_factory=list)
     teardown_methods: list[str] = field(default_factory=list)

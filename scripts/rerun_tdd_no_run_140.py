@@ -185,6 +185,32 @@ def generation_regeneration_ids(
     return regenerate
 
 
+def non_executable_generation_ids(
+    generation: Path, expected_ids: set[str]
+) -> set[str]:
+    """Return regenerated rows that still lack a formally runnable protocol."""
+
+    bad: set[str] = set()
+    for instance_id in expected_ids:
+        instance_dir = generation / instance_id
+        summary_path = instance_dir / "summary.json"
+        final_path = instance_dir / "final_test.py"
+        if not summary_path.is_file() or not final_path.is_file():
+            bad.add(instance_id)
+            continue
+        try:
+            summary = load_object(summary_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            bad.add(instance_id)
+            continue
+        if str(summary.get("status") or "") in NON_EXECUTABLE_GENERATION_STATUSES:
+            bad.add(instance_id)
+            continue
+        if not summary.get("command") or not summary.get("candidate_repo_path"):
+            bad.add(instance_id)
+    return bad
+
+
 def prepare_resume_workers(
     source_evaluation: Path,
     target_evaluation: Path,
@@ -248,6 +274,7 @@ def main() -> int:
     parser.add_argument("--behavior-target-cache", type=Path, default=None)
     parser.add_argument("--generation-workers", type=int, default=6)
     parser.add_argument("--evaluation-workers", type=int, default=6)
+    parser.add_argument("--generation-retries", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=3600)
     args = parser.parse_args()
 
@@ -347,6 +374,41 @@ def main() -> int:
         cwd=PACKAGE_ROOT,
         log_path=output_run / "logs/regeneration.log",
     )
+    generation_attempts = [
+        {
+            "attempt": 0,
+            "instance_ids": sorted(regenerate_ids),
+            "log": str(output_run / "logs/regeneration.log"),
+        }
+    ]
+    unresolved = non_executable_generation_ids(generation, regenerate_ids)
+    for attempt in range(1, max(0, args.generation_retries) + 1):
+        if not unresolved:
+            break
+        for instance_id in unresolved:
+            shutil.rmtree(generation / instance_id, ignore_errors=True)
+        retry_command = list(generation_command)
+        retry_command[retry_command.index("--instance_ids") + 1] = ",".join(
+            sorted(unresolved)
+        )
+        retry_log = output_run / f"logs/regeneration_retry_{attempt}.log"
+        run_checked(retry_command, cwd=PACKAGE_ROOT, log_path=retry_log)
+        generation_attempts.append(
+            {
+                "attempt": attempt,
+                "instance_ids": sorted(unresolved),
+                "log": str(retry_log),
+            }
+        )
+        unresolved = non_executable_generation_ids(generation, regenerate_ids)
+    manifest["generation_attempts"] = generation_attempts
+    manifest["unresolved_after_generation"] = sorted(unresolved)
+    write_object(output_run / "recovery_manifest.json", manifest)
+    if unresolved:
+        raise RuntimeError(
+            "formal evaluation refused: regenerated rows remain non-executable: "
+            + ", ".join(sorted(unresolved))
+        )
 
     evaluation = output_run / "evaluation/formal_f2p"
     source_worker_count = prepare_resume_workers(

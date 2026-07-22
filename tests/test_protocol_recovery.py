@@ -9,6 +9,42 @@ from brt5.core.schema import BehaviorTarget, RetrievedTest
 
 
 class ProtocolRecoveryTests(unittest.TestCase):
+    def test_recovers_module_setup_used_by_class_attributes(self) -> None:
+        source = """\
+from django.contrib import admin
+from django.test import SimpleTestCase
+
+site = admin.AdminSite(name='custom')
+site.register(object)
+
+class ViewTests(SimpleTestCase):
+    as_view_args = {'admin_site': site}
+
+    def test_view(self):
+        self.assertIs(self.as_view_args['admin_site'], site)
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tests" / "views" / "tests.py"
+            path.parent.mkdir(parents=True)
+            path.write_text(source, encoding="utf-8")
+            protocol = recover_test_protocol(
+                "django__django-14752",
+                RetrievedTest(
+                    "django__django-14752",
+                    name="ViewTests.test_view",
+                    file="tests/views/tests.py",
+                    code_content=source,
+                ),
+                tmp,
+                BehaviorTarget("django__django-14752"),
+                [],
+                "django/django",
+                "4.0",
+            )
+
+        self.assertIn("site = admin.AdminSite", protocol.module_context[0])
+        self.assertTrue(any("site.register" in item for item in protocol.module_context))
+
     def test_recovers_referenced_class_helpers_recursively(self) -> None:
         source = """\
 from django.test import SimpleTestCase
