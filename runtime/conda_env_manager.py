@@ -418,6 +418,16 @@ def dependency_env_compatibility(
     cached = _DEPENDENCY_COMPAT_CACHE.get((env_name, expectation_key))
     if cached is not None:
         return {**cached, "cache_hit": True}
+    inventory = conda_env_inventory(refresh=refresh)
+    env_path = inventory.get(env_name, "")
+    if not env_path:
+        return {
+            "ok": False,
+            "category": "ENV_NOT_FOUND",
+            "env_name": env_name,
+            "env_path": "",
+            "reason": "environment is absent from active Conda envs_dirs",
+        }
     script = """
 import json
 import os
@@ -586,7 +596,7 @@ print(json.dumps({
     )
     try:
         proc = subprocess.run(
-            [CONDA_EXE, "run", "-n", env_name, "python", "-c", script],
+            [CONDA_EXE, "run", "-p", env_path, "python", "-c", script],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -716,6 +726,7 @@ print(json.dumps({
         "category": "" if ok else "ENV_INCOMPLETE",
         "env_name": env_name,
         "expected_python": expected_python,
+        "env_path": env_path,
         "actual_python": actual_python,
         "python_ok": python_ok,
         "expected_requirement_count": len(expected_requirements),
@@ -807,7 +818,15 @@ print(json.dumps({
 '''
     try:
         proc = subprocess.run(
-            [CONDA_EXE, "run", "-n", env_name, "python", "-c", script],
+            [
+                CONDA_EXE,
+                "run",
+                "-p",
+                inventory[env_name],
+                "python",
+                "-c",
+                script,
+            ],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1057,6 +1076,45 @@ def conda_env_inventory(refresh: bool = False, timeout: int = 30) -> dict[str, s
             envs = _parse_conda_env_list_text(proc.stdout or "")
         except Exception:
             envs = {}
+    # ``conda env list`` may include prefixes recorded in the user's global
+    # environments.txt, including environments owned by a different Conda
+    # installation.  A name from /root/miniconda3 is not necessarily
+    # addressable through the active Conda with ``conda run -n``.  Keep only
+    # prefixes that the active Conda declares in its own envs_dirs, plus base.
+    if envs:
+        try:
+            info_proc = subprocess.run(
+                [CONDA_EXE, "info", "--json"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+                check=False,
+            )
+            info = json.loads(info_proc.stdout or "{}")
+            root_prefix = Path(str(info.get("root_prefix") or "")).expanduser()
+            allowed_env_dirs = {
+                Path(str(path)).expanduser().resolve()
+                for path in (info.get("envs_dirs") or [])
+                if str(path or "").strip()
+            }
+            resolved_root = root_prefix.resolve() if str(root_prefix) else None
+            if allowed_env_dirs:
+                envs = {
+                    name: path
+                    for name, path in envs.items()
+                    if (
+                        Path(path).expanduser().resolve().parent in allowed_env_dirs
+                        or (
+                            resolved_root is not None
+                            and Path(path).expanduser().resolve() == resolved_root
+                        )
+                    )
+                }
+        except Exception:
+            # Older Conda clients may not expose envs_dirs in JSON. Preserve
+            # their historical behavior rather than hiding every environment.
+            pass
     _INVENTORY_CACHE[cache_key] = (time.time(), dict(envs))
     return envs
 
@@ -1084,8 +1142,8 @@ def env_health_check(env_name: str, timeout: int = 60, refresh: bool = False) ->
         [
             CONDA_EXE,
             "run",
-            "-n",
-            env_name,
+            "-p",
+            env_path,
             "python",
             "-c",
             (
