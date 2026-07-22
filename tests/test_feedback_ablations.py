@@ -381,6 +381,8 @@ class FeedbackAblationTests(unittest.TestCase):
                 code="def test_brt():\n    assert False\n",
                 candidate_file_path=str(candidate_path),
                 candidate_repo_path="tests/test_brt.py",
+                pytest_nodeid="tests/test_brt.py",
+                command="python -m pytest tests/test_brt.py::test_brt",
             )
 
         execution_values = executions or [
@@ -539,6 +541,9 @@ class FeedbackAblationTests(unittest.TestCase):
         )
         self.addCleanup(temp.cleanup)
         self.assertEqual(result.status, "ENV_UNRESOLVED")
+        self.assertTrue(result.command)
+        self.assertTrue(result.candidate_repo_path)
+        self.assertTrue(result.selector)
         repair.assert_not_called()
         dependency.assert_not_called()
         self.assertEqual(result.repair_route_counts["environment"], 0)

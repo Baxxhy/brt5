@@ -96,6 +96,7 @@ class TddNoRunRecoveryTests(unittest.TestCase):
             generation = Path(raw)
             for instance_id, status, command in (
                 ("valid", "ISSUE_ALIGNED_FAIL", "python -m pytest test.py"),
+                ("replayable_setup_failure", "ENV_UNRESOLVED", "python -m pytest test.py"),
                 ("bad_status", "ENV_UNRESOLVED", ""),
                 ("missing_protocol", "PASS", ""),
             ):
@@ -117,7 +118,13 @@ class TddNoRunRecoveryTests(unittest.TestCase):
 
             bad = non_executable_generation_ids(
                 generation,
-                {"valid", "bad_status", "missing_protocol", "missing"},
+                {
+                    "valid",
+                    "replayable_setup_failure",
+                    "bad_status",
+                    "missing_protocol",
+                    "missing",
+                },
             )
 
             self.assertEqual(

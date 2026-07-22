@@ -1528,6 +1528,8 @@ def run_instance_pipeline(
         ):
             final_code = candidate.code
             write_text(str(Path(output_dir) / "final_test.py"), final_code)
+            candidate_selector = first_test_selector(final_code)
+            placement_dir = str(Path(candidate.candidate_repo_path).parent)
             result = FinalResult(
                 instance_id=context.instance_id,
                 status="ENV_UNRESOLVED",
@@ -1565,6 +1567,13 @@ def run_instance_pipeline(
                 selected_seed_index=0,
                 seed_attempts_count=len(seed_attempts),
                 seed_attempts_summary=seed_attempts,
+                candidate_repo_path=candidate.candidate_repo_path,
+                pytest_nodeid=candidate.pytest_nodeid,
+                command=candidate.command,
+                direct_test_repo_path_hint=candidate.candidate_repo_path,
+                placement_dir=placement_dir,
+                runner_kind=context.repo.split("/")[-1],
+                selector=candidate_selector,
             )
             result.save_json(str(Path(output_dir) / "summary.json"))
             return result

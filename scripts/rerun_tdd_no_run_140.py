@@ -188,7 +188,14 @@ def generation_regeneration_ids(
 def non_executable_generation_ids(
     generation: Path, expected_ids: set[str]
 ) -> set[str]:
-    """Return regenerated rows that still lack a formally runnable protocol."""
+    """Return regenerated rows that still lack a formally replayable protocol.
+
+    A generated test may legitimately end the buggy-side feedback loop with a
+    setup or collection failure caused by the test itself.  Formal evaluation
+    must replay and count that result instead of repeatedly regenerating it.
+    Worktree/environment preparation failures still fail this gate because
+    they do not carry a candidate path and runner command.
+    """
 
     bad: set[str] = set()
     for instance_id in expected_ids:
@@ -201,9 +208,6 @@ def non_executable_generation_ids(
         try:
             summary = load_object(summary_path)
         except (OSError, ValueError, json.JSONDecodeError):
-            bad.add(instance_id)
-            continue
-        if str(summary.get("status") or "") in NON_EXECUTABLE_GENERATION_STATUSES:
             bad.add(instance_id)
             continue
         if not summary.get("command") or not summary.get("candidate_repo_path"):
