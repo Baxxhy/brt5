@@ -297,6 +297,32 @@ class MutationPlannerTests(unittest.TestCase):
         self.assertNotIn('"expected_behavior"', output_contract)
         self.assertNotIn('"oracle_strategy"', output_contract)
 
+    def test_planner_prompt_truncates_oversized_retrieval_context(self) -> None:
+        response = json.dumps({"status": "ABSTAIN", "steps": []})
+        llm = _PlannerLLM(response=response)
+        oversized_source = [
+            RetrievedCode(
+                "demo__repo-1",
+                obj_name="target_api",
+                path="pkg/mod.py",
+                code_content="def target_api(value): return value\n" * 30_000,
+            )
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            build_mutation_plan(
+                "demo__repo-1",
+                0,
+                self.behavior,
+                self.host,
+                self.protocol,
+                llm,
+                tmp,
+                related_source=oversized_source,
+                related_test=self.seed,
+            )
+
+        self.assertLess(len(llm.prompts[0]), 250_000)
+
     def test_trigger_repair_assertion_change_is_a_violation(self) -> None:
         plan = MutationPlan(
             "demo__repo-1",

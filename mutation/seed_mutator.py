@@ -17,7 +17,7 @@ from ..core.schema import (
     RetrievedTest,
 )
 from ..io.io_utils import format_code_context
-from ..core.utils import extract_json_object, safe_json_dump, write_text
+from ..core.utils import extract_json_object, safe_json_dump, truncate_text, write_text
 from ..validation.mutation_plan_validator import validate_mutation_plan
 
 
@@ -27,6 +27,22 @@ ALLOWED_MUTATION_OPS = {
     "CONFIG_MUTATION", "MOCK_BEHAVIOR_MUTATION", "LIFECYCLE_TRIGGER",
     "SERIALIZATION_TRIGGER", "WARNING_LOG_TRIGGER",
 }
+
+MAX_PROMPT_BEHAVIOR_CHARS = 30_000
+MAX_PROMPT_HOST_CHARS = 30_000
+MAX_PROMPT_PROTOCOL_CHARS = 20_000
+MAX_PROMPT_SOURCE_CHARS = 60_000
+MAX_PROMPT_SEED_CHARS = 40_000
+MAX_PROMPT_EXECUTION_CHARS = 25_000
+MAX_PROMPT_VERIFIER_CHARS = 12_000
+
+
+def _prompt_text(value: Any, limit: int) -> str:
+    return truncate_text(str(value or ""), limit)
+
+
+def _prompt_json(value: Any, limit: int) -> str:
+    return _prompt_text(json.dumps(value, ensure_ascii=False), limit)
 
 _OP_ALIASES = {
     "OBJECT_STATE_MUTATION": "STATE_MUTATION",
@@ -233,13 +249,25 @@ def build_mutation_plan(
     source = related_source or []
     seed_code = related_test.code_content if related_test else host.seed_test_code
     prompt = SEED_MUTATION_PLAN_USER_PROMPT.format(
-        behavior_json=json.dumps(behavior.to_dict(), ensure_ascii=False),
-        host_context_json=json.dumps(host.to_dict(), ensure_ascii=False),
-        protocol_json=json.dumps(protocol.to_dict() if protocol else {}, ensure_ascii=False),
-        source_context=format_code_context(source),
-        seed_test_code=seed_code,
-        execution_feedback=execution_feedback or "无",
-        verifier_feedback=json.dumps(verifier_feedback or {}, ensure_ascii=False),
+        behavior_json=_prompt_json(
+            behavior.to_dict(), MAX_PROMPT_BEHAVIOR_CHARS
+        ),
+        host_context_json=_prompt_json(
+            host.to_dict(), MAX_PROMPT_HOST_CHARS
+        ),
+        protocol_json=_prompt_json(
+            protocol.to_dict() if protocol else {}, MAX_PROMPT_PROTOCOL_CHARS
+        ),
+        source_context=_prompt_text(
+            format_code_context(source), MAX_PROMPT_SOURCE_CHARS
+        ),
+        seed_test_code=_prompt_text(seed_code, MAX_PROMPT_SEED_CHARS),
+        execution_feedback=_prompt_text(
+            execution_feedback or "无", MAX_PROMPT_EXECUTION_CHARS
+        ),
+        verifier_feedback=_prompt_json(
+            verifier_feedback or {}, MAX_PROMPT_VERIFIER_CHARS
+        ),
     )
     prompt = render_evidence_prompt(prompt, behavior)
     prompt_path = Path(output_dir) / "prompts" / f"mutation_plan_round_{round_id}.txt"

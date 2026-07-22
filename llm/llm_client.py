@@ -150,6 +150,11 @@ class LLMClient:
             except urllib.error.HTTPError as exc:
                 body = exc.read().decode("utf-8", errors="replace")
                 last_error = RuntimeError(f"LLM HTTP {exc.code}: {body[:500]}")
+                # Malformed/oversized requests are deterministic for this
+                # payload. Rotating through the entire key pool only adds a
+                # long exponential backoff and cannot make them succeed.
+                if exc.code in {400, 404, 405, 413, 422}:
+                    break
                 if exc.code in {401, 403, 429}:
                     self._rotate_api()
                 if exc.code == 429 and attempt < max_attempts - 1:
