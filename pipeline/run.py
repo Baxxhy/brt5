@@ -78,6 +78,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_patch_rounds", type=int, default=3)
     parser.add_argument("--num_candidates", type=int, default=1)
     parser.add_argument("--instance_id", default=None)
+    parser.add_argument(
+        "--instance_ids",
+        default="",
+        help=(
+            "Comma-separated recovery subset. The full dataset is still used "
+            "to validate a frozen BehaviorTarget cache, but only these IDs are run."
+        ),
+    )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--top_code", type=int, default=DEFAULT_TOP_CODE)
@@ -270,6 +278,32 @@ def _interleave_by_conda_env(
             if buckets[env_name]:
                 scheduled.append(buckets[env_name].popleft())
     return scheduled
+
+
+def select_instance_ids(args: argparse.Namespace, issues: dict[str, dict]) -> list[str]:
+    """Select one auditable generation subset without changing cache identity."""
+
+    if args.instance_id and str(args.instance_ids or "").strip():
+        raise ValueError("--instance_id and --instance_ids are mutually exclusive")
+    if args.instance_id:
+        requested = [str(args.instance_id)]
+    elif str(args.instance_ids or "").strip():
+        requested = [
+            item.strip()
+            for item in str(args.instance_ids).split(",")
+            if item.strip()
+        ]
+        if len(requested) != len(set(requested)):
+            raise ValueError("--instance_ids contains duplicate instance IDs")
+    else:
+        requested = list(issues)
+    missing = [instance_id for instance_id in requested if instance_id not in issues]
+    if missing:
+        raise ValueError(
+            "--instance_ids contains IDs absent from the dataset: "
+            + ", ".join(missing)
+        )
+    return requested
 
 
 def _resolve_conda_env(env_name: str) -> str:
@@ -535,7 +569,10 @@ def main() -> None:
             "generation environment preflight failed; see environment_preflight.json"
         )
     issues = load_issue_data(args.instances_path)
-    ids = [args.instance_id] if args.instance_id else list(issues)
+    try:
+        ids = select_instance_ids(args, issues)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.limit:
         ids = ids[: args.limit]
     if not args.instance_id and not args.conda_env:

@@ -19,6 +19,11 @@ except ModuleNotFoundError:  # Python 3.10 compatibility.
 from pathlib import Path
 from typing import Any
 
+
+LEGACY_SYMPY_COMPAT_PATH = (
+    Path(__file__).resolve().parents[1] / "runtime" / "legacy_sympy_compat"
+)
+
 from packaging.requirements import InvalidRequirement, Requirement
 
 from .icore_exec_spec import make_exec_spec
@@ -353,14 +358,31 @@ def _clone_validated_dependency_environment(
     timeout: int,
     project_distribution: str = "",
 ) -> dict[str, Any]:
-    clone = _run_script(
+    clone_command = (
         f"{shlex.quote(CONDA_EXE)} create -n {shlex.quote(target_env)} "
-        f"--clone {shlex.quote(source_env)} -y",
-        cwd,
-        max(timeout, 1800),
+        f"--clone {shlex.quote(source_env)} -y"
     )
+    clone = _run_script(clone_command, cwd, max(timeout, 1800))
+    clone_attempts = [clone]
+    retry_cleanup: dict[str, Any] = {}
     if clone.get("returncode") != 0:
-        return {"returncode": clone.get("returncode", 1), "clone": clone}
+        # Large scientific environments can exceed the first clone window
+        # when several workers contend for the package cache.  A timed-out or
+        # partial target must be removed before one bounded, longer retry;
+        # otherwise Conda reports a misleading "prefix already exists" error.
+        retry_cleanup = _remove_environment(
+            target_env, cwd, max(timeout, 900)
+        )
+        retry = _run_script(clone_command, cwd, max(timeout * 2, 3600))
+        clone_attempts.append(retry)
+        if retry.get("returncode") != 0:
+            return {
+                "returncode": retry.get("returncode", 1),
+                "clone": retry,
+                "clone_attempts": clone_attempts,
+                "retry_cleanup": retry_cleanup,
+            }
+        clone = retry
     scrub = _scrub_cloned_editable_installs(
         target_env,
         cwd,
@@ -375,7 +397,13 @@ def _clone_validated_dependency_environment(
             "editable_scrub": scrub,
             "cleanup": cleanup,
         }
-    return {"returncode": 0, "clone": clone, "editable_scrub": scrub}
+    return {
+        "returncode": 0,
+        "clone": clone,
+        "clone_attempts": clone_attempts,
+        "retry_cleanup": retry_cleanup,
+        "editable_scrub": scrub,
+    }
 
 
 def _restore_runtime_dependency_contract(
@@ -1144,6 +1172,7 @@ def icore_setup_command(spec: Any, repo_path: str = "") -> str:
     install = spec.install
     commands = list(install.get("pre_install", []))
     is_matplotlib = getattr(spec, "repo", "") == "matplotlib/matplotlib"
+    is_sphinx = getattr(spec, "repo", "") == "sphinx-doc/sphinx"
     is_legacy_astropy = (
         getattr(spec, "repo", "") == "astropy/astropy"
         and str(getattr(spec, "version", "")).startswith("1.3")
@@ -1175,6 +1204,14 @@ def icore_setup_command(spec: Any, repo_path: str = "") -> str:
         commands.append(
             "python -m pip install --force-reinstall 'setuptools==65.5.1'"
         )
+        # The requirements snapshots for these releases contain Python
+        # packages but not the native FreeType headers used by build_ext.
+        # Install them only when absent, and only in the disposable per-instance
+        # clone (the immutable dependency template remains untouched).
+        commands.append(
+            "test -f \"$CONDA_PREFIX/include/freetype2/ft2build.h\" || "
+            "conda install -y -c conda-forge freetype pkg-config"
+        )
     if repo_path and "--no-build-isolation" in str(install.get("install", "")):
         build_deps = _build_dependency_command(repo_path)
         if build_deps:
@@ -1183,6 +1220,13 @@ def icore_setup_command(spec: Any, repo_path: str = "") -> str:
         runtime_deps = _project_runtime_dependency_command(repo_path)
         if runtime_deps:
             commands.append(runtime_deps)
+    if is_sphinx:
+        # Inheritance-diagram tests are otherwise reported as a successful
+        # all-skipped run when the Graphviz executable is absent.
+        commands.append(
+            "command -v dot >/dev/null 2>&1 || "
+            "conda install -y -c conda-forge graphviz"
+        )
     if install.get("install"):
         project_install = str(install["install"])
         if is_legacy_astropy:
@@ -1199,7 +1243,11 @@ def icore_setup_command(spec: Any, repo_path: str = "") -> str:
                     "python -m pip install --no-build-isolation",
                     1,
                 )
-            if "python -m pip install" in project_install and "--no-deps" not in project_install:
+            if (
+                "python -m pip install" in project_install
+                and "--no-deps" not in project_install
+                and not is_sphinx
+            ):
                 project_install = project_install.replace(
                     "python -m pip install",
                     "python -m pip install --no-deps",
@@ -1269,7 +1317,10 @@ def icore_test_command(
         test_name = selector.split("::")[-1] if selector else ""
         suffix = f" -k {test_name}" if test_name else ""
         return (
-            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' "
+            f"PYTHONPATH={shlex.quote(str(LEGACY_SYMPY_COMPAT_PATH))}:"
+            "${PYTHONPATH:-} "
+            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning,"
+            "ignore::DeprecationWarning' "
             f"bin/test -C {test_path}{suffix}"
         )
     raise ValueError(f"unsupported iCoRe project: {repo} version={version}")

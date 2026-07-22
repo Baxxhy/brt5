@@ -741,6 +741,49 @@ python -m pip install -r $HOME/requirements.txt
         command = icore_setup_command(spec)
         self.assertIn("python -m pip install --no-deps -e .[dev]", command)
 
+    def test_sphinx_runtime_installs_declared_test_dependencies(self) -> None:
+        spec = SimpleNamespace(
+            repo="sphinx-doc/sphinx",
+            version="5.1",
+            install={
+                "pre_install": [],
+                "install": 'python -m pip install -e ."[test]"',
+                "eval_commands": [],
+            },
+        )
+
+        command = icore_setup_command(spec)
+
+        self.assertIn('python -m pip install -e ."[test]"', command)
+        self.assertNotIn('--no-deps -e ."[test]"', command)
+        self.assertIn("conda install -y -c conda-forge graphviz", command)
+
+    def test_isolated_clone_retries_after_cleaning_partial_prefix(self) -> None:
+        failed = {"returncode": 124, "timeout": True}
+        ready = {"returncode": 0, "timeout": False}
+        with mock.patch.object(
+            icore_runtime,
+            "_run_script",
+            side_effect=[failed, ready],
+        ) as run, mock.patch.object(
+            icore_runtime,
+            "_remove_environment",
+            return_value={"returncode": 0},
+        ) as remove, mock.patch.object(
+            icore_runtime,
+            "_scrub_cloned_editable_installs",
+            return_value={"returncode": 0},
+        ):
+            result = icore_runtime._clone_validated_dependency_environment(
+                "template", "target", str(self.root), 120
+            )
+
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(len(result["clone_attempts"]), 2)
+        self.assertEqual(run.call_args_list[0].args[2], 1800)
+        self.assertEqual(run.call_args_list[1].args[2], 3600)
+        remove.assert_called_once()
+
     def test_isolated_runtime_name_changes_by_workspace_and_purpose(self) -> None:
         first = icore_runtime.isolated_runtime_env_name(
             "template", "django__django-1", str(self.root / "one"), "generation"
@@ -1005,6 +1048,8 @@ python -m pip install -r $HOME/requirements.txt
             "setuptools-scm-git-archive==1.4.1",
             spec.install["pip_packages"],
         )
+        self.assertIn("freetype2/ft2build.h", command)
+        self.assertIn("conda install -y -c conda-forge freetype pkg-config", command)
 
     def test_runtime_cleanup_never_removes_dependency_template(self) -> None:
         with mock.patch.object(

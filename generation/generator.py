@@ -44,7 +44,33 @@ from ..validation.mutation_adherence import (
     oracle_kinds,
 )
 from ..validation.semantic_guard import audit_candidate
-from ..core.utils import clean_code_block, ensure_dir, safe_json_dump, sanitize_instance_id, write_text
+from ..core.utils import (
+    clean_code_block,
+    ensure_dir,
+    safe_json_dump,
+    sanitize_instance_id,
+    truncate_text,
+    write_text,
+)
+
+
+MAX_PROMPT_BEHAVIOR_CHARS = 30_000
+MAX_PROMPT_HOST_CHARS = 30_000
+MAX_PROMPT_SOURCE_CHARS = 60_000
+MAX_PROMPT_SEED_CHARS = 40_000
+MAX_PROMPT_ISSUE_CHARS = 30_000
+MAX_PROMPT_PROTOCOL_CHARS = 20_000
+MAX_PROMPT_EXECUTION_CHARS = 25_000
+MAX_PROMPT_CANDIDATE_CHARS = 25_000
+MAX_PROMPT_FEEDBACK_CHARS = 12_000
+
+
+def _prompt_text(value: str, limit: int) -> str:
+    return truncate_text(str(value or ""), limit)
+
+
+def _prompt_json(value: Any, limit: int) -> str:
+    return _prompt_text(json.dumps(value, ensure_ascii=False), limit)
 
 
 def _source_window(path: Path, object_name: str, max_chars: int = 10000) -> tuple[str, int, int]:
@@ -349,28 +375,37 @@ def generate_candidate(
     ensure_dir(Path(output_dir) / "responses")
     safe_id = sanitize_instance_id(instance_id)
     config = (ablation_config or AblationConfig()).validate()
-    behavior_json = json.dumps(
-        behavior_prompt_payload(behavior, config), ensure_ascii=False
+    behavior_json = _prompt_json(
+        behavior_prompt_payload(behavior, config), MAX_PROMPT_BEHAVIOR_CHARS
     )
-    source_context = format_effective_source_context(
-        behavior, related_source, buggy_repo
+    source_context = _prompt_text(
+        format_effective_source_context(
+            behavior, related_source, buggy_repo
+        ),
+        MAX_PROMPT_SOURCE_CHARS,
+    )
+    host_context_json = _prompt_json(host.to_dict(), MAX_PROMPT_HOST_CHARS)
+    seed_test_code = _prompt_text(
+        related_test.code_content if related_test else host.seed_test_code,
+        MAX_PROMPT_SEED_CHARS,
     )
     user_prompt = MUTATION_GENERATION_USER_PROMPT.format(
         instance_id=instance_id,
         safe_instance_id=safe_id,
         insert_strategy=host.insert_strategy,
         behavior_json=behavior_json,
-        host_context_json=json.dumps(host.to_dict(), ensure_ascii=False),
+        host_context_json=host_context_json,
         code_context=source_context,
-        seed_test_code=(
-            related_test.code_content if related_test else host.seed_test_code
-        ),
-        feedback=feedback or "无",
+        seed_test_code=seed_test_code,
+        feedback=_prompt_text(feedback or "无", MAX_PROMPT_FEEDBACK_CHARS),
     )
     system_prompt = MUTATION_GENERATION_SYSTEM_PROMPT
     user_prompt = render_evidence_prompt(user_prompt, behavior)
     if protocol is not None:
-        user_prompt += "\n\n【必须保留的测试协议】\n" + json.dumps(protocol.to_dict(), ensure_ascii=False)
+        user_prompt += (
+            "\n\n【必须保留的测试协议】\n"
+            + _prompt_json(protocol.to_dict(), MAX_PROMPT_PROTOCOL_CHARS)
+        )
     direct_user_prompt = user_prompt
     effective_plan = (
         mutation_plan if mutation_plan is not None and mutation_plan.is_usable else None
@@ -566,30 +601,46 @@ def repair_candidate(
     issue_text: str = "",
 ) -> CandidateTest:
     config = (ablation_config or AblationConfig()).validate()
-    feedback_json = json.dumps(verifier_feedback or {}, ensure_ascii=False)
-    behavior_json = json.dumps(
-        behavior_prompt_payload(behavior, config), ensure_ascii=False
+    feedback_json = _prompt_json(
+        verifier_feedback or {}, MAX_PROMPT_FEEDBACK_CHARS
     )
-    source_context = format_effective_source_context(
-        behavior, related_source or [], buggy_repo
+    behavior_json = _prompt_json(
+        behavior_prompt_payload(behavior, config), MAX_PROMPT_BEHAVIOR_CHARS
     )
-    reference_seed_payload = host.seed_test_code
+    source_context = _prompt_text(
+        format_effective_source_context(
+            behavior, related_source or [], buggy_repo
+        ),
+        MAX_PROMPT_SOURCE_CHARS,
+    )
+    reference_seed_payload = _prompt_text(
+        host.seed_test_code, MAX_PROMPT_SEED_CHARS
+    )
+    host_context_json = _prompt_json(host.to_dict(), MAX_PROMPT_HOST_CHARS)
+    protocol_json = _prompt_json(
+        protocol.to_dict() if protocol else {}, MAX_PROMPT_PROTOCOL_CHARS
+    )
+    candidate_code = _prompt_text(
+        candidate.code, MAX_PROMPT_CANDIDATE_CHARS
+    )
+    execution_log = _prompt_text(
+        execution.stdout + "\n" + execution.stderr,
+        MAX_PROMPT_EXECUTION_CHARS,
+    )
     if focus == "generic":
         system = REPAIR_GENERIC_SYSTEM_PROMPT
         template = REPAIR_GENERIC_USER_PROMPT
         kwargs = {
-            "issue_text": issue_text,
+            "issue_text": _prompt_text(issue_text, MAX_PROMPT_ISSUE_CHARS),
             "behavior_json": behavior_json,
-            "host_context_json": json.dumps(host.to_dict(), ensure_ascii=False),
-            "protocol_json": json.dumps(
-                protocol.to_dict() if protocol else {}, ensure_ascii=False
-            ),
+            "host_context_json": host_context_json,
+            "protocol_json": protocol_json,
             "seed_test_code": reference_seed_payload,
             "code_context": source_context,
-            "candidate_code": candidate.code,
+            "candidate_code": candidate_code,
             "command": execution.command or candidate.command,
             "execution_status": execution.status,
-            "execution_log": execution.stdout + "\n" + execution.stderr,
+            "execution_log": execution_log,
             "verifier_feedback": feedback_json,
         }
     elif focus == "setup":
@@ -597,9 +648,9 @@ def repair_candidate(
         template = REPAIR_SETUP_USER_PROMPT
         kwargs = {
             "behavior_json": behavior_json,
-            "host_context_json": json.dumps(host.to_dict(), ensure_ascii=False),
-            "candidate_code": candidate.code,
-            "execution_log": execution.stdout + "\n" + execution.stderr,
+            "host_context_json": host_context_json,
+            "candidate_code": candidate_code,
+            "execution_log": execution_log,
             "verifier_feedback": feedback_json,
         }
     elif focus == "oracle":
@@ -607,8 +658,8 @@ def repair_candidate(
         template = REPAIR_ORACLE_USER_PROMPT
         kwargs = {
             "behavior_json": behavior_json,
-            "candidate_code": candidate.code,
-            "execution_log": execution.stdout + "\n" + execution.stderr,
+            "candidate_code": candidate_code,
+            "execution_log": execution_log,
             "observation_json": observation_json,
             "verifier_feedback": feedback_json,
         }
@@ -617,11 +668,11 @@ def repair_candidate(
         template = REPAIR_TRIGGER_USER_PROMPT
         kwargs = {
             "behavior_json": behavior_json,
-            "host_context_json": json.dumps(host.to_dict(), ensure_ascii=False),
+            "host_context_json": host_context_json,
             "seed_test_code": reference_seed_payload,
             "code_context": source_context,
-            "candidate_code": candidate.code,
-            "execution_log": execution.stdout + "\n" + execution.stderr,
+            "candidate_code": candidate_code,
+            "execution_log": execution_log,
             "verifier_feedback": feedback_json,
         }
     user_prompt = render_evidence_prompt(template.format(**kwargs), behavior)
@@ -631,11 +682,10 @@ def repair_candidate(
         # Generic Iteration so the comparison changes routing, not information.
         user_prompt += (
             "\n\n【所有反馈类型共享的完整证据】"
-            "\n完整 Issue：" + issue_text
+            "\n完整 Issue：" + _prompt_text(issue_text, MAX_PROMPT_ISSUE_CHARS)
             + "\nBehaviorTarget/Issue 证据：" + behavior_json
-            + "\nHostContext：" + json.dumps(host.to_dict(), ensure_ascii=False)
-            + "\nProtocolRecovery："
-            + json.dumps(protocol.to_dict() if protocol else {}, ensure_ascii=False)
+            + "\nHostContext：" + host_context_json
+            + "\nProtocolRecovery：" + protocol_json
             + "\n参考测试证据：" + reference_seed_payload
             + "\n相关源码：" + source_context
             + "\n执行命令：" + (execution.command or candidate.command)
@@ -643,7 +693,7 @@ def repair_candidate(
             + "\nVerifier 反馈：" + feedback_json
         )
     if protocol is not None:
-        user_prompt += "\n\nProtocolRecovery：" + json.dumps(protocol.to_dict(), ensure_ascii=False)
+        user_prompt += "\n\nProtocolRecovery：" + protocol_json
     guidance_plan = (
         mutation_plan if mutation_plan is not None and mutation_plan.is_usable else None
     )

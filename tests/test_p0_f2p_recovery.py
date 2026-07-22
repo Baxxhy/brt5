@@ -202,6 +202,46 @@ FAILED testing/test_brt_case.py::test_brt_case
 
         self.assertEqual(status, "ISSUE_ALIGNED_FAIL")
 
+    def test_all_skipped_or_empty_run_is_not_pass(self) -> None:
+        pytest_skip = "collected 1 item\n================ 1 skipped in 0.02s ================"
+        sympy_skip = "tests[1] case s [OK]\n0 passed, 1 skipped, in 0.02 seconds"
+        empty = "collected 0 items\nno tests ran in 0.01s"
+
+        self.assertEqual(
+            classify_execution(0, pytest_skip, "", False), "COLLECT_ERROR"
+        )
+        self.assertEqual(
+            classify_execution(0, sympy_skip, "", False), "COLLECT_ERROR"
+        )
+        self.assertEqual(
+            classify_execution(0, empty, "", False), "COLLECT_ERROR"
+        )
+        self.assertEqual(
+            classify_execution(0, "1 passed in 0.02s", "", False), "PASS"
+        )
+
+    def test_generated_test_must_not_depend_on_skip_or_image_baseline(self) -> None:
+        behavior = BehaviorTarget("demo__repo-1")
+        skipped = '''
+@pytest.mark.skipif(True, reason="optional")
+def test_case():
+    assert api()
+'''
+        image = '''
+@image_comparison(["missing_baseline"])
+def test_case():
+    render()
+'''
+        import_or_skip = '''
+def test_case():
+    pytest.importorskip("optional")
+    assert api()
+'''
+
+        self.assertIn("不得使用会跳过", audit_candidate(behavior, skipped))
+        self.assertIn("baseline", audit_candidate(behavior, image))
+        self.assertIn("importorskip", audit_candidate(behavior, import_or_skip))
+
     def test_executor_returns_real_buggy_log_without_dynamic_tracing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             result = run_command_in_conda(

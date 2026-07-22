@@ -149,6 +149,10 @@ MAP_VERSION_TO_INSTALL_DJANGO.update(
         k: {
             "python": "3.6",
             "packages": "requirements.txt",
+            # Django 3.0-3.2 templates use Python 3.6.  New psycopg2 releases
+            # no longer publish cp36 wheels and fall back to a source build
+            # requiring libpq headers, so keep the last compatible wheel line.
+            "pip_packages": ["psycopg2-binary==2.8.6"],
             "install": "python -m pip install -e .",
             "eval_commands": [
                 "sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen",
@@ -580,6 +584,13 @@ MAP_VERSION_TO_INSTALL_SYMPY = {
     for k in ["0.7", "1.0", "1.1", "1.10", "1.11", "1.12", "1.2", "1.4", "1.5", "1.6"]
     + ["1.7", "1.8", "1.9"]
 }
+# SymPy 1.5's autowrap/Cython regression genuinely requires both optional
+# runtime dependencies. Without them the generated test is an all-skipped
+# no-op rather than an F2P observation.
+MAP_VERSION_TO_INSTALL_SYMPY["1.5"]["pip_packages"] += [
+    "numpy==1.23.5",
+    "cython<3",
+]
 MAP_VERSION_TO_INSTALL_SYMPY.update(
     {
         k: {
@@ -596,6 +607,7 @@ MAP_VERSION_TO_INSTALL_PYLINT = {
         "python": "3.9",
         "packages": "requirements.txt",
         "install": "python -m pip install -e .",
+        "pip_packages": ["appdirs"],
     }
     for k in [
         "2.10",
@@ -610,7 +622,10 @@ MAP_VERSION_TO_INSTALL_PYLINT = {
         "3.0",
     ]
 }
-MAP_VERSION_TO_INSTALL_PYLINT["2.8"]["pip_packages"] = ["pyenchant==3.2"]
+MAP_VERSION_TO_INSTALL_PYLINT["2.8"]["pip_packages"] = [
+    "appdirs",
+    "pyenchant==3.2",
+]
 MAP_VERSION_TO_INSTALL_PYLINT["2.8"]["pre_install"] = [
     "sudo apt-get update && sudo apt-get install -y libenchant-2-dev hunspell-en-us"
 ]
@@ -618,7 +633,7 @@ MAP_VERSION_TO_INSTALL_PYLINT.update(
     {
         k: {
             **MAP_VERSION_TO_INSTALL_PYLINT[k],
-            "pip_packages": ["astroid==3.0.0a6", "setuptools"],
+            "pip_packages": ["appdirs", "astroid==3.0.0a6", "setuptools"],
         }
         for k in ["3.0"]
     }

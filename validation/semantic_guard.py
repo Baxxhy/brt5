@@ -211,6 +211,12 @@ def audit_candidate(
             "保留最直接复现 Issue 的一个测试，删除 baseline、对照组和备用测试。"
         )
 
+    if "NO_TESTS_COLLECTED" in code:
+        return (
+            "不得把 ExitCode.NO_TESTS_COLLECTED 当作成功；"
+            "候选必须证明至少一个目标测试真实执行。"
+        )
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             call_name = _name(node.func)
@@ -221,6 +227,12 @@ def audit_candidate(
                     "必须改用唯一的关键字文件名，例如 "
                     "pytester.makepyfile(test_brt_inner_case=content)，并让 runpytest() "
                     "显式运行该唯一文件。"
+                )
+            call_leaf = call_name.rsplit(".", 1)[-1].lower()
+            if call_leaf in {"importorskip", "symlink_or_skip"}:
+                return (
+                    f"BRT 不得调用 {call_leaf}：它可能把未执行目标路径的候选标成成功。"
+                    "请直接构造本地、确定性且可执行的输入，并用公开行为验证修复。"
                 )
             if call_name in {
                 "pytest.skip",
@@ -233,11 +245,36 @@ def audit_candidate(
             if call_name in {"pytest.raises", "raises"} and node.args:
                 if _name(node.args[0]) in {"Exception", "BaseException"}:
                     return "不得用宽泛 Exception/BaseException 作为 oracle；必须验证 Issue 指定的稳定行为。"
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(
+            node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
             for decorator in node.decorator_list:
                 name = _name(decorator.func) if isinstance(decorator, ast.Call) else _name(decorator)
-                if name.lower().endswith(".skip") or name.lower() == "skip":
-                    return "BRT 不得使用无条件 skip decorator；测试必须真实执行目标路径。"
+                leaf = name.rsplit(".", 1)[-1].lower()
+                if (
+                    leaf in {"skip", "skipif", "skipunless", "network"}
+                    or leaf.startswith("requires_")
+                ):
+                    return (
+                        "BRT 不得使用会跳过完整测试的条件/decorator；"
+                        "测试必须在基准环境中真实执行目标路径。"
+                    )
+                if leaf == "image_comparison":
+                    return (
+                        "生成测试没有随仓库提交 expected baseline 图片，不能使用 "
+                        "image_comparison。请改用数值、对象状态、路径或稳定文本片段"
+                        "验证 Issue 的公开行为。"
+                    )
+                if isinstance(decorator, ast.Call) and any(
+                    keyword.arg == "skip_on_importerror"
+                    and isinstance(keyword.value, ast.Constant)
+                    and keyword.value.value is True
+                    for keyword in decorator.keywords
+                ):
+                    return (
+                        "BRT 不得设置 skip_on_importerror=True；"
+                        "请选择基准环境可执行的 backend 或无 GUI 的公开状态验证。"
+                    )
         if isinstance(node, ast.Assert):
             if isinstance(node.test, ast.Constant) and node.test.value is True:
                 return "不得使用 assert True 或其他占位 oracle。"

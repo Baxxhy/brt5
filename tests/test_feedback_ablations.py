@@ -34,6 +34,7 @@ from brt5.pipeline.run import (
     ablation_config_from_args,
     build_parser,
     resume_matches_ablation,
+    select_instance_ids,
 )
 
 
@@ -82,6 +83,18 @@ class FeedbackAblationTests(unittest.TestCase):
     def test_multiple_disabled_components_are_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "mutually exclusive"):
             AblationConfig(mutation=False, trigger_feedback=False).validate()
+
+    def test_recovery_subset_keeps_full_dataset_identity(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            self._required_args() + ["--instance_ids", "one,three"]
+        )
+        issues = {"one": {}, "two": {}, "three": {}}
+
+        self.assertEqual(select_instance_ids(args, issues), ["one", "three"])
+        args.instance_id = "one"
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            select_instance_ids(args, issues)
 
     def test_resume_requires_exact_ablation_signature(self) -> None:
         full = AblationConfig()

@@ -26,6 +26,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from ..execution.executor import no_tests_executed
+
 from ..io.io_utils import load_issue_data
 from ..core.utils import ensure_dir, safe_json_dump, sanitize_instance_id
 from ..retrieval.icore_runtime import (
@@ -53,6 +55,9 @@ from ..runtime.conda_env_manager import (
 
 
 SWT_TRACE_PATH = Path(__file__).resolve().parent / "vendor" / "swt_trace.py"
+LEGACY_SYMPY_COMPAT_PATH = (
+    Path(__file__).resolve().parents[1] / "runtime" / "legacy_sympy_compat"
+)
 SWT_TRACE_SHA256 = "2d79a79444c267790ee3a0bf41ef018b6776a4b598f1629e57e0e47d4da8b561"
 SWT_NON_TEST_EXTENSIONS = (
     ".json",
@@ -641,7 +646,10 @@ def swt_test_framework(repo: str, version: str) -> str:
         return "tox --current-env -epy39 -v --"
     if project == "sympy":
         return (
-            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' "
+            f"PYTHONPATH={shlex.quote(str(LEGACY_SYMPY_COMPAT_PATH))}:"
+            "${PYTHONPATH:-} "
+            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning,"
+            "ignore::DeprecationWarning' "
             "bin/test -C --verbose"
         )
     raise ValueError(f"unsupported project: {repo} version={version}")
@@ -694,7 +702,16 @@ def tdd_test_command(
         label = nodeid.replace(".py", "").replace("/", ".").replace("::", ".")
         if label.startswith("tests."):
             label = label[len("tests.") :]
-        return f"{coverage_prefix}{framework} {shlex.quote(label)}"
+        # ``coverage run ./tests/runtests.py`` executes through coverage.py,
+        # so Python no longer prepends ``tests/`` to sys.path as it does when
+        # the runner script is invoked directly.  Django's
+        # ``--settings=test_sqlite`` module lives in that directory.  Preserve
+        # the benchmark runner's import contract explicitly for both covered
+        # and F2P-only TDD runs.
+        return (
+            "PYTHONPATH=tests:${PYTHONPATH:-} "
+            f"{coverage_prefix}{framework} {shlex.quote(label)}"
+        )
     if project == "sphinx":
         return f"tox --current-env -epy39 -v -- {shlex.quote(nodeid)}"
     if project == "sympy":
@@ -705,7 +722,10 @@ def tdd_test_command(
             else f" {shlex.quote(rel_file)}"
         )
         return (
-            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' "
+            f"PYTHONPATH={shlex.quote(str(LEGACY_SYMPY_COMPAT_PATH))}:"
+            "${PYTHONPATH:-} "
+            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning,"
+            "ignore::DeprecationWarning' "
             f"./bin/test -C --verbose{suffix}"
         )
     if project == "astropy" and str(version) in {
@@ -859,6 +879,10 @@ def classify_run(result: dict[str, Any]) -> dict[str, Any]:
     low = text.lower()
     if result.get("timeout"):
         status = "TIMEOUT"
+    elif result.get("returncode") == 0 and no_tests_executed(
+        result.get("stdout") or "", result.get("stderr") or ""
+    ):
+        status = "COLLECT_ERROR"
     elif result.get("returncode") == 0:
         status = "PASS"
     elif "syntaxerror" in low or "indentationerror" in low:
@@ -1363,6 +1387,58 @@ def ensure_tdd_coverage_tools(
         "installed": install.get("returncode") == 0,
         "check": check,
         "install": install,
+    }
+
+
+def ensure_tdd_optional_runtime_tools(
+    repo: str,
+    generated_code: str,
+    env_name: str,
+    repo_dir: str,
+    timeout: int,
+) -> dict[str, Any]:
+    """Provision external tools explicitly required by one generated TDD test."""
+
+    project = repo.split("/")[-1]
+    if project != "matplotlib" or not re.search(
+        r"(?:text\.usetex|usetex\s*[:=])", generated_code
+    ):
+        return {
+            "returncode": 0,
+            "status": "NOT_REQUIRED",
+            "required_tools": [],
+        }
+    check = run_shell(
+        f"{conda_activate_cmd(env_name)} && command -v latex && command -v dvipng",
+        repo_dir,
+        min(max(timeout, 120), 300),
+    )
+    if check.get("returncode") == 0:
+        return {
+            "returncode": 0,
+            "status": "AVAILABLE",
+            "required_tools": ["latex", "dvipng"],
+            "check": check,
+        }
+    install = run_shell(
+        f"{conda_activate_cmd(env_name)} && "
+        "conda install -y -c conda-forge texlive-core",
+        repo_dir,
+        max(timeout, 3600),
+    )
+    verify = run_shell(
+        f"{conda_activate_cmd(env_name)} && command -v latex && command -v dvipng",
+        repo_dir,
+        min(max(timeout, 120), 300),
+    )
+    ready = install.get("returncode") == 0 and verify.get("returncode") == 0
+    return {
+        "returncode": 0 if ready else 1,
+        "status": "INSTALLED" if ready else "INSTALL_FAILED",
+        "required_tools": ["latex", "dvipng"],
+        "check": check,
+        "install": install,
+        "verify": verify,
     }
 
 
@@ -2461,6 +2537,21 @@ def evaluate_one(
             if result["tdd_coverage_tools"].get("returncode") != 0:
                 result["success"] = False
                 result["status"] = "TDD_COVERAGE_TOOL_ERROR"
+                result["env_error_category"] = "INSTALL_FAILURE"
+                return result
+        if dataset_mode == "tdd":
+            result["tdd_optional_runtime_tools"] = (
+                ensure_tdd_optional_runtime_tools(
+                    str(issue.get("repo") or ""),
+                    code,
+                    env_name,
+                    repo_dir,
+                    timeout,
+                )
+            )
+            if result["tdd_optional_runtime_tools"].get("returncode") != 0:
+                result["success"] = False
+                result["status"] = "TDD_OPTIONAL_RUNTIME_ERROR"
                 result["env_error_category"] = "INSTALL_FAILURE"
                 return result
         baseline_paths = _git_changed_paths(repo_dir)

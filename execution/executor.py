@@ -19,6 +19,31 @@ from ..core.behavior_evidence import (
 from ..core.schema import ExecutionResult
 
 
+def no_tests_executed(stdout: str, stderr: str = "") -> bool:
+    """Return true when a nominally successful runner executed no test body."""
+
+    low = f"{stdout}\n{stderr}".lower()
+    if any(
+        marker in low
+        for marker in ("no tests ran", "collected 0 items", "no tests collected")
+    ):
+        return True
+    # pytest, tox-wrapped pytest, and SymPy all report an explicit passed count
+    # when at least one test body ran successfully.  A zero-success run whose
+    # only terminal outcome is skip must not qualify as PASS/F2P.
+    if re.search(r"\b[1-9]\d*\s+passed\b", low):
+        return False
+    if re.search(r"\b[1-9]\d*\s+skipped\b", low):
+        return True
+    unittest_run = re.search(r"ran\s+(\d+)\s+tests?\b", low)
+    unittest_skipped = re.search(r"ok\s*\(skipped=(\d+)\)", low)
+    return bool(
+        unittest_run
+        and unittest_skipped
+        and int(unittest_run.group(1)) == int(unittest_skipped.group(1))
+    )
+
+
 def run_subprocess_tree(
     command: str | list[str],
     cwd: str,
@@ -97,6 +122,8 @@ def classify_execution(returncode: int, stdout: str, stderr: str, timeout: bool,
     low = text.lower()
     if timeout:
         return "TIMEOUT"
+    if returncode == 0 and no_tests_executed(stdout, stderr):
+        return "COLLECT_ERROR"
     if returncode == 0:
         return "PASS"
     if "syntaxerror" in low or "indentationerror" in low:

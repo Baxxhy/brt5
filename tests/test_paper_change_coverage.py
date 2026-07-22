@@ -257,12 +257,15 @@ class PaperChangeCoverageTests(unittest.TestCase):
             ),
             "tox --current-env -epy39 -v -- tests/test_brt.py",
         )
-        self.assertEqual(
-            build_test_command(
-                "sympy/sympy", "1.11", "sympy/tests/test_brt.py", ""
-            ),
-            "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' "
-            "bin/test -C --verbose sympy/tests/test_brt.py",
+        sympy_command = build_test_command(
+            "sympy/sympy", "1.11", "sympy/tests/test_brt.py", ""
+        )
+        self.assertIn("runtime/legacy_sympy_compat", sympy_command)
+        self.assertIn("ignore::DeprecationWarning", sympy_command)
+        self.assertTrue(
+            sympy_command.endswith(
+                "bin/test -C --verbose sympy/tests/test_brt.py"
+            )
         )
         self.assertEqual(
             build_test_command(

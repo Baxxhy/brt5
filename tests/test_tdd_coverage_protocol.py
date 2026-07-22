@@ -7,10 +7,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from brt5.evaluation.direct_eval import (
     aggregate_tdd_bench_score,
     combine_tdd_coverage,
+    ensure_tdd_optional_runtime_tools,
     tdd_changed_lines,
     tdd_test_command,
     parse_tdd_coverage_json,
@@ -152,7 +154,8 @@ class TddCoverageProtocolTests(unittest.TestCase):
                 "",
                 with_coverage=True,
             ),
-            "python -m coverage run ./tests/runtests.py --verbosity 2 "
+            "PYTHONPATH=tests:${PYTHONPATH:-} python -m coverage run "
+            "./tests/runtests.py --verbosity 2 "
             "--settings=test_sqlite --parallel 1 migrations.test_brt",
         )
         self.assertEqual(
@@ -175,6 +178,32 @@ class TddCoverageProtocolTests(unittest.TestCase):
                 with_coverage=True,
             ),
             "tox --current-env -epy39 -v -- tests/test_brt.py",
+        )
+
+    def test_usetex_dependency_is_installed_only_for_matching_tdd_test(self) -> None:
+        with mock.patch(
+            "brt5.evaluation.direct_eval.run_shell",
+            side_effect=[
+                {"returncode": 1},
+                {"returncode": 0},
+                {"returncode": 0},
+            ],
+        ) as run:
+            result = ensure_tdd_optional_runtime_tools(
+                "matplotlib/matplotlib",
+                'matplotlib.rcParams["text.usetex"] = True',
+                "runtime",
+                "/tmp/repo",
+                120,
+            )
+
+        self.assertEqual(result["status"], "INSTALLED")
+        self.assertIn("texlive-core", run.call_args_list[1].args[0])
+        self.assertEqual(
+            ensure_tdd_optional_runtime_tools(
+                "django/django", "def test_x(): pass", "runtime", "/tmp", 120
+            )["status"],
+            "NOT_REQUIRED",
         )
 
     def test_tdd_output_does_not_emit_swt_delta_files(self) -> None:
