@@ -50,6 +50,23 @@ class CondaEnvManagerTests(unittest.TestCase):
         envm._MANIFEST_CACHE.clear()
         self.tmp.cleanup()
 
+    def test_run_script_preserves_validated_environment_without_login_profile(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="ok", stderr="")
+        with mock.patch.object(
+            icore_runtime,
+            "run_subprocess_tree",
+            return_value=completed,
+        ) as runner:
+            result = icore_runtime._run_script("printf ok", str(self.root), 30)
+
+        runner.assert_called_once_with(
+            ["bash", "-c", "printf ok"],
+            cwd=str(self.root),
+            timeout=30,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["stdout"], "ok")
+
     def patch_envs(self, inventory: dict[str, str], unhealthy: set[str] | None = None):
         unhealthy = unhealthy or set()
 

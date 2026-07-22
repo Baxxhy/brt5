@@ -179,6 +179,20 @@ class ReproducibleBootstrapTests(unittest.TestCase):
         self.assertEqual(diagnostic["category"], "SHELL_REDIRECTION")
         self.assertEqual(diagnostic["returncode"], 1)
 
+    def test_swt_failure_diagnostic_identifies_proxy_configuration(self) -> None:
+        diagnostic = failure_diagnostic(
+            {
+                "status": "CREATE_ERROR",
+                "returncode": 1,
+                "stderr": (
+                    "ProxyError: Conda cannot proceed due to an error in your "
+                    "proxy configuration."
+                ),
+            }
+        )
+        self.assertEqual(diagnostic["category"], "PROXY_CONFIGURATION")
+        self.assertEqual(diagnostic["returncode"], 1)
+
     def test_swt_failure_diagnostic_prefers_health_category(self) -> None:
         diagnostic = failure_diagnostic(
             {

@@ -81,7 +81,11 @@ def conda_env_exists(env_name: str) -> bool:
 def _run_script(script: str, cwd: str, timeout: int) -> dict[str, Any]:
     try:
         proc = run_subprocess_tree(
-            ["bash", "-lc", script],
+            # The caller has already established the validated Conda, channel,
+            # cache, and network environment.  A login shell would source the
+            # machine's profile again; on HPC systems that can print account
+            # banners and, more importantly, replace working proxy settings.
+            ["bash", "-c", script],
             cwd=cwd,
             timeout=timeout,
         )

@@ -144,6 +144,8 @@ def failure_diagnostic(result: dict[str, Any]) -> dict[str, Any]:
             category = "DISK_FULL"
         elif "numpy.dtype size changed" in lowered:
             category = "BINARY_ABI_MISMATCH"
+        elif "proxyerror" in lowered or "proxy configuration" in lowered:
+            category = "PROXY_CONFIGURATION"
         elif "packagesnotfounderror" in lowered or "resolvepackagenotfound" in lowered:
             category = "CONDA_SOLVER"
         elif (
