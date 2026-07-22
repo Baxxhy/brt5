@@ -428,6 +428,12 @@ MAP_VERSION_TO_INSTALL_MATPLOTLIB.update(
             "pip_packages": [
                 "pytest",
                 "ipython",
+                "numpy==1.24.4",
+                "pillow==9.5.0",
+                "cycler==0.11.0",
+                "kiwisolver==1.4.5",
+                "pyparsing==2.4.7",
+                "python-dateutil==2.9.0.post0",
                 "setuptools==65.5.1",
                 # Matplotlib 3.1-3.4 reads ``__version__`` through
                 # setuptools_scm when running from a Git checkout.  setup.py
@@ -451,7 +457,15 @@ MAP_VERSION_TO_INSTALL_MATPLOTLIB.update(
                 "export CFLAGS=\"-I$CONDA_PREFIX/include -I$CONDA_PREFIX/include/freetype2 -fpermissive\" && "
                 "export CXXFLAGS=\"-I$CONDA_PREFIX/include -I$CONDA_PREFIX/include/freetype2 -fpermissive\""
             ],
-            "pip_packages": ["pytest"],
+            "pip_packages": [
+                "pytest",
+                "numpy==1.21.6",
+                "pillow==9.5.0",
+                "cycler==0.11.0",
+                "kiwisolver==1.4.5",
+                "pyparsing==2.4.7",
+                "python-dateutil==2.9.0.post0",
+            ],
         }
         for k in ["3.0"]
     }

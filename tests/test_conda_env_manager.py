@@ -759,6 +759,13 @@ python -m pip install -r $HOME/requirements.txt
         self.assertIn("conda install -y -c conda-forge graphviz", command)
         self.assertIn("fi && python -m pip install", command)
 
+    def test_legacy_matplotlib_runtime_dependencies_are_explicit(self) -> None:
+        for version in ("3.0", "3.1"):
+            packages = MAP_VERSION_TO_INSTALL_MATPLOTLIB[version]["pip_packages"]
+            self.assertIn("kiwisolver==1.4.5", packages)
+            self.assertIn("pyparsing==2.4.7", packages)
+            self.assertTrue(any(item.startswith("numpy==") for item in packages))
+
     def test_isolated_clone_retries_after_cleaning_partial_prefix(self) -> None:
         failed = {"returncode": 124, "timeout": True}
         ready = {"returncode": 0, "timeout": False}
