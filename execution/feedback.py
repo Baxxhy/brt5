@@ -584,9 +584,14 @@ def _best_checkpoint_from_summary(seed_dir: Path) -> dict[str, Any]:
 
 
 def _seed_result_score(summary: dict[str, Any], checkpoint: dict[str, Any]) -> int:
+    status = str(summary.get("status") or "")
+    # A checkpoint can predate a later setup/collection failure.  Such a seed
+    # is not replayable by formal evaluation and must never tie with an
+    # executable seed merely because the earlier checkpoint had a score.
+    if status in {"ERROR", "SETUP_ERROR", "ENV_UNRESOLVED"}:
+        return -1000
     if checkpoint:
         return int(checkpoint.get("score") or 0)
-    status = str(summary.get("status") or "")
     if status == "ISSUE_ALIGNED_FAIL" or summary.get("strict_failure_class") == "issue_aligned":
         return 200
     buggy = summary.get("buggy_execution") if isinstance(summary.get("buggy_execution"), dict) else {}

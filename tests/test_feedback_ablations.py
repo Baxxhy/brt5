@@ -25,6 +25,7 @@ from brt5.core.schema import (
 )
 from brt5.execution.feedback import (
     _repair_focus,
+    _seed_result_score,
     _selected_protocol_result_fields,
     _uses_adaptive_seed_pipelines,
     run_instance_pipeline,
@@ -238,6 +239,18 @@ class FeedbackAblationTests(unittest.TestCase):
             fields["command"],
             "python -m pytest tests/test_brt.py::test_brt",
         )
+
+    def test_adaptive_top3_never_prefers_unresolved_seed_checkpoint(self) -> None:
+        unresolved = _seed_result_score(
+            {"status": "ENV_UNRESOLVED"},
+            {"score": 200, "round_id": 0},
+        )
+        executable = _seed_result_score(
+            {"status": "PASS", "buggy_execution": {"returncode": 0}},
+            {"score": 10, "round_id": 0},
+        )
+
+        self.assertLess(unresolved, executable)
 
     def test_mutation_ablation_does_not_reuse_legacy_joint_signature(self) -> None:
         config = AblationConfig(mutation=False)
