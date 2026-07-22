@@ -9,6 +9,26 @@ from brt5.llm.llm_client import LLMClient
 
 
 class LLMClientTests(unittest.TestCase):
+    def setUp(self) -> None:
+        LLMClient._key_indices.clear()
+
+    def test_gpt_provider_uses_only_gpt_pool_and_model(self) -> None:
+        pools = {
+            "deepseek": [("deepseek-key", "https://deepseek.invalid", "deepseek-v3")],
+            "gpt": [("gpt-key", "https://gpt.invalid/v1", "gpt-5.4-mini")],
+        }
+        with patch(
+            "brt5.llm.llm_client.configured_apis",
+            side_effect=lambda provider=None: pools.get(provider, []),
+        ) as configured:
+            client = LLMClient(provider="gpt", model="gpt-5.4-mini")
+
+        self.assertEqual(client.provider, "gpt")
+        self.assertEqual(client.api_key, "gpt-key")
+        self.assertEqual(client.base_url, "https://gpt.invalid/v1")
+        self.assertEqual(client.model, "gpt-5.4-mini")
+        configured.assert_called_with("gpt")
+
     def test_non_retryable_http_error_stops_after_one_request(self) -> None:
         client = LLMClient(
             api_key="test-key",

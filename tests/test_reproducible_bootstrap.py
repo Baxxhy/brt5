@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -21,6 +23,83 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReproducibleBootstrapTests(unittest.TestCase):
+    def test_api_pool_filters_deepseek_and_gpt_entries(self) -> None:
+        payload = {
+            "apis": [
+                {
+                    "provider": "deepseek",
+                    "api_key": "deepseek-key",
+                    "base_url": "https://deepseek.invalid",
+                    "model": "deepseek-v3",
+                },
+                {
+                    "provider": "gpt",
+                    "api_key": "gpt-key",
+                    "base_url": "https://gpt.invalid/v1",
+                    "model": "gpt-5.4-mini",
+                },
+            ]
+        }
+        with mock.patch.dict(
+            os.environ,
+            {
+                "BRT_API_POOL_JSON": json.dumps(payload),
+                "BRT_API_POOL_FILE": "/does/not/exist",
+            },
+            clear=True,
+        ), mock.patch.object(api_pool, "_configured_file", return_value=None):
+            deepseek = api_pool.configured_apis("deepseek")
+            gpt = api_pool.configured_apis("gpt")
+        self.assertEqual(deepseek[0][0], "deepseek-key")
+        self.assertEqual(gpt[0], ("gpt-key", "https://gpt.invalid/v1", "gpt-5.4-mini"))
+
+    def test_configuring_gpt_preserves_existing_deepseek_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "api_pool.json"
+            output.write_text(
+                json.dumps(
+                    {
+                        "apis": [
+                            {
+                                "name": "deepseek-1",
+                                "provider": "deepseek",
+                                "api_key": "deepseek-key",
+                                "base_url": "https://deepseek.invalid",
+                                "model": "deepseek-v3",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = {
+                **os.environ,
+                "GPT_API_KEY": "gpt-key",
+                "GPT_BASE_URL": "https://gpt.invalid/v1",
+                "GPT_MODEL": "gpt-5.4-mini",
+            }
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(PROJECT_ROOT / "scripts" / "configure_api_keys.py"),
+                    "--output",
+                    str(output),
+                    "--provider",
+                    "gpt",
+                    "--from-env",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            payload = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            [_entry["provider"] for _entry in payload["apis"]],
+            ["deepseek", "gpt"],
+        )
+
     def test_api_pool_json_environment_supports_multiple_keys(self) -> None:
         payload = {
             "apis": [
@@ -129,6 +208,8 @@ class ReproducibleBootstrapTests(unittest.TestCase):
         self.assertIn('PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}', launcher)
         self.assertIn('REPO_ROOT=${REPO_ROOT:-$PACKAGE_ROOT/swe_repos}', launcher)
         self.assertNotIn("PROJECT_ROOT=${PROJECT_ROOT:-/root/Baxxhy", launcher)
+        self.assertIn('--model {deepseek|gpt}', launcher)
+        self.assertIn('--llm-provider "$LLM_PROVIDER"', launcher)
 
     def test_fresh_swt_bootstrap_reuses_existing_conda_and_prewarms(self) -> None:
         bootstrap = (

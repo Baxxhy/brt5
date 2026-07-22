@@ -18,6 +18,9 @@ Usage: bash scripts/run_p0_simple_llm_selector_full.sh --dataset {swt|tdd} [abla
 
 Options:
   --dataset {swt|tdd}  Select the experiment dataset (default: swt).
+  --model {deepseek|gpt}
+                       Select the isolated LLM/API pool (default: deepseek).
+                       gpt resolves to gpt-5.4-mini by default.
   --behavior-target {on|off}
                        Enable BehaviorTarget (default: on). Use off for the
                        "w/o Behavior Target" ablation; IssueRewrite is skipped.
@@ -44,6 +47,7 @@ EOF
 }
 
 DATASET_MODE=${DATASET_MODE:-swt}
+LLM_PROVIDER=${LLM_PROVIDER:-deepseek}
 ENABLE_BEHAVIOR_TARGET=${ENABLE_BEHAVIOR_TARGET:-true}
 ENABLE_MUTATION=${ENABLE_MUTATION:-true}
 ENABLE_SPECIALIZED_FEEDBACK=${ENABLE_SPECIALIZED_FEEDBACK:-true}
@@ -73,6 +77,19 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dataset=*)
       DATASET_MODE=${1#*=}
+      shift
+      ;;
+    --model)
+      if [[ $# -lt 2 ]]; then
+        echo "--model requires deepseek or gpt" >&2
+        usage >&2
+        exit 2
+      fi
+      LLM_PROVIDER=$2
+      shift 2
+      ;;
+    --model=*)
+      LLM_PROVIDER=${1#*=}
       shift
       ;;
     --behavior-target)
@@ -166,6 +183,14 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "$LLM_PROVIDER" in
+  deepseek|gpt) ;;
+  *)
+    echo "invalid --model value '$LLM_PROVIDER': expected deepseek or gpt" >&2
+    exit 2
+    ;;
+esac
 
 for SWITCH_NAME in \
   ENABLE_BEHAVIOR_TARGET ENABLE_MUTATION ENABLE_SPECIALIZED_FEEDBACK \
@@ -278,7 +303,14 @@ GOLD_DATASET=${GOLD_DATASET:-$INSTANCES_PATH}
 CODE_RETRIEVAL=${CODE_RETRIEVAL:-$PROJECT_ROOT/retrieval_results/code/code_retrieval_results_gpt.json}
 TEST_RETRIEVAL=${TEST_RETRIEVAL:-$PROJECT_ROOT/retrieval_results/test/icore/gpt/related_tests.json}
 REPO_ROOT=${REPO_ROOT:-$PACKAGE_ROOT/swe_repos}
-MODEL=${MODEL:-deepseek-v3}
+if [[ -n "${BRT_MODEL_ID:-}" ]]; then
+  MODEL=$BRT_MODEL_ID
+elif [[ "$LLM_PROVIDER" == "gpt" ]]; then
+  MODEL=${GPT_MODEL:-gpt-5.4-mini}
+else
+  MODEL=${MODEL:-${DEEPSEEK_MODEL:-deepseek-v3}}
+fi
+export BRT_LLM_PROVIDER=$LLM_PROVIDER
 ISSUE_WORKERS=${ISSUE_WORKERS:-6}
 GENERATION_WORKERS=${GENERATION_WORKERS:-6}
 EVALUATION_WORKERS=${EVALUATION_WORKERS:-6}
@@ -300,15 +332,17 @@ if [[ "$DATASET_MODE" == "tdd" ]] &&
   exit 2
 fi
 
-API_POOL_SIZE=$("$PYTHON_BIN" - <<'PY'
+API_POOL_SIZE=$("$PYTHON_BIN" - "$LLM_PROVIDER" <<'PY'
+import sys
 from brt5.llm.api_pool import configured_apis
-print(len(configured_apis()))
+print(len(configured_apis(sys.argv[1])))
 PY
 )
 if [[ "$API_POOL_SIZE" -eq 0 ]]; then
-  echo "No API key is configured. Run: $PYTHON_BIN $PROJECT_ROOT/scripts/configure_api_keys.py" >&2
+  echo "No $LLM_PROVIDER API key is configured. Run: $PYTHON_BIN $PROJECT_ROOT/scripts/configure_api_keys.py --provider $LLM_PROVIDER" >&2
   exit 3
 fi
+echo "api_pool_provider=$LLM_PROVIDER"
 echo "api_pool_entries=$API_POOL_SIZE"
 
 DATASET_SIZE=$("$PYTHON_BIN" - "$INSTANCES_PATH" <<'PY'
@@ -396,6 +430,8 @@ if sys.argv[2]:
     behavior_source = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 config = {
     "dataset_mode": "$DATASET_MODE",
+    "llm_provider": "$LLM_PROVIDER",
+    "llm_model": "$MODEL",
     "behavior_target": "$ENABLE_BEHAVIOR_TARGET" == "true",
     "mutation": "$ENABLE_MUTATION" == "true",
     "specialized_feedback": "$ENABLE_SPECIALIZED_FEEDBACK" == "true",
@@ -426,6 +462,8 @@ config["ablation_signature"] = ";".join(
 )
 lineage_payload = {
     "dataset_mode": config["dataset_mode"],
+    "llm_provider": config["llm_provider"],
+    "llm_model": config["llm_model"],
     "dataset_sha256": config["dataset_sha256"],
     "framework_git_commit": config["framework_git_commit"],
     "evaluator_contract_sha256": config["evaluator_contract_sha256"],
@@ -464,6 +502,8 @@ fi
 
 echo "__BRT_STAGE__ start $(date --iso-8601=seconds)"
 echo "dataset_mode=$DATASET_MODE"
+echo "llm_provider=$LLM_PROVIDER"
+echo "llm_model=$MODEL"
 echo "instances_path=$INSTANCES_PATH"
 echo "dataset_size=$DATASET_SIZE"
 echo "framework_git_commit=$GIT_COMMIT"
@@ -548,6 +588,7 @@ elif [ "$ENABLE_BEHAVIOR_TARGET" = "true" ]; then
       --code_retrieval_path "$CODE_RETRIEVAL" \
       --test_retrieval_path "$TEST_RETRIEVAL" \
       --output_dir "$ISSUE_DIR" \
+      --llm-provider "$LLM_PROVIDER" \
       --model "$MODEL" \
       --max_workers "$ISSUE_WORKERS" \
       --temperature 0.1 \
@@ -598,6 +639,7 @@ GENERATION_COMMAND=(
   --test_retrieval_path "$TEST_RETRIEVAL" \
   --repo_root_base "$REPO_ROOT" \
   --output_dir "$GENERATION_DIR" \
+  --llm-provider "$LLM_PROVIDER" \
   --model "$MODEL" \
   --max_workers "$GENERATION_WORKERS" \
   --max_feedback_rounds 3 \
@@ -687,6 +729,8 @@ metrics = json.loads(metrics_path.read_text()) if metrics_path.is_file() else {}
 completion = {
     'finished_at': datetime.now(timezone.utc).astimezone().isoformat(),
     'dataset_mode': run_config['dataset_mode'],
+    'llm_provider': run_config.get('llm_provider', 'deepseek'),
+    'llm_model': run_config.get('llm_model', ''),
     'behavior_target_enabled': run_config['behavior_target'],
     'mutation_enabled': run_config['mutation'],
     'specialized_feedback_enabled': run_config['specialized_feedback'],

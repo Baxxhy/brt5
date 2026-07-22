@@ -94,8 +94,13 @@ Interactive multi-key configuration:
 
 ```bash
 source .bootstrap/use_fresh_swt_server.sh
-"$PYTHON_BIN" scripts/configure_api_keys.py
+"$PYTHON_BIN" scripts/configure_api_keys.py --provider deepseek
+"$PYTHON_BIN" scripts/configure_api_keys.py --provider gpt
 ```
+
+Each command replaces only that provider's entries and preserves the other
+provider. The GPT defaults are `https://aigc.x-see.cn/v1` and
+`gpt-5.4-mini`. Key input is hidden.
 
 Alternatively copy `config/api_pool.example.json` to
 `.secrets/api_pool.json`, replace the placeholder locally, and run:
@@ -110,11 +115,25 @@ Environment variables are also supported:
 export DEEPSEEK_API_KEYS='key1,key2,key3'
 export DEEPSEEK_BASE_URL='https://api.deepseek.com'
 export DEEPSEEK_MODEL='deepseek-v3'
+
+export GPT_API_KEY='your-gpt-key'
+export GPT_BASE_URL='https://aigc.x-see.cn/v1'
+export GPT_MODEL='gpt-5.4-mini'
 ```
 
 For a remote machine or cluster, pass these values through its secret manager,
 or transfer `.secrets/api_pool.json` separately over an authenticated channel.
 Do not put that file in the repository, even when the repository is private.
+
+Select the configured provider explicitly when launching an experiment:
+
+```bash
+# Existing behavior and DeepSeek key rotation.
+bash scripts/run_p0_simple_llm_selector_full.sh --dataset swt --model deepseek
+
+# GPT endpoint/key pool and gpt-5.4-mini.
+bash scripts/run_p0_simple_llm_selector_full.sh --dataset swt --model gpt
+```
 
 ## 4. Run the full and ablation experiments
 

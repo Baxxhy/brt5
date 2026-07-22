@@ -23,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test_retrieval_path", required=True)
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--model", default="deepseek-v3")
+    parser.add_argument(
+        "--llm-provider",
+        choices=("deepseek", "gpt"),
+        default="deepseek",
+    )
     parser.add_argument("--api_key", default=None)
     parser.add_argument("--base_url", default=None)
     parser.add_argument("--max_workers", type=int, default=DEFAULT_MAX_WORKERS)
@@ -49,6 +54,7 @@ def run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dict
         top_tests=args.top_tests,
     )
     client = LLMClient(
+        provider=args.llm_provider,
         model=args.model,
         api_key=args.api_key,
         base_url=args.base_url,

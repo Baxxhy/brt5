@@ -68,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--model", default="deepseek-v3")
+    parser.add_argument(
+        "--llm-provider",
+        choices=("deepseek", "gpt"),
+        default="deepseek",
+        help="Select the isolated API pool used by this run.",
+    )
     parser.add_argument("--api_key", default=None)
     parser.add_argument("--base_url", default=None)
     parser.add_argument("--conda_env", default="")
@@ -385,6 +391,7 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
         args.top_tests,
     )
     client = LLMClient(
+        provider=args.llm_provider,
         model=args.model,
         api_key=args.api_key,
         base_url=args.base_url,
@@ -427,6 +434,8 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
                 ablation_config=ablation_config,
             )
         result_payload = result.to_dict()
+        result_payload["llm_provider"] = args.llm_provider
+        result_payload["llm_model"] = args.model
         result_payload["behavior_target_source"] = args.behavior_target_source
         result_payload[
             "behavior_target_source_signature"
@@ -453,6 +462,8 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
             "behavior_target_source_signature": (
                 args.behavior_target_source_signature
             ),
+            "llm_provider": args.llm_provider,
+            "llm_model": args.model,
             "method_variant": ablation_config.method_variant,
             "ablation_id": ablation_config.ablation_id,
             "ablation_signature": ablation_config.signature,
@@ -543,6 +554,8 @@ def main() -> None:
     safe_json_dump(
         {
             "dataset_mode": args.dataset_mode,
+            "llm_provider": args.llm_provider,
+            "llm_model": args.model,
             "patch_cov_enabled": ablation_config.compute_patch_coverage,
             "behavior_target_source": behavior_target_source,
             "behavior_target_source_signature": (
