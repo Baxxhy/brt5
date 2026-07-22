@@ -242,6 +242,16 @@ def test_case():
         self.assertIn("baseline", audit_candidate(behavior, image))
         self.assertIn("importorskip", audit_candidate(behavior, import_or_skip))
 
+    def test_generated_test_avoids_f_strings_for_python35_instances(self) -> None:
+        behavior = BehaviorTarget("django__django-7530")
+        candidate = '''
+def test_case():
+    value = 1
+    assert api(), f"unexpected value: {value}"
+'''
+
+        self.assertIn("Python 3.5", audit_candidate(behavior, candidate))
+
     def test_executor_returns_real_buggy_log_without_dynamic_tracing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             result = run_command_in_conda(

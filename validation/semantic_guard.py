@@ -218,6 +218,11 @@ def audit_candidate(
         )
 
     for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            return (
+                "生成测试必须兼容基准实例可能使用的 Python 3.5；"
+                "不得使用 f-string，请改用 str.format() 或普通字符串拼接。"
+            )
         if isinstance(node, ast.Call):
             call_name = _name(node.func)
             if call_name.endswith(".makepyfile") and node.args:
