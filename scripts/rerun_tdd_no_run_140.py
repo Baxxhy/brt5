@@ -372,6 +372,7 @@ def main() -> int:
         "0.1",
         "--max_tokens",
         "4096",
+        "--resume",
     ]
     run_checked(
         generation_command,
