@@ -1209,8 +1209,8 @@ def icore_setup_command(spec: Any, repo_path: str = "") -> str:
         # Install them only when absent, and only in the disposable per-instance
         # clone (the immutable dependency template remains untouched).
         commands.append(
-            "test -f \"$CONDA_PREFIX/include/freetype2/ft2build.h\" || "
-            "conda install -y -c conda-forge freetype pkg-config"
+            "if test -f \"$CONDA_PREFIX/include/freetype2/ft2build.h\"; "
+            "then :; else conda install -y -c conda-forge freetype pkg-config; fi"
         )
     if repo_path and "--no-build-isolation" in str(install.get("install", "")):
         build_deps = _build_dependency_command(repo_path)
@@ -1224,8 +1224,8 @@ def icore_setup_command(spec: Any, repo_path: str = "") -> str:
         # Inheritance-diagram tests are otherwise reported as a successful
         # all-skipped run when the Graphviz executable is absent.
         commands.append(
-            "command -v dot >/dev/null 2>&1 || "
-            "conda install -y -c conda-forge graphviz"
+            "if command -v dot >/dev/null 2>&1; then :; "
+            "else conda install -y -c conda-forge graphviz; fi"
         )
     if install.get("install"):
         project_install = str(install["install"])

@@ -757,6 +757,7 @@ python -m pip install -r $HOME/requirements.txt
         self.assertIn('python -m pip install -e ."[test]"', command)
         self.assertNotIn('--no-deps -e ."[test]"', command)
         self.assertIn("conda install -y -c conda-forge graphviz", command)
+        self.assertIn("fi && python -m pip install", command)
 
     def test_isolated_clone_retries_after_cleaning_partial_prefix(self) -> None:
         failed = {"returncode": 124, "timeout": True}
@@ -1050,6 +1051,7 @@ python -m pip install -r $HOME/requirements.txt
         )
         self.assertIn("freetype2/ft2build.h", command)
         self.assertIn("conda install -y -c conda-forge freetype pkg-config", command)
+        self.assertIn("fi && python setup.py build_ext --inplace", command)
 
     def test_runtime_cleanup_never_removes_dependency_template(self) -> None:
         with mock.patch.object(
