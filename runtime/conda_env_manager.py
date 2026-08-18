@@ -1471,7 +1471,13 @@ def project_cache_ready(
         return False
 
 
-def preflight_system(paths: list[str], min_free_gb: float = 2.0, min_free_inodes: int = 10000) -> dict[str, Any]:
+def preflight_system(
+    paths: list[str],
+    min_free_gb: float = 2.0,
+    min_free_inodes: int = 10000,
+    *,
+    require_conda: bool = True,
+) -> dict[str, Any]:
     min_free_gb = float(os.environ.get("BRT4_MIN_FREE_GB", min_free_gb))
     min_free_inodes = int(
         os.environ.get("BRT4_MIN_FREE_INODES", min_free_inodes)
@@ -1526,7 +1532,8 @@ def preflight_system(paths: list[str], min_free_gb: float = 2.0, min_free_inodes
             conda_version = repr(exc)
     else:
         conda_version = "missing"
-    ok = ok and conda_ok
+    if require_conda:
+        ok = ok and conda_ok
     return {
         "ok": ok,
         "minimum_free_gb": min_free_gb,
@@ -1535,5 +1542,6 @@ def preflight_system(paths: list[str], min_free_gb: float = 2.0, min_free_inodes
         "conda_exe": CONDA_EXE,
         "conda_probe_timeout_seconds": conda_probe_timeout,
         "conda_ok": conda_ok,
+        "conda_required": require_conda,
         "conda_version": conda_version,
     }

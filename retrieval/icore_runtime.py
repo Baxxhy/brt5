@@ -39,6 +39,7 @@ from ..runtime.conda_env_manager import (
     environment_cache_root,
     environment_manifest,
     environment_lock_path,
+    environment_operation_lock,
     env_health_check,
     has_recoverable_environment_state,
     invalidate_environment_runtime_cache,
@@ -351,7 +352,7 @@ print(json.dumps({
     return result
 
 
-def _clone_validated_dependency_environment(
+def _clone_validated_dependency_environment_unlocked(
     source_env: str,
     target_env: str,
     cwd: str,
@@ -404,6 +405,25 @@ def _clone_validated_dependency_environment(
         "retry_cleanup": retry_cleanup,
         "editable_scrub": scrub,
     }
+
+
+def _clone_validated_dependency_environment(
+    source_env: str,
+    target_env: str,
+    cwd: str,
+    timeout: int,
+    project_distribution: str = "",
+) -> dict[str, Any]:
+    """Clone one environment without racing Conda's shared package cache."""
+
+    with environment_operation_lock("__conda_package_cache__", "global"):
+        return _clone_validated_dependency_environment_unlocked(
+            source_env,
+            target_env,
+            cwd,
+            timeout,
+            project_distribution=project_distribution,
+        )
 
 
 def _restore_runtime_dependency_contract(
@@ -994,7 +1014,8 @@ def ensure_icore_environment(
         )
         script_path = Path(cwd) / "brt3_icore_env_setup.sh"
         script_path.write_text(script, encoding="utf-8")
-        result = _run_script(f"bash {script_path}", cwd, max(timeout, 1800))
+        with environment_operation_lock("__conda_package_cache__", "global"):
+            result = _run_script(f"bash {script_path}", cwd, max(timeout, 1800))
         result.update(
             {
                 "status": "CREATED" if result["returncode"] == 0 else "CREATE_ERROR",
@@ -1177,6 +1198,18 @@ def icore_setup_command(spec: Any, repo_path: str = "") -> str:
         getattr(spec, "repo", "") == "astropy/astropy"
         and str(getattr(spec, "version", "")).startswith("1.3")
     )
+    is_modern_astropy = (
+        getattr(spec, "repo", "") == "astropy/astropy"
+        and not is_legacy_astropy
+    )
+    is_legacy_scikit = (
+        getattr(spec, "repo", "") == "scikit-learn/scikit-learn"
+        and str(getattr(spec, "version", "")) == "0.22"
+    )
+    if is_modern_astropy:
+        commands.append("python -m pip install extension-helpers")
+    if is_legacy_scikit:
+        commands.append("python -m pip install 'joblib==0.14.1'")
     if is_matplotlib:
         # setuptools_scm otherwise runs git describe against the large shared
         # repository behind this worktree and applies its own 40-second

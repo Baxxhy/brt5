@@ -114,7 +114,7 @@ Environment variables are also supported:
 ```bash
 export DEEPSEEK_API_KEYS='key1,key2,key3'
 export DEEPSEEK_BASE_URL='https://api.deepseek.com'
-export DEEPSEEK_MODEL='deepseek-v3'
+export DEEPSEEK_MODEL='DeepSeek-V4-Flash'
 
 export GPT_API_KEY='your-gpt-key'
 export GPT_BASE_URL='https://aigc.x-see.cn/v1'

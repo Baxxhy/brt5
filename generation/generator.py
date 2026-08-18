@@ -322,6 +322,40 @@ def _semantic_path_problem(
     return ""
 
 
+def _remove_test_skip_decorators(code: str) -> tuple[str, list[str]]:
+    """Force a generated BRT to execute after the model repeats a skip guard."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code, []
+
+    def name(node: ast.AST) -> str:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = name(node.value)
+            return f"{prefix}.{node.attr}" if prefix else node.attr
+        if isinstance(node, ast.Call):
+            return name(node.func)
+        return ""
+
+    ranges: list[tuple[int, int]] = []
+    removed: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            leaf = name(decorator).rsplit(".", 1)[-1].lower()
+            if leaf.startswith(("skip", "requires_")) or leaf == "network":
+                ranges.append((decorator.lineno, getattr(decorator, "end_lineno", decorator.lineno)))
+                removed.append(leaf)
+    if not ranges:
+        return code, []
+    lines = code.splitlines(keepends=True)
+    deleted = {line for start, end in ranges for line in range(start, end + 1)}
+    return "".join(line for index, line in enumerate(lines, 1) if index not in deleted), removed
+
+
 def _wrap_if_needed(code: str, host: HostContext, safe_id: str) -> str:
     code = textwrap.dedent(clean_code_block(code)).strip() + "\n"
     if not code.strip():
@@ -461,6 +495,12 @@ def generate_candidate(
         response = llm_client.chat(system_prompt, retry_prompt)
         write_text(retry_response_path, response)
         code = _wrap_if_needed(response, host, safe_id)
+    code, removed_skip_decorators = _remove_test_skip_decorators(code)
+    if removed_skip_decorators:
+        safe_json_dump(
+            {"removed": removed_skip_decorators, "reason": "BRT candidates must execute"},
+            str(Path(output_dir) / f"generation_round_{round_id}_skip_decorators_removed.json"),
+        )
     rel_path, full_path = _candidate_paths(instance_id, buggy_repo, host)
     candidate = CandidateTest(
         instance_id=instance_id,
@@ -545,6 +585,14 @@ def generate_candidate(
                 fallback_code = _wrap_if_needed(
                     fallback_response, host, safe_id
                 )
+            fallback_code, removed_skip_decorators = _remove_test_skip_decorators(
+                fallback_code
+            )
+            if removed_skip_decorators:
+                safe_json_dump(
+                    {"removed": removed_skip_decorators, "reason": "BRT candidates must execute"},
+                    str(Path(output_dir) / f"generation_round_{round_id}_fallback_skip_decorators_removed.json"),
+                )
             safe_json_dump(
                 {
                     "status": "FALLBACK_DIRECT",
@@ -599,6 +647,7 @@ def repair_candidate(
     mutation_plan: MutationPlan | None = None,
     ablation_config: AblationConfig | None = None,
     issue_text: str = "",
+    mutation_contract: dict[str, Any] | None = None,
 ) -> CandidateTest:
     config = (ablation_config or AblationConfig()).validate()
     feedback_json = _prompt_json(
@@ -694,6 +743,14 @@ def repair_candidate(
         )
     if protocol is not None:
         user_prompt += "\n\nProtocolRecovery：" + protocol_json
+    if mutation_contract:
+        user_prompt += (
+            "\n\n【Failure-Directed Mutation Contract；优先级高于一般修复建议】\n"
+            + json.dumps(mutation_contract, ensure_ascii=False, indent=2)
+            + "\n只允许编辑 editable_regions。protected_regions 必须保持语义不变。"
+            "必须基于 parent candidate 做最小局部修改；禁止重写、重新设计或替换整个测试。"
+            "如果无法在约束内修复，原样保留 parent 也比越界改写更安全。"
+        )
     guidance_plan = (
         mutation_plan if mutation_plan is not None and mutation_plan.is_usable else None
     )
@@ -784,6 +841,12 @@ def repair_candidate(
         write_text(retry_response_path, response)
         code = _wrap_if_needed(
             response, host, sanitize_instance_id(instance_id)
+        )
+    code, removed_skip_decorators = _remove_test_skip_decorators(code)
+    if removed_skip_decorators:
+        safe_json_dump(
+            {"removed": removed_skip_decorators, "reason": "BRT candidates must execute"},
+            str(Path(output_dir) / f"repair_round_{round_id}_skip_decorators_removed.json"),
         )
     oracle_contract_preserved = True
     oracle_contract_violation = ""

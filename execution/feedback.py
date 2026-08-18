@@ -38,7 +38,10 @@ from ..retrieval.icore_runtime import (
     first_test_selector,
     make_instance_spec,
 )
-from ..runtime.conda_env_manager import environment_manifest
+from ..runtime.conda_env_manager import (
+    environment_manifest,
+    environment_operation_lock,
+)
 from ..core.behavior_evidence import (
     BehaviorEvidence,
     behavior_target_payload,
@@ -81,7 +84,13 @@ def _load_cached_behavior(context: InstanceContext, output_dir: str) -> Any:
     for path in candidates:
         if path.is_file():
             behavior = behavior_from_dict(context.instance_id, safe_json_load(path))
-            from ..issue.issue_rewriter import apply_behavior_safety_constraints
+            from ..issue.issue_rewriter import (
+                apply_behavior_safety_constraints,
+                apply_issue_authority_constraints,
+            )
+            behavior = apply_issue_authority_constraints(
+                context.issue_text, behavior
+            )
             behavior = apply_behavior_safety_constraints(context.issue_text, behavior)
             if path != local_path:
                 behavior.save_json(str(local_path))
@@ -806,24 +815,9 @@ def prepare_instance_worktree(
     setup_lock.parent.mkdir(parents=True, exist_ok=True)
     with open(setup_lock, "w", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        setup_result = run_command_in_conda(
-            setup,
-            str(worktree),
-            resolved_env,
-            timeout,
-            no_conda,
-            None,
-            context.instance_id,
-        )
-        setup_log = setup_result.stdout + "\n" + setup_result.stderr
-        if (
-            setup_result.returncode != 0
-            and "missing the 'build_editable' hook" in setup_log
-            and " -e ." in setup
-        ):
-            fallback_setup = setup.replace(" -e .", " .")
-            fallback_result = run_command_in_conda(
-                fallback_setup,
+        with environment_operation_lock("__conda_package_cache__", "global"):
+            setup_result = run_command_in_conda(
+                setup,
                 str(worktree),
                 resolved_env,
                 timeout,
@@ -831,6 +825,23 @@ def prepare_instance_worktree(
                 None,
                 context.instance_id,
             )
+        setup_log = setup_result.stdout + "\n" + setup_result.stderr
+        if (
+            setup_result.returncode != 0
+            and "missing the 'build_editable' hook" in setup_log
+            and " -e ." in setup
+        ):
+            fallback_setup = setup.replace(" -e .", " .")
+            with environment_operation_lock("__conda_package_cache__", "global"):
+                fallback_result = run_command_in_conda(
+                    fallback_setup,
+                    str(worktree),
+                    resolved_env,
+                    timeout,
+                    no_conda,
+                    None,
+                    context.instance_id,
+                )
             if fallback_result.returncode == 0:
                 setup = fallback_setup
                 setup_result = fallback_result
@@ -847,15 +858,16 @@ def prepare_instance_worktree(
                 setup,
                 count=1,
             )
-            fallback_result = run_command_in_conda(
-                fallback_setup,
-                str(worktree),
-                resolved_env,
-                timeout,
-                no_conda,
-                None,
-                context.instance_id,
-            )
+            with environment_operation_lock("__conda_package_cache__", "global"):
+                fallback_result = run_command_in_conda(
+                    fallback_setup,
+                    str(worktree),
+                    resolved_env,
+                    timeout,
+                    no_conda,
+                    None,
+                    context.instance_id,
+                )
             if fallback_result.returncode == 0:
                 setup = fallback_setup
                 setup_result = fallback_result
@@ -1328,7 +1340,12 @@ def run_instance_pipeline(
         if not ranked_tests and related_test is not None:
             ranked_tests = [related_test]
         host = None
-        if _forced_seed_index is not None and 0 <= _forced_seed_index < len(ranked_tests):
+        if _forced_seed_index is not None:
+            if not 0 <= _forced_seed_index < len(ranked_tests):
+                raise ValueError(
+                    f"forced seed index {_forced_seed_index} is unavailable; "
+                    f"retrieval returned {len(ranked_tests)} seeds"
+                )
             seeds_to_try = [ranked_tests[_forced_seed_index]]
         else:
             seeds_to_try = ranked_tests[:3] if enable_protocol_recovery else ([related_test] if related_test else [])
@@ -1440,6 +1457,8 @@ def run_instance_pipeline(
             final_code = candidate.code
             write_text(str(Path(output_dir) / "final_test.py"), final_code)
             execution_stub = {"status": "SKIPPED", "reason": "generate_only"}
+            candidate_selector = first_test_selector(final_code)
+            placement_dir = str(Path(candidate.candidate_repo_path).parent)
             result = FinalResult(
                 instance_id=context.instance_id,
                 status="GENERATED",
@@ -1463,6 +1482,13 @@ def run_instance_pipeline(
                 ),
                 repair_route_counts=repair_route_counts,
                 final_reason="generate_only: generation completed without execution",
+                candidate_repo_path=candidate.candidate_repo_path,
+                pytest_nodeid=candidate.pytest_nodeid,
+                command=candidate.command,
+                direct_test_repo_path_hint=candidate.candidate_repo_path,
+                placement_dir=placement_dir,
+                runner_kind=context.repo.split("/")[-1],
+                selector=candidate_selector,
                 seed_mode=(
                     "single_forced_seed"
                     if _forced_seed_index is not None

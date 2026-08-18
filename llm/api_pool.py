@@ -15,7 +15,7 @@ from typing import Any
 
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-DEFAULT_MODEL = "deepseek-v3"
+DEFAULT_MODEL = "DeepSeek-V4-Flash"
 DEFAULT_GPT_BASE_URL = "https://aigc.x-see.cn/v1"
 DEFAULT_GPT_MODEL = "gpt-5.4-mini"
 SUPPORTED_PROVIDERS = ("deepseek", "gpt")

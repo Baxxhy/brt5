@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -29,15 +30,20 @@ def _effective_surrogate_sources(
     repo_path: str,
 ) -> list[RetrievedCode]:
     sources = list(retrieved_code)
-    seen = {item.path for item in sources if item.path}
+    seen = {(item.path, item.obj_name) for item in sources if item.path}
     for location in suspected_bug_locations(behavior):
         path = str(location.get("path") or "")
-        if not path or path in seen or not (Path(repo_path) / path).is_file():
+        object_name = str(location.get("object") or "")
+        if (
+            not path
+            or (path, object_name) in seen
+            or not (Path(repo_path) / path).is_file()
+        ):
             continue
         sources.append(
             RetrievedCode(
                 instance_id=behavior.instance_id,
-                obj_name=str(location.get("object") or ""),
+                obj_name=object_name,
                 path=path,
                 code_start_line="",
                 code_end_line="",
@@ -45,7 +51,7 @@ def _effective_surrogate_sources(
                 raw={"source": "behavior_target.suspected_bug_locations"},
             )
         )
-        seen.add(path)
+        seen.add((path, object_name))
     return sources
 
 
@@ -62,7 +68,21 @@ def _source_excerpt(repo_path: str, item: RetrievedCode, max_chars: int = 9000) 
         end = min(len(lines), int(item.code_end_line) + 120)
         excerpt = "\n".join(lines[start:end])
     except (TypeError, ValueError):
-        excerpt = source
+        simple_name = item.obj_name.rsplit(".", 1)[-1].strip()
+        index = -1
+        if simple_name:
+            pattern = re.compile(
+                rf"^\s*(?:class|def|async\s+def)\s+{re.escape(simple_name)}\b"
+            )
+            index = next(
+                (i for i, line in enumerate(lines) if pattern.search(line)), -1
+            )
+        if index >= 0:
+            excerpt = "\n".join(
+                lines[max(0, index - 80): min(len(lines), index + 160)]
+            )
+        else:
+            excerpt = source
     return truncate_text(excerpt, max_chars)
 
 

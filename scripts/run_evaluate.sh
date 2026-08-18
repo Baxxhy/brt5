@@ -15,7 +15,7 @@ RUN_DIR=$(realpath -m "$RUN_DIR")
 REPO_ROOT_BASE=${REPO_ROOT_BASE:-"$PACKAGE_ROOT/swe_repos"}
 INSTANCES_PATH=${INSTANCES_PATH:-"$PROJECT_ROOT/data/issues/swt276_issues.json"}
 WORKERS=${WORKERS:-6}
-TIMEOUT=${TIMEOUT:-1800}
+TIMEOUT=${TIMEOUT:-3000}
 
 mkdir -p "$RUN_DIR/evaluation/direct_eval" "$RUN_DIR/logs"
 cmd=(

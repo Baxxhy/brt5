@@ -110,3 +110,6 @@
    not hasattr、not in 或“保持缺失”；当前会抛异常但修复后应正常时不能建议 raises；
 10. 若 Issue 没给出精确完整字符串，只提取稳定片段、类型或关系，不猜测完整 patched 输出；
 11. 输出必须能被 Python 的 json.loads 直接解析。
+12. 先检查 Issue 标题与正文是否冲突。标题明确写出的 raise/warn/reject/
+    should-not-fail 契约优先；将冲突的正文方案放入 uncertainties，并让
+    expected_behavior 与 assertion_hints 严格服从标题契约。

@@ -1,0 +1,3 @@
+matplotlib__matplotlib-18869
+sympy__sympy-14024
+sympy__sympy-12419

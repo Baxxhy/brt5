@@ -308,7 +308,7 @@ if [[ -n "${BRT_MODEL_ID:-}" ]]; then
 elif [[ "$LLM_PROVIDER" == "gpt" ]]; then
   MODEL=${GPT_MODEL:-gpt-5.4-mini}
 else
-  MODEL=${MODEL:-${DEEPSEEK_MODEL:-deepseek-v3}}
+  MODEL=${MODEL:-${DEEPSEEK_MODEL:-DeepSeek-V4-Flash}}
 fi
 export BRT_LLM_PROVIDER=$LLM_PROVIDER
 ISSUE_WORKERS=${ISSUE_WORKERS:-6}
@@ -646,7 +646,7 @@ GENERATION_COMMAND=(
   --max_env_rounds 2 \
   --max_brt_rounds 3 \
   --validation_mode buggy_only \
-  --timeout 1800 \
+  --timeout 3000 \
   --temperature 0.1 \
   --max_tokens 4096 \
   --enable_behavior_target "$ENABLE_BEHAVIOR_TARGET" \
@@ -678,7 +678,7 @@ fi
   --dataset_file "$GOLD_DATASET" \
   --repo_root_base "$REPO_ROOT" \
   --max_workers "$EVALUATION_WORKERS" \
-  --timeout 1800 \
+  --timeout 3000 \
   --evaluation_dir "$FORMAL_DIR" \
   --log_path "$LOG_DIR/formal_eval.log" \
   --summary_path "$RUN_DIR/evaluation/formal_eval_summary.json" \

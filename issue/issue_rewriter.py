@@ -104,6 +104,77 @@ def apply_behavior_safety_constraints(
     return behavior
 
 
+def apply_issue_authority_constraints(
+    issue_text: str, behavior: BehaviorTarget
+) -> BehaviorTarget:
+    """Keep an explicit Issue-title contract from being inverted by prose.
+
+    SWT issues occasionally retain a reporter's speculative implementation in
+    the description after maintainers have changed the title to the accepted
+    behavior.  The title is the task contract; the proposal remains useful as
+    uncertainty, but must not silently become the sole fixed-side oracle.
+    This audit uses only the raw Issue and never reads a patch or fixed tree.
+    """
+    title = next(
+        (line.strip() for line in issue_text.splitlines() if line.strip()), ""
+    )
+    lowered = title.lower()
+    contract_kind = ""
+    if re.search(r"\bshould\s+(?:raise|throw|error|reject|refuse|fail)\b", lowered):
+        contract_kind = "raises"
+    elif re.search(r"\bshould\s+not\s+(?:allow|support|accept|permit)\b", lowered):
+        contract_kind = "raises"
+    elif re.search(r"\b(?:should|must)\s+(?:emit|raise|show)\s+(?:a\s+)?warning\b", lowered):
+        contract_kind = "warns"
+    elif re.search(r"\bshould\s+not\s+(?:raise|throw|error|fail|crash)\b", lowered):
+        contract_kind = "does_not_raise"
+    if not contract_kind:
+        return behavior
+
+    prior = str(behavior.expected_behavior.get("text") or "").strip()
+    if contract_kind == "raises":
+        expected = f"The behavior described by the Issue must raise/reject as specified by its title: {title}"
+        assertion = {
+            "assertion_goal": f"Verify the explicit Issue-title contract: {title}",
+            "preferred_assertion_style": "raises",
+            "avoid": "Do not assert the reporter's speculative success behavior as the only oracle.",
+            "reason": "The Issue title states the accepted externally observable contract.",
+        }
+    elif contract_kind == "warns":
+        expected = f"The behavior described by the Issue must emit the warning specified by its title: {title}"
+        assertion = {
+            "assertion_goal": f"Verify the explicit Issue-title warning contract: {title}",
+            "preferred_assertion_style": "warns",
+            "avoid": "Do not replace the warning contract with a return-value guess.",
+            "reason": "The Issue title states the accepted externally observable contract.",
+        }
+    else:
+        expected = f"The behavior described by the Issue must complete without the failure forbidden by its title: {title}"
+        assertion = {
+            "assertion_goal": f"Verify the explicit Issue-title non-failure contract: {title}",
+            "preferred_assertion_style": "unknown",
+            "avoid": "Do not use raises for a title that explicitly says the operation should not fail.",
+            "reason": "The Issue title states the accepted externally observable contract.",
+        }
+
+    if prior and prior != expected:
+        behavior.uncertainties.append(
+            "Reporter-description hypothesis retained for audit but not used as the "
+            f"sole oracle because it conflicts with the Issue title: {prior}"
+        )
+    behavior.expected_behavior = {
+        "text": expected,
+        "evidence": [f"Issue title: {title}"],
+        "confidence": "high",
+        "authority": "issue_title_contract",
+    }
+    behavior.assertion_hints = [assertion]
+    warning = "Issue-title contract took precedence over a conflicting reporter proposal."
+    if warning not in behavior.audit_warnings:
+        behavior.audit_warnings.append(warning)
+    return behavior
+
+
 def behavior_from_dict(instance_id: str, data: dict[str, Any]) -> BehaviorTarget:
     # New artifacts expose setup/trigger/oracle, but each section contains the
     # original P0 rich objects (including evidence/confidence/reason fields).
@@ -216,9 +287,9 @@ def rewrite_issue(
             response = llm_client.chat(ISSUE_REWRITE_SYSTEM_PROMPT, retry_prompt)
             write_text(str(Path(output_dir) / "response_json_retry.txt"), response)
             data = extract_json_object(response)
-        behavior = apply_behavior_safety_constraints(
-            context.issue_text, behavior_from_dict(context.instance_id, data)
-        )
+        behavior = behavior_from_dict(context.instance_id, data)
+        behavior = apply_issue_authority_constraints(context.issue_text, behavior)
+        behavior = apply_behavior_safety_constraints(context.issue_text, behavior)
         behavior.save_json(str(Path(output_dir) / "behavior_target.json"))
         save_enhanced_issue_copy(behavior, output_dir)
         meta.update({"status": "OK", "finished_at": now_timestamp()})

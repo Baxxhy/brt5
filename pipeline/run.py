@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict, deque
+from contextlib import nullcontext
 import json
 import os
 import subprocess
@@ -67,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
             "before generation. If omitted, the launcher regenerates targets."
         ),
     )
-    parser.add_argument("--model", default="deepseek-v3")
+    parser.add_argument("--model", default="DeepSeek-V4-Flash")
     parser.add_argument(
         "--llm-provider",
         choices=("deepseek", "gpt"),
@@ -84,6 +85,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_patch_rounds", type=int, default=3)
     parser.add_argument("--num_candidates", type=int, default=1)
     parser.add_argument("--instance_id", default=None)
+    parser.add_argument(
+        "--forced_seed_index",
+        type=int,
+        choices=(0, 1, 2),
+        default=None,
+        help=(
+            "Generate from one explicit iCoRe top-3 seed. This is used only "
+            "by buggy-verified adaptive recovery after the primary seed and "
+            "feedback budget are exhausted."
+        ),
+    )
     parser.add_argument(
         "--instance_ids",
         default="",
@@ -408,11 +420,19 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
         conda_env = args.conda_env or _default_env_name(issue_row)
         # Editable installs and compiled extensions are environment-global. Two
         # instances sharing an env must not prepare or execute concurrently.
-        with _conda_env_lock(
-            conda_env if not args.no_conda else ""
-        ), environment_operation_lock(
-            conda_env if not args.no_conda else "__direct_host__"
-        ):
+        execution_lock = (
+            nullcontext()
+            if args.generate_only
+            else _conda_env_lock(conda_env if not args.no_conda else "")
+        )
+        environment_lock = (
+            nullcontext()
+            if args.generate_only
+            else environment_operation_lock(
+                conda_env if not args.no_conda else "__direct_host__"
+            )
+        )
+        with execution_lock, environment_lock:
             result = run_instance_pipeline(
                 context,
                 client,
@@ -432,6 +452,7 @@ def _run_one(args: argparse.Namespace, instance_id: str, issue_row: dict) -> dic
                 enable_strict_semantic_verifier=args.enable_strict_semantic_verifier,
                 enable_behavior_target=args.enable_behavior_target,
                 ablation_config=ablation_config,
+                _forced_seed_index=args.forced_seed_index,
             )
         result_payload = result.to_dict()
         result_payload["llm_provider"] = args.llm_provider
@@ -574,7 +595,8 @@ def main() -> None:
             runtime_contract, str(Path(args.output_dir) / "runtime_contract.json")
         )
     preflight = preflight_system(
-        [args.output_dir, args.instances_path, args.repo_root_base]
+        [args.output_dir, args.instances_path, args.repo_root_base],
+        require_conda=not args.no_conda,
     )
     safe_json_dump(preflight, str(Path(args.output_dir) / "environment_preflight.json"))
     if not preflight.get("ok"):

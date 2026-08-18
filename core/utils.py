@@ -83,6 +83,27 @@ def extract_json_object(text: str) -> dict[str, Any]:
             raise ValueError(f"JSON parsed but is {type(value).__name__}, not object")
         except Exception as exc:  # noqa: BLE001
             last_error = exc
+    # Some OpenAI-compatible gateways prepend tool-call objects before the
+    # requested structured answer. Decode that concatenated stream and use
+    # the final complete object, which is the model's final response.
+    decoder = json.JSONDecoder(strict=False)
+    decoded: list[dict[str, Any]] = []
+    position = 0
+    while position < len(raw):
+        start = raw.find("{", position)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(raw, start)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            position = start + 1
+            continue
+        if isinstance(value, dict):
+            decoded.append(value)
+        position = max(end, start + 1)
+    if decoded:
+        return decoded[-1]
     raise ValueError(f"failed to parse JSON object from response: {last_error}")
 
 

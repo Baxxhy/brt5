@@ -9,7 +9,7 @@ cd "$PROJECT_ROOT"
 timestamp=$(date +%Y%m%d_%H%M%S)
 OUTPUT_DIR=${OUTPUT_DIR:-"$PROJECT_ROOT/results/issue_rewrite/issue_rewrite_${timestamp}"}
 WORKERS=${WORKERS:-10}
-MODEL=${MODEL:-deepseek-v3}
+MODEL=${MODEL:-DeepSeek-V4-Flash}
 TEMPERATURE=${TEMPERATURE:-0.1}
 INSTANCES_PATH=${INSTANCES_PATH:-"$PROJECT_ROOT/data/issues/swt276_issues.json"}
 CODE_RETRIEVAL_PATH=${CODE_RETRIEVAL_PATH:-"$PROJECT_ROOT/retrieval_results/code/code_retrieval_results_gpt.json"}

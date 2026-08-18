@@ -171,7 +171,7 @@ class LLMClient:
                 # long exponential backoff and cannot make them succeed.
                 if exc.code in {400, 404, 405, 413, 422}:
                     break
-                if exc.code in {401, 403, 429}:
+                if exc.code in {401, 403, 429} or 500 <= exc.code < 600:
                     self._rotate_api()
                 if exc.code == 429 and attempt < max_attempts - 1:
                     retry_after = exc.headers.get("Retry-After")
@@ -187,6 +187,10 @@ class LLMClient:
                     continue
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
+                # A dead proxy tunnel or endpoint is transient and often
+                # endpoint-specific. Rotate before the bounded retry instead
+                # of repeatedly hitting the same broken route.
+                self._rotate_api()
             if attempt < max_attempts - 1:
                 time.sleep(min(self.backoff_base * (2**attempt), 180.0))
         raise RuntimeError(f"LLM request failed after {max_attempts} attempts: {last_error}")

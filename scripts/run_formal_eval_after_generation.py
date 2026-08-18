@@ -106,7 +106,7 @@ def main() -> int:
     parser.add_argument("--repo_root_base", default=str(ROOT / "swe_repos"))
     parser.add_argument("--max_workers", type=int, default=6)
     parser.add_argument("--eval_completed_only", type=parse_bool, default=False)
-    parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--timeout", type=int, default=3000)
     parser.add_argument("--evaluation_dir", default="")
     parser.add_argument("--eval_clone_root", default="")
     parser.add_argument("--eval_worktree_root", default="")

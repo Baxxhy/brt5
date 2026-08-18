@@ -74,7 +74,7 @@ Most parameters are environment variables so scripts stay simple:
 - `CODE_RETRIEVAL_PATH`: iCoRe code retrieval JSON.
 - `TEST_RETRIEVAL_PATH`: iCoRe test retrieval JSON.
 - `REPO_ROOT_BASE`: SWE repository root.
-- `MODEL`: default `deepseek-v3`.
+- `MODEL`: default `DeepSeek-V4-Flash`.
 - `TEMPERATURE`: default `0.1`.
 - `WORKERS`: default `6` for generation/evaluation, `10` for issue rewrite.
 - `LIMIT`: optional generation limit, used by smoke.

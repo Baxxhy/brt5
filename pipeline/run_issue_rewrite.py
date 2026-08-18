@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--code_retrieval_path", required=True)
     parser.add_argument("--test_retrieval_path", required=True)
     parser.add_argument("--output_dir", required=True)
-    parser.add_argument("--model", default="deepseek-v3")
+    parser.add_argument("--model", default="DeepSeek-V4-Flash")
     parser.add_argument(
         "--llm-provider",
         choices=("deepseek", "gpt"),
@@ -75,7 +75,8 @@ def main() -> None:
     tmp_root = os.environ.get("TMPDIR") or str(Path(args.output_dir) / "tmp")
     Path(tmp_root).mkdir(parents=True, exist_ok=True)
     preflight = preflight_system(
-        [args.output_dir, args.instances_path, args.code_retrieval_path, tmp_root]
+        [args.output_dir, args.instances_path, args.code_retrieval_path, tmp_root],
+        require_conda=False,
     )
     safe_json_dump(
         preflight, str(Path(args.output_dir) / "environment_preflight.json")

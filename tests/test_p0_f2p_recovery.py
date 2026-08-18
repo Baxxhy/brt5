@@ -17,10 +17,7 @@ from brt5.core.schema import (
 )
 from brt5.execution.executor import classify_execution, run_command_in_conda
 from brt5.execution.feedback import _checkpoint_score, _save_checkpoint
-from brt5.issue.issue_rewriter import (
-    apply_behavior_safety_constraints,
-    behavior_from_dict,
-)
+from brt5.issue.issue_rewriter import apply_behavior_safety_constraints, behavior_from_dict
 from brt5.validation.strict_semantic_verifier import verify_strict_semantics
 from brt5.validation.semantic_guard import audit_candidate, oracle_contract_summary
 

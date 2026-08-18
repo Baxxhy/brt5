@@ -14,3 +14,6 @@
 5. 不要输出解释性文字；
 6. 不要生成测试代码；
 7. 不要使用 patched version、golden patch 或 golden test 的信息。
+8. Issue 第一条非空行是标题。如果标题明确规定 should raise、should warn、
+   should reject、should not raise 等外部行为，它是最高优先级行为契约；正文中
+   reporter 提出的“expected to ...”实现猜测只能记录为不确定性，不能覆盖标题。

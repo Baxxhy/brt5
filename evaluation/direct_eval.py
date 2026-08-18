@@ -436,9 +436,10 @@ def ensure_eval_project_ready(
             },
         )
         started = time.time()
-        setup_result = run_setup_with_fallback(
-            f"{conda_activate_cmd(env_name)} && {command}", repo_dir, timeout
-        )
+        with environment_operation_lock("__conda_package_cache__", "global"):
+            setup_result = run_setup_with_fallback(
+                f"{conda_activate_cmd(env_name)} && {command}", repo_dir, timeout
+            )
         # Setup helpers may edit tracked build metadata.  Keep built artifacts,
         # but restore production sources before the final test is applied.
         reset_result = git_reset_to(

@@ -336,8 +336,8 @@ def audit_candidate(
                 name = _name(decorator.func) if isinstance(decorator, ast.Call) else _name(decorator)
                 leaf = name.rsplit(".", 1)[-1].lower()
                 if (
-                    leaf in {"skip", "skipif", "skipunless", "network"}
-                    or leaf.startswith("requires_")
+                    leaf in {"network"}
+                    or leaf.startswith(("skip", "requires_"))
                 ):
                     return (
                         "BRT 不得使用会跳过完整测试的条件/decorator；"
@@ -374,6 +374,21 @@ def audit_candidate(
                     return "不得用 broad try/except 吞掉目标路径异常；只捕获 Issue 明确要求观察的异常。"
 
     expected = _expected_text(behavior)
+    must_raise = any(
+        marker in expected
+        for marker in (
+            "must raise", "should raise", "raise/reject", "must reject",
+            "应该抛", "应抛", "必须抛", "应该拒绝", "应拒绝",
+        )
+    )
+    has_raise_oracle = bool(
+        re.search(r"(?:pytest\.raises|assertRaises|assert_raises|\braises\s*\()", code)
+    )
+    if must_raise and not has_raise_oracle:
+        return (
+            "expected_behavior 明确要求 raise/reject，但候选没有异常 oracle。"
+            "必须执行真实目标调用，并用具体异常类型的 pytest.raises/assertRaises 验证标题契约。"
+        )
     no_raise = any(
         marker in expected
         for marker in (
